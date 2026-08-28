@@ -223,10 +223,11 @@ markdown_only_agent = DataAnalysisAgent(
 )
 ```
 
-> `main.py` 提供了一个针对外卖门店数据（`cpc.csv` / `shop.csv`）的完整示例，可参考修改：
+> `main.py` 提供了一个完整示例（默认使用本地数据 `cpc.csv` / `shop.csv`，也可传入你自己的数据文件）：
 
 ```bash
-python main.py
+python main.py                                # 使用默认本地示例数据
+python main.py 你的数据1.csv 你的数据2.csv     # 传入自定义数据文件
 ```
 
 ## 📦 返回值说明
