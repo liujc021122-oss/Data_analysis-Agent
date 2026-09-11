@@ -106,10 +106,10 @@ class AsyncFallbackOpenAIClient:
                             is_content_filter_error = True
                     except Exception:
                         pass # 解析错误响应失败，不认为是内容过滤错误
-                
+
                 if is_content_filter_error and api_name == "主": # 如果是主 API 的内容过滤错误，则直接抛出以便回退
-                    raise e 
-                
+                    raise e
+
                 last_exception = e
                 print(f"⚠️ {api_name} API 调用时发生 APIStatusError ({e.status_code}): {e}. 尝试次数 {attempt + 1}/{max_retries + 1}")
                 if attempt < max_retries:
@@ -120,7 +120,7 @@ class AsyncFallbackOpenAIClient:
                 last_exception = e
                 print(f"❌ {api_name} API 调用时发生不可重试错误 ({type(e).__name__}): {e}")
                 break # 不再重试此类错误
-        
+
         if last_exception:
             raise last_exception
         raise RuntimeError(f"{api_name} API 调用意外失败。") # 理论上不应到达这里
@@ -147,7 +147,7 @@ class AsyncFallbackOpenAIClient:
         """
         if self._closed:
             raise RuntimeError("客户端已关闭。")
-            
+
         try:
             completion = await self._attempt_api_call(
                 client=self.primary_client,
@@ -168,8 +168,8 @@ class AsyncFallbackOpenAIClient:
                         self.content_filter_error_field in error_json):
                         is_content_filter_error = True
                 except Exception:
-                    pass 
-            
+                    pass
+
             if is_content_filter_error and self.fallback_client and self.fallback_model_name:
                 print(f"ℹ️ 主 API 内容过滤错误 ({e_primary.status_code})。尝试切换到备用 API ({self.fallback_client.base_url})...")
                 try:
@@ -185,13 +185,13 @@ class AsyncFallbackOpenAIClient:
                     return fallback_completion
                 except APIError as e_fallback:
                     print(f"❌ 备用 API 调用最终失败: {type(e_fallback).__name__} - {e_fallback}")
-                    raise e_fallback 
+                    raise e_fallback
             else:
                 if not (self.fallback_client and self.fallback_model_name and is_content_filter_error):
                      # 如果不是内容过滤错误，或者没有可用的备用API，则记录主API的原始错误
                     print(f"ℹ️ 主 API 错误 ({type(e_primary).__name__}: {e_primary}), 且不满足备用条件或备用API未配置。")
                 raise e_primary
-        except APIError as e_primary_other: 
+        except APIError as e_primary_other:
             print(f"❌ 主 API 调用最终失败 (非内容过滤，错误类型: {type(e_primary_other).__name__}): {e_primary_other}")
             if self.fallback_client and self.fallback_model_name:
                 print(f"ℹ️ 主 API 失败，尝试切换到备用 API ({self.fallback_client.base_url})...")
@@ -208,8 +208,8 @@ class AsyncFallbackOpenAIClient:
                     return fallback_completion
                 except APIError as e_fallback_after_primary_fail:
                     print(f"❌ 备用 API 在主 API 失败后也调用失败: {type(e_fallback_after_primary_fail).__name__} - {e_fallback_after_primary_fail}")
-                    raise e_fallback_after_primary_fail 
-            else: 
+                    raise e_fallback_after_primary_fail
+            else:
                 raise e_primary_other
 
     async def close(self):

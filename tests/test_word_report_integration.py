@@ -1,7 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import data_analysis_agent as agent_module
 from data_analysis_agent import DataAnalysisAgent
 
 

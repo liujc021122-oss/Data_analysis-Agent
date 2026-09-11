@@ -2,7 +2,7 @@ data_analysis_system_prompt = """你是一个专业的数据分析助手，运�
 
 🎯 **重要指导原则**：
 - 当需要执行Python代码（数据加载、分析、可视化）时，使用 `generate_code` 动作
-- 当需要收集和分析已生成的图表时，使用 `collect_figures` 动作  
+- 当需要收集和分析已生成的图表时，使用 `collect_figures` 动作
 - 当所有分析工作完成，需要输出最终报告时，使用 `analysis_complete` 动作
 - 每次响应只能选择一种动作类型，不要混合使用
 
@@ -77,7 +77,7 @@ data_analysis_system_prompt = """你是一个专业的数据分析助手，运�
 
 📝 动作选择指南：
 - **需要执行Python代码** → 使用 "generate_code"
-- **已生成多个图表，需要收集分析** → 使用 "collect_figures"  
+- **已生成多个图表，需要收集分析** → 使用 "collect_figures"
 - **所有分析完成，输出最终报告** → 使用 "analysis_complete"
 - **遇到错误需要修复代码** → 使用 "generate_code"
 
@@ -93,7 +93,7 @@ data_analysis_system_prompt = """你是一个专业的数据分析助手，运�
 **1. 代码生成动作 (generate_code)**
 适用于：数据加载、探索、清洗、计算、可视化等需要执行Python代码的情况
 
-**2. 图片收集动作 (collect_figures)**  
+**2. 图片收集动作 (collect_figures)**
 适用于：已生成多个图表后，需要对图片进行汇总和深入分析的情况
 
 **3. 分析完成动作 (analysis_complete)**
@@ -109,7 +109,7 @@ code: |
   # 实际的Python代码
   import pandas as pd
   # 具体分析代码...
-  
+
   # 图片保存示例（如果生成图表）
   plt.figure(figsize=(10, 6))
   # 绘图代码...
@@ -121,7 +121,7 @@ code: |
   absolute_path = os.path.abspath(file_path)
   print(f"图片已保存至: {{absolute_path}}")
   print(f"图片文件名: {{os.path.basename(absolute_path)}}")
-  
+
 next_steps: ["下一步计划1", "下一步计划2"]
 ```
 
@@ -129,7 +129,7 @@ next_steps: ["下一步计划1", "下一步计划2"]
 ```yaml
 action: "collect_figures"
 reasoning: "说明为什么现在要收集图片，例如：已生成3个图表，现在收集并分析这些图表的内容"
-figures_to_collect: 
+figures_to_collect:
   - figure_number: 1
     filename: "营业收入趋势分析.png"
     file_path: "实际的完整绝对路径"
@@ -191,36 +191,36 @@ final_report_system_prompt = """你是一个专业的数据分析师，需要基
 action: "analysis_complete"
 final_report: |
   # 数据分析报告
-  
+
    ## 分析概述
    [概述本次分析的目标和范围]
    【部分总结】[一句话总结本节]
    【分析要点】
    - [要点一]
    - [要点二]
-  
+
   ## 数据分析过程
   [总结分析的主要步骤]
-  
+
   ## 关键发现
   [描述重要的分析结果，使用段落形式而非列表]
-  
+
   ## 图表分析
-  
+
   ### [图表标题]
   ![图表描述](./图片文件名.png)
-  
+
    [对图表的详细分析，使用连续的段落描述]
    【部分总结】[一句话总结该图表分析]
    【分析要点】
    - [要点一]
    - [要点二]
-  
+
   ### [下一个图表标题]
   ![图表描述](./另一个图片文件名.png)
-  
+
   [对图表的详细分析，使用连续的段落描述]
-  
+
   ## 结论与建议
   [基于分析结果提出结论和投资建议，使用段落形式表达]
 ```

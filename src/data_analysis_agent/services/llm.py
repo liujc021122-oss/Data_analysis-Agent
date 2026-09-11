@@ -10,7 +10,7 @@ from .openai_client import AsyncFallbackOpenAIClient
 
 class LLMHelper:
     """LLM调用辅助类，支持同步和异步调用"""
-    
+
     def __init__(self, config: LLMConfig = None):
         self.config = config
         self.client = AsyncFallbackOpenAIClient(
@@ -43,9 +43,9 @@ class LLMHelper:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        
+
         kwargs = self._build_request_kwargs(max_tokens, temperature)
-            
+
         try:
             response = await self.client.chat_completions_create(
                 messages=messages,
@@ -55,11 +55,11 @@ class LLMHelper:
         except Exception as e:
             print(f"LLM调用失败: {e}")
             return ""
-    
+
     def call(self, prompt: str, system_prompt: str = None, max_tokens: int = None, temperature: float = None) -> str:
         """同步调用LLM"""
         return asyncio.run(self.async_call(prompt, system_prompt, max_tokens, temperature))
-    
+
     def parse_yaml_response(self, response: str) -> dict:
         """解析YAML格式的响应"""
         try:
@@ -74,13 +74,13 @@ class LLMHelper:
                 yaml_content = response[start:end].strip()
             else:
                 yaml_content = response.strip()
-            
+
             return yaml.safe_load(yaml_content)
         except Exception as e:
             print(f"YAML解析失败: {e}")
             print(f"原始响应: {response}")
             return {}
-    
+
     async def close(self):
         """关闭客户端"""
         await self.client.close()

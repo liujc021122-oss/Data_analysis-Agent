@@ -2,7 +2,6 @@ from pathlib import Path
 from types import SimpleNamespace
 import re
 
-import data_analysis_agent as agent_module
 from data_analysis_agent import DataAnalysisAgent, LLMConfig
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
 from data_analysis_agent.services.session import create_session_output_dir

@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 from docx import Document
 
-import data_analysis_agent as agent_module
 from data_analysis_agent import DataAnalysisAgent
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
 from data_analysis_agent.reports.word import generate_word_report
