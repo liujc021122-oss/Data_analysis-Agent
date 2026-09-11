@@ -18,6 +18,7 @@ from ..config.settings import Settings, load_settings
 from ..execution.code_executor import CodeExecutor
 from ..reports.word import generate_word_report
 from ..services.llm import LLMHelper
+from ..services.errors import sanitize_exception
 from ..services.responses import extract_code_from_response, format_execution_result
 from ..services.session import create_session_output_dir
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
@@ -88,7 +89,18 @@ class DataAnalysisAgent:
                 return self._handle_generate_code(response, yaml_data)
 
         except Exception as e:
-            print(f"⚠️ 解析响应失败: {str(e)}，按generate_code处理")
+            print(
+                "⚠️ 解析响应失败: "
+                + sanitize_exception(
+                    e,
+                    secrets=(
+                        getattr(self.config, "api_key", None),
+                        getattr(self.config, "base_url", None),
+                    ),
+                    include_message=False,
+                )
+                + "，按generate_code处理"
+            )
             return self._handle_generate_code(response, {})
 
     def _handle_analysis_complete(self, response: str, yaml_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -291,7 +303,14 @@ class DataAnalysisAgent:
                     })
 
             except Exception as e:
-                error_msg = f"LLM调用错误: {str(e)}"
+                error_msg = (
+                    "LLM调用错误: "
+                    + sanitize_exception(
+                        e,
+                        secrets=(self.config.api_key, self.config.base_url),
+                        include_message=False,
+                    )
+                )
                 print(f"❌ {error_msg}")
                 self.conversation_history.append({
                     'role': 'user',
@@ -354,8 +373,16 @@ class DataAnalysisAgent:
             print("✅ 最终报告生成完成")
 
         except Exception as e:
-            print(f"❌ 生成最终报告时出错: {str(e)}")
-            final_report_content = f"报告生成失败: {str(e)}"
+            safe_error = sanitize_exception(
+                e,
+                secrets=(
+                    getattr(self.config, "api_key", None),
+                    getattr(self.config, "base_url", None),
+                ),
+                include_message=False,
+            )
+            print(f"❌ 生成最终报告时出错: {safe_error}")
+            final_report_content = f"报告生成失败: {safe_error}"
 
         # 保存最终报告到文件
         report_file_path = os.path.join(self.session_output_dir, "最终分析报告.md")
@@ -364,7 +391,16 @@ class DataAnalysisAgent:
                 f.write(final_report_content)
             print(f"📄 最终报告已保存至: {report_file_path}")
         except Exception as e:
-            print(f"❌ 保存报告文件失败: {str(e)}")
+            print(
+                "❌ 保存报告文件失败: "
+                + sanitize_exception(
+                    e,
+                    secrets=(
+                        getattr(self.config, "api_key", None),
+                        getattr(self.config, "base_url", None),
+                    ),
+                )
+            )
 
         word_report_file_path = None
         word_report_error = None
@@ -381,7 +417,16 @@ class DataAnalysisAgent:
                 word_report_generated = True
                 print(f"📄 Word报告已保存至: {word_report_file_path}")
             except Exception as e:
-                word_report_error = f"Word报告生成失败: {str(e)}"
+                word_report_error = (
+                    "Word报告生成失败: "
+                    + sanitize_exception(
+                        e,
+                        secrets=(
+                            getattr(self.config, "api_key", None),
+                            getattr(self.config, "base_url", None),
+                        ),
+                    )
+                )
                 print(f"❌ {word_report_error}")
 
         # 返回完整的分析结果

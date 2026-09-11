@@ -3,6 +3,7 @@ import asyncio
 from typing import Optional, Any, Mapping, Dict
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError, APIError
 from openai.types.chat import ChatCompletion
+from .errors import sanitize_exception, sanitize_text
 
 class AsyncFallbackOpenAIClient:
     """
@@ -90,7 +91,7 @@ class AsyncFallbackOpenAIClient:
                 return completion
             except (APIConnectionError, APITimeoutError) as e: # 通常可以重试的网络错误
                 last_exception = e
-                print(f"⚠️ {api_name} API 调用时发生可重试错误 ({type(e).__name__}): {e}. 尝试次数 {attempt + 1}/{max_retries + 1}")
+                print(f"⚠️ {api_name} API 调用时发生可重试错误 ({sanitize_exception(e, include_message=False)}). 尝试次数 {attempt + 1}/{max_retries + 1}")
                 if attempt < max_retries:
                     await asyncio.sleep(self.retry_delay_seconds * (attempt + 1)) # 增加延迟
                 else:
@@ -111,14 +112,14 @@ class AsyncFallbackOpenAIClient:
                     raise e
 
                 last_exception = e
-                print(f"⚠️ {api_name} API 调用时发生 APIStatusError ({e.status_code}): {e}. 尝试次数 {attempt + 1}/{max_retries + 1}")
+                print(f"⚠️ {api_name} API 调用时发生 APIStatusError ({e.status_code}, {sanitize_exception(e, include_message=False)}). 尝试次数 {attempt + 1}/{max_retries + 1}")
                 if attempt < max_retries:
                     await asyncio.sleep(self.retry_delay_seconds * (attempt + 1))
                 else:
                     print(f"❌ {api_name} API 在达到最大重试次数后仍然失败 (APIStatusError)。")
             except APIError as e: # 其他不可轻易重试的 OpenAI 错误
                 last_exception = e
-                print(f"❌ {api_name} API 调用时发生不可重试错误 ({type(e).__name__}): {e}")
+                print(f"❌ {api_name} API 调用时发生不可重试错误 ({sanitize_exception(e, include_message=False)})")
                 break # 不再重试此类错误
 
         if last_exception:
@@ -171,7 +172,7 @@ class AsyncFallbackOpenAIClient:
                     pass
 
             if is_content_filter_error and self.fallback_client and self.fallback_model_name:
-                print(f"ℹ️ 主 API 内容过滤错误 ({e_primary.status_code})。尝试切换到备用 API ({self.fallback_client.base_url})...")
+                print(f"ℹ️ 主 API 内容过滤错误 ({e_primary.status_code})。尝试切换到备用 API ({sanitize_text(self.fallback_client.base_url)})...")
                 try:
                     fallback_completion = await self._attempt_api_call(
                         client=self.fallback_client,
@@ -184,17 +185,17 @@ class AsyncFallbackOpenAIClient:
                     print(f"✅ 备用 API 调用成功。")
                     return fallback_completion
                 except APIError as e_fallback:
-                    print(f"❌ 备用 API 调用最终失败: {type(e_fallback).__name__} - {e_fallback}")
+                    print(f"❌ 备用 API 调用最终失败: {sanitize_exception(e_fallback, include_message=False)}")
                     raise e_fallback
             else:
                 if not (self.fallback_client and self.fallback_model_name and is_content_filter_error):
                      # 如果不是内容过滤错误，或者没有可用的备用API，则记录主API的原始错误
-                    print(f"ℹ️ 主 API 错误 ({type(e_primary).__name__}: {e_primary}), 且不满足备用条件或备用API未配置。")
+                     print(f"ℹ️ 主 API 错误 ({sanitize_exception(e_primary, include_message=False)}), 且不满足备用条件或备用API未配置。")
                 raise e_primary
         except APIError as e_primary_other:
-            print(f"❌ 主 API 调用最终失败 (非内容过滤，错误类型: {type(e_primary_other).__name__}): {e_primary_other}")
+            print(f"❌ 主 API 调用最终失败 (非内容过滤，错误类型: {sanitize_exception(e_primary_other, include_message=False)})")
             if self.fallback_client and self.fallback_model_name:
-                print(f"ℹ️ 主 API 失败，尝试切换到备用 API ({self.fallback_client.base_url})...")
+                print(f"ℹ️ 主 API 失败，尝试切换到备用 API ({sanitize_text(self.fallback_client.base_url)})...")
                 try:
                     fallback_completion = await self._attempt_api_call(
                         client=self.fallback_client,
@@ -207,7 +208,7 @@ class AsyncFallbackOpenAIClient:
                     print(f"✅ 备用 API 调用成功。")
                     return fallback_completion
                 except APIError as e_fallback_after_primary_fail:
-                    print(f"❌ 备用 API 在主 API 失败后也调用失败: {type(e_fallback_after_primary_fail).__name__} - {e_fallback_after_primary_fail}")
+                    print(f"❌ 备用 API 在主 API 失败后也调用失败: {sanitize_exception(e_fallback_after_primary_fail, include_message=False)}")
                     raise e_fallback_after_primary_fail
             else:
                 raise e_primary_other

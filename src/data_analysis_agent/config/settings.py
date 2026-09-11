@@ -23,6 +23,12 @@ class ConfigurationError(ValueError):
     pass
 
 
+def _nonblank(value):
+    if value is None or not str(value).strip():
+        return None
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: EnvironmentName
@@ -114,21 +120,23 @@ def load_settings(
         "test": "outputs/test",
         "production": "outputs/production",
     }
-    selected_output = output_dir or values.get("OUTPUT_DIR") or defaults[environment]
+    selected_output = (
+        _nonblank(output_dir)
+        or _nonblank(values.get("OUTPUT_DIR"))
+        or defaults[environment]
+    )
+    api_key = _nonblank(values.get("OPENAI_API_KEY"))
+    base_url = _nonblank(values.get("OPENAI_BASE_URL"))
+    model = _nonblank(values.get("OPENAI_MODEL"))
     settings = Settings(
         app_env=environment,
         database_url=values.get("DATABASE_URL"),
         redis_url=values.get("REDIS_URL"),
         storage_endpoint=values.get("STORAGE_ENDPOINT"),
         storage_bucket=values.get("STORAGE_BUCKET"),
-        openai_api_key=values.get("OPENAI_API_KEY") or None,
-        openai_base_url=values.get(
-            "OPENAI_BASE_URL",
-            DEFAULT_BASE_URL if environment != "production" else "",
-        ),
-        openai_model=values.get(
-            "OPENAI_MODEL", DEFAULT_MODEL if environment != "production" else ""
-        ),
+        openai_api_key=api_key,
+        openai_base_url=base_url or (DEFAULT_BASE_URL if environment != "production" else ""),
+        openai_model=model or (DEFAULT_MODEL if environment != "production" else ""),
         max_task_runtime=_positive_int(
             values, "MAX_TASK_RUNTIME", DEFAULT_MAX_TASK_RUNTIME
         ),

@@ -6,6 +6,7 @@ from typing import Sequence
 
 from .agent.core import quick_analysis
 from .config.settings import ConfigurationError, configure_logging, load_settings
+from .services.errors import sanitize_exception
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,8 +51,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(result)
         return 0
     except ConfigurationError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
+        print(
+            "Configuration error: "
+            + sanitize_exception(exc),
+            file=sys.stderr,
+        )
         return 2
-    except Exception:
-        logging.getLogger("data_analysis_agent").exception("Analysis failed")
+    except Exception as exc:
+        logging.getLogger("data_analysis_agent").error(
+            "Analysis failed: %s",
+            sanitize_exception(exc, include_message=False),
+        )
         return 1

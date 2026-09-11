@@ -6,6 +6,7 @@ LLM调用辅助模块
 import asyncio
 import yaml
 from ..config.llm import LLMConfig
+from .errors import sanitize_exception
 from .openai_client import AsyncFallbackOpenAIClient
 
 class LLMHelper:
@@ -53,7 +54,14 @@ class LLMHelper:
             )
             return response.choices[0].message.content
         except Exception as e:
-            print(f"LLM调用失败: {e}")
+            print(
+                "LLM调用失败: "
+                + sanitize_exception(
+                    e,
+                    secrets=(self.config.api_key, self.config.base_url),
+                    include_message=False,
+                )
+            )
             return ""
 
     def call(self, prompt: str, system_prompt: str = None, max_tokens: int = None, temperature: float = None) -> str:
@@ -77,8 +85,7 @@ class LLMHelper:
 
             return yaml.safe_load(yaml_content)
         except Exception as e:
-            print(f"YAML解析失败: {e}")
-            print(f"原始响应: {response}")
+            print(f"YAML解析失败: {sanitize_exception(e, include_message=False)}")
             return {}
 
     async def close(self):
