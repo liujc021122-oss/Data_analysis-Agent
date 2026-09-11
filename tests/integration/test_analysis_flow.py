@@ -62,7 +62,7 @@ def test_quick_analysis_runs_complete_offline_flow_and_generates_chart_and_repor
     tmp_path, monkeypatch
 ):
     fake_llm = make_normal_flow_llm()
-    monkeypatch.setattr(agent_module, "LLMHelper", lambda config: fake_llm)
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
 
     result = agent_module.quick_analysis(
         query="分析样例数据并生成趋势图",
@@ -104,7 +104,7 @@ def test_analysis_feeds_executor_failure_back_to_llm_and_continues(tmp_path, mon
             yaml_response("analysis_complete", final_report="# 恢复后的报告"),
         ]
     )
-    monkeypatch.setattr(agent_module, "LLMHelper", lambda config: fake_llm)
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
 
     result = agent_module.quick_analysis(
         query="验证执行失败后的自动反馈",

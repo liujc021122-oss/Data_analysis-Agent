@@ -1,4 +1,4 @@
-from prompts import final_report_system_prompt
+from data_analysis_agent.agent.prompts import final_report_system_prompt
 
 
 def test_final_report_prompt_requires_section_summary_and_key_points():

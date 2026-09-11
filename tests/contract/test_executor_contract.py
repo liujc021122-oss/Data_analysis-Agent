@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from utils.code_executor import CodeExecutor
+from data_analysis_agent.execution.code_executor import CodeExecutor
 
 
 SAMPLE_DATA = Path(__file__).resolve().parents[1] / "fixtures" / "sample_data.csv"

@@ -5,7 +5,7 @@ from pathlib import Path
 from docx import Document
 from docx.shared import RGBColor
 
-from utils.word_report_generator import generate_word_report
+from data_analysis_agent.reports.word import generate_word_report
 
 
 TINY_PNG = base64.b64decode(

@@ -2,12 +2,11 @@ from pathlib import Path
 from types import SimpleNamespace
 import re
 
-from config.llm_config import LLMConfig
 import data_analysis_agent as agent_module
-from data_analysis_agent import DataAnalysisAgent
+from data_analysis_agent import DataAnalysisAgent, LLMConfig
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
-from utils.create_session_dir import create_session_output_dir
-from utils.llm_helper import LLMHelper
+from data_analysis_agent.services.session import create_session_output_dir
+from data_analysis_agent.services.llm import LLMHelper
 
 
 class RecordingExecutor:
@@ -156,8 +155,8 @@ def test_analysis_stops_at_max_rounds_and_still_generates_final_report(tmp_path,
             yaml_response("analysis_complete", final_report="# 达到最大轮数后的报告"),
         ]
     )
-    monkeypatch.setattr(agent_module, "LLMHelper", lambda config: fake_llm)
-    monkeypatch.setattr(agent_module, "CodeExecutor", RecordingExecutor)
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
+    monkeypatch.setattr("data_analysis_agent.agent.core.CodeExecutor", RecordingExecutor)
 
     agent = DataAnalysisAgent(
         llm_config=LLMConfig(
