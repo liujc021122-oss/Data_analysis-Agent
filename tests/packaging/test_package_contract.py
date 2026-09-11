@@ -98,3 +98,30 @@ def test_cli_reports_missing_production_configuration():
     assert "OPENAI_API_KEY" in result.stderr
     assert "OPENAI_BASE_URL" in result.stderr
     assert "OPENAI_MODEL" in result.stderr
+
+
+def test_external_process_imports_installed_package(tmp_path):
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import data_analysis_agent; "
+                "from data_analysis_agent import quick_analysis; "
+                "print(data_analysis_agent.__file__); "
+                "print(quick_analysis.__module__)"
+            ),
+        ],
+        cwd=external_dir,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0
+    assert "data_analysis_agent.agent.core" in result.stdout
+    assert "data_analysis_agent.py" not in result.stdout
