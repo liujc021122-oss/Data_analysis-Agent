@@ -54,3 +54,47 @@ def test_legacy_utils_export_canonical_objects():
 
     assert LegacyCodeExecutor is CodeExecutor
     assert LegacyLLMHelper is LLMHelper
+
+
+def test_module_help_and_root_script_help_match():
+    module_result = subprocess.run(
+        [sys.executable, "-m", "data_analysis_agent", "--help"],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+    )
+    script_result = subprocess.run(
+        [sys.executable, "main.py", "--help"],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert module_result.returncode == 0
+    assert script_result.returncode == 0
+    assert "--output-dir" in module_result.stdout
+    assert module_result.stdout == script_result.stdout
+
+
+def test_cli_reports_missing_production_configuration():
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "APP_ENV": "production",
+            "OPENAI_API_KEY": "",
+            "OPENAI_BASE_URL": "",
+            "OPENAI_MODEL": "",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "data_analysis_agent", "--env", "production"],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "OPENAI_API_KEY" in result.stderr
+    assert "OPENAI_BASE_URL" in result.stderr
+    assert "OPENAI_MODEL" in result.stderr
