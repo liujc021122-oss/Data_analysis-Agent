@@ -36,3 +36,21 @@ def test_module_help_does_not_require_api_key():
     assert result.returncode == 0
     assert "usage" in result.stdout.lower()
     assert "OPENAI_API_KEY" not in result.stderr
+
+
+def test_legacy_config_exports_canonical_objects():
+    from config.llm_config import LLMConfig as LegacyLLMConfig
+    from data_analysis_agent import LLMConfig, Settings
+
+    assert LegacyLLMConfig is LLMConfig
+    assert Settings.__module__ == "data_analysis_agent.config.settings"
+
+
+def test_legacy_utils_export_canonical_objects():
+    from data_analysis_agent.execution.code_executor import CodeExecutor
+    from utils.code_executor import CodeExecutor as LegacyCodeExecutor
+    from data_analysis_agent.services.llm import LLMHelper
+    from utils.llm_helper import LLMHelper as LegacyLLMHelper
+
+    assert LegacyCodeExecutor is CodeExecutor
+    assert LegacyLLMHelper is LLMHelper
