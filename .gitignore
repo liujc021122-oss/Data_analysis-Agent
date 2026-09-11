@@ -145,6 +145,10 @@ outputs/
 !assets/**/*.jpg
 !assets/**/*.jpeg
 
+# Source-controlled offline test fixtures
+!tests/fixtures/*.csv
+!tests/fixtures/*.png
+
 # IDE and editor files
 .vscode/
 .idea/
@@ -188,3 +192,6 @@ verification_full_outputs2/
 
 # Agent planning artifacts (superpowers)
 docs/superpowers/
+
+# Local linked worktrees
+.worktrees/
