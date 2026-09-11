@@ -1,10 +1,7 @@
 from pathlib import Path
-import inspect
 import os
 import subprocess
 import sys
-
-import data_analysis_agent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

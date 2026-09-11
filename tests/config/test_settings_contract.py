@@ -9,6 +9,7 @@ from data_analysis_agent.config.settings import (
     configure_logging,
     load_settings,
 )
+from data_analysis_agent.config.llm import LLMConfig
 
 
 def test_development_defaults_allow_offline_construction(tmp_path):
@@ -119,6 +120,7 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
         llm_config = settings.llm_config()
 
     assert logger.name == "data_analysis_agent"
+    assert isinstance(llm_config, LLMConfig)
     assert llm_config.api_key == "secret-that-must-not-be-logged"
     assert llm_config.model == "offline-model"
     assert "secret-that-must-not-be-logged" not in caplog.text

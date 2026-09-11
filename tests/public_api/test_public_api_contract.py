@@ -5,6 +5,9 @@ import data_analysis_agent
 
 def test_canonical_package_exports_public_objects():
     assert callable(data_analysis_agent.quick_analysis)
+    assert data_analysis_agent.ConfigurationError.__module__ == (
+        "data_analysis_agent.config.settings"
+    )
     assert data_analysis_agent.DataAnalysisAgent.__module__ == (
         "data_analysis_agent.agent.core"
     )
