@@ -140,6 +140,9 @@ source .venv/bin/activate
 
 # 安装依赖
 pip install -r requirements.txt
+
+# 安装本项目（提供 data-analysis-agent 命令）
+pip install -e .
 ```
 
 ### 2. 配置 API 密钥
@@ -167,8 +170,7 @@ OPENAI_MODEL=deepseek-chat
 ### 3. 基本使用
 
 ```python
-from data_analysis_agent import DataAnalysisAgent
-from config.llm_config import LLMConfig
+from data_analysis_agent import DataAnalysisAgent, LLMConfig
 
 # 初始化智能体
 llm_config = LLMConfig()

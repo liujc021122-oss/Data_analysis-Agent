@@ -512,9 +512,14 @@ def quick_analysis(
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     resolved_settings = settings or load_settings()
+    selected_output_dir = (
+        output_dir
+        if output_dir is not None and str(output_dir).strip()
+        else resolved_settings.output_dir
+    )
     agent = DataAnalysisAgent(
         llm_config=resolved_settings.llm_config(),
-        output_dir=str(output_dir or resolved_settings.output_dir),
+        output_dir=str(selected_output_dir),
         max_rounds=max_rounds if max_rounds is not None else 10,
         generate_word_report=(
             generate_word_report

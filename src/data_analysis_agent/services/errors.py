@@ -5,10 +5,10 @@ from typing import Iterable
 _BEARER_RE = re.compile(r"(?i)(\bBearer\s+)[^\s,;]+")
 _CREDENTIAL_URL_RE = re.compile(r"(?i)(https?://)[^/\s:@]+:[^@\s/]+@")
 _SENSITIVE_QUERY_RE = re.compile(
-    r"(?i)([?&](?:api[_-]?key|access[_-]?token|authorization|password|passwd|secret|token)=)[^&#\s]+"
+    r"(?i)([?&](?:api[_-]?key|access[_-]?token|authorization|password|passwd|secret|token|key|sig|signature)=)[^&#\s]+"
 )
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
-    r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|password|passwd|secret|token)\b\s*[:=]\s*)(['\"]?)[^,\s'\";)}]+"
+    r"(?i)(['\"]?\b(?:api[_-]?key|access[_-]?token|authorization|password|passwd|secret|token|key|sig|signature)\b['\"]?\s*[:=]\s*)(['\"]?)[^,\s'\";)}]+"
 )
 
 

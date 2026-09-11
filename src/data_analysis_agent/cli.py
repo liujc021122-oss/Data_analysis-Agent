@@ -28,9 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        requested_output_dir = (
+            args.output_dir if args.output_dir and args.output_dir.strip() else None
+        )
         settings = load_settings(
             app_env=args.env,
-            output_dir=Path(args.output_dir) if args.output_dir else None,
+            output_dir=Path(requested_output_dir) if requested_output_dir else None,
         )
         configure_logging(settings)
         missing = [file for file in args.files if not Path(file).is_file()]
@@ -43,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = quick_analysis(
             query=args.query,
             files=args.files,
-            output_dir=args.output_dir,
+            output_dir=requested_output_dir or settings.output_dir,
             max_rounds=args.max_rounds,
             generate_word_report=not args.no_word_report,
             settings=settings,

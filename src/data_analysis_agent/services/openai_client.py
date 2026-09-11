@@ -52,6 +52,7 @@ class AsyncFallbackOpenAIClient:
         self.primary_model_name = primary_model_name
 
         self.fallback_client: Optional[AsyncOpenAI] = None
+        self.fallback_api_key = fallback_api_key
         self.fallback_model_name: Optional[str] = None
         if fallback_api_key and fallback_base_url and fallback_model_name:
             _fallback_args = fallback_client_args or {}
@@ -172,7 +173,7 @@ class AsyncFallbackOpenAIClient:
                     pass
 
             if is_content_filter_error and self.fallback_client and self.fallback_model_name:
-                print(f"ℹ️ 主 API 内容过滤错误 ({e_primary.status_code})。尝试切换到备用 API ({sanitize_text(self.fallback_client.base_url)})...")
+                print(f"ℹ️ 主 API 内容过滤错误 ({e_primary.status_code})。尝试切换到备用 API ({sanitize_text(self.fallback_client.base_url, secrets=(self.fallback_api_key,))})...")
                 try:
                     fallback_completion = await self._attempt_api_call(
                         client=self.fallback_client,
@@ -195,7 +196,7 @@ class AsyncFallbackOpenAIClient:
         except APIError as e_primary_other:
             print(f"❌ 主 API 调用最终失败 (非内容过滤，错误类型: {sanitize_exception(e_primary_other, include_message=False)})")
             if self.fallback_client and self.fallback_model_name:
-                print(f"ℹ️ 主 API 失败，尝试切换到备用 API ({sanitize_text(self.fallback_client.base_url)})...")
+                print(f"ℹ️ 主 API 失败，尝试切换到备用 API ({sanitize_text(self.fallback_client.base_url, secrets=(self.fallback_api_key,))})...")
                 try:
                     fallback_completion = await self._attempt_api_call(
                         client=self.fallback_client,

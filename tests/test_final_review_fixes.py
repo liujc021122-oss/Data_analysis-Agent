@@ -8,10 +8,105 @@ from data_analysis_agent import DataAnalysisAgent, LLMConfig
 from data_analysis_agent import cli
 from data_analysis_agent.config.settings import ConfigurationError, load_settings
 from data_analysis_agent.services import openai_client as openai_client_module
+from data_analysis_agent.services.errors import sanitize_text
 from data_analysis_agent.services.llm import LLMHelper
 
 
 SECRET = "configured-api-secret"
+
+
+def test_quick_analysis_whitespace_output_dir_uses_settings_default(monkeypatch):
+    settings = SimpleNamespace(
+        output_dir=Path("settings-output"),
+        app_env="test",
+        llm_config=lambda: "fake-config",
+    )
+    constructed = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            constructed.update(kwargs)
+
+        def analyze(self, **kwargs):
+            return {"ok": True}
+
+    monkeypatch.setattr("data_analysis_agent.agent.core.DataAnalysisAgent", FakeAgent)
+
+    from data_analysis_agent.agent.core import quick_analysis
+
+    assert quick_analysis("offline", output_dir=" \t", settings=settings) == {"ok": True}
+    assert constructed["output_dir"] == "settings-output"
+
+
+def test_cli_whitespace_output_dir_forwards_settings_default(monkeypatch):
+    settings = SimpleNamespace(output_dir=Path("settings-output"))
+    forwarded = {}
+
+    monkeypatch.setattr(cli, "load_settings", lambda **kwargs: settings)
+    monkeypatch.setattr(cli, "configure_logging", lambda settings: None)
+
+    def fake_quick_analysis(**kwargs):
+        forwarded.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(cli, "quick_analysis", fake_quick_analysis)
+
+    assert cli.main(["--output-dir", " "]) == 0
+    assert forwarded["output_dir"] == settings.output_dir
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"api_key": "json-secret"',
+        "https://example.invalid/v1?key=query-secret",
+        "https://example.invalid/v1?sig=query-secret",
+        "https://example.invalid/v1?signature=query-secret",
+    ],
+)
+def test_sanitize_text_redacts_json_and_common_query_credentials(text):
+    sanitized = sanitize_text(text)
+
+    assert "secret" not in sanitized
+    assert "[REDACTED]" in sanitized
+
+
+@pytest.mark.asyncio
+async def test_fallback_diagnostic_redacts_configured_fallback_secret(monkeypatch, capsys):
+    class FakeAPIError(Exception):
+        pass
+
+    class FailingCompletions:
+        async def create(self, **kwargs):
+            raise FakeAPIError("fallback unavailable")
+
+    class FakeClient:
+        def __init__(self, base_url):
+            self.base_url = base_url
+            self.chat = SimpleNamespace(completions=FailingCompletions())
+
+    monkeypatch.setattr(openai_client_module, "APIError", FakeAPIError)
+    client = object.__new__(openai_client_module.AsyncFallbackOpenAIClient)
+    client.primary_client = FakeClient("https://primary.example/v1")
+    client.primary_model_name = "primary-model"
+    client.fallback_client = FakeClient(
+        "https://fallback.example/v1?credential=fallback-secret"
+    )
+    client.fallback_api_key = "fallback-secret"
+    client.fallback_model_name = "fallback-model"
+    client.max_retries_primary = 0
+    client.max_retries_fallback = 0
+    client.retry_delay_seconds = 0
+    client.content_filter_error_code = "1301"
+    client.content_filter_error_field = "contentFilter"
+    client._closed = False
+
+    with pytest.raises(FakeAPIError):
+        await client.chat_completions_create(messages=[])
+
+    visible = capsys.readouterr().out
+    assert "fallback-secret" not in visible
+    assert "备用 API" in visible
 
 
 def test_llm_failure_redacts_secret_bearing_exception_from_output(capsys):
@@ -230,3 +325,6 @@ def test_readme_documents_unified_cli_and_explicit_files():
     assert "显式传入输入文件" in readme
     assert "默认使用本地数据 `cpc.csv` / `shop.csv`" not in readme
     assert "Python 3.10+" in readme
+    assert "from data_analysis_agent import DataAnalysisAgent, LLMConfig" in readme
+    assert "from config.llm_config import LLMConfig" not in readme
+    assert readme.index("pip install -e .") < readme.index("data-analysis-agent your_data.csv")
