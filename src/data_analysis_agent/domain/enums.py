@@ -1,0 +1,35 @@
+from enum import Enum
+
+
+class TaskStatus(str, Enum):
+    PENDING = "PENDING"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    EXPLORING = "EXPLORING"
+    CLEANING = "CLEANING"
+    ANALYZING = "ANALYZING"
+    VALIDATING = "VALIDATING"
+    REPORTING = "REPORTING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class TaskEventType(str, Enum):
+    STATUS_CHANGED = "STATUS_CHANGED"
+    TOOL_CALLED = "TOOL_CALLED"
+    EXECUTION_COMPLETED = "EXECUTION_COMPLETED"
+    ARTIFACT_CREATED = "ARTIFACT_CREATED"
+    ERROR = "ERROR"
+
+
+class ToolCallStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ReportFormat(str, Enum):
+    MARKDOWN = "MARKDOWN"
+    DOCX = "DOCX"
