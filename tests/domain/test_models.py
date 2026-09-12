@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -196,3 +197,38 @@ def test_default_mappings_are_empty_and_immutable(model_factory):
         assert mapping == {}
         with pytest.raises(TypeError):
             mapping["new"] = "value"
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: dict.__setitem__(value, "bypassed", True),
+    lambda value: dict.update(value, bypassed=True),
+    lambda value: dict.__init__(value, bypassed=True),
+])
+def test_frozen_mappings_block_c_level_dict_mutation(mutation):
+    dataset = Dataset(name="sales.csv", source_uri="sales.csv", metadata={"safe": True})
+    metadata = dataset.metadata
+
+    assert isinstance(metadata, Mapping)
+    assert not isinstance(metadata, dict)
+    with pytest.raises(TypeError):
+        mutation(metadata)
+    assert "bypassed" not in metadata
+
+
+def test_model_copy_update_revalidates_and_deep_freezes_snapshot():
+    task = AnalysisTask(query="x", metadata={"history": [{"round": 1}]})
+
+    copied = task.model_copy(update={"metadata": {"history": [{"round": 2}]}})
+
+    with pytest.raises(TypeError):
+        copied.metadata["history"][0]["round"] = 3
+    assert task.metadata["history"][0]["round"] == 1
+    assert copied.metadata["history"][0]["round"] == 2
+
+    with pytest.raises(ValidationError, match="max_rounds"):
+        task.model_copy(update={"max_rounds": "10"})
+    with pytest.raises(ValidationError, match="unexpected"):
+        task.model_copy(update={"unexpected": "value"})
+
+    deep_copy = task.model_copy(deep=True)
+    assert deep_copy.metadata["history"][0]["round"] == 1

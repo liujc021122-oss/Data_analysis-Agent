@@ -1,5 +1,7 @@
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -29,18 +31,32 @@ def _nonblank(value: str) -> str:
     return value
 
 
-class FrozenDict(dict[str, Any]):
-    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+class FrozenDict(Mapping[str, Any]):
+    __slots__ = ("_data",)
+
+    def __init__(self, value: Mapping[str, Any] | None = None, /, **items: Any) -> None:
+        data = dict(value or ())
+        data.update(items)
+        object.__setattr__(self, "_data", MappingProxyType(data))
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __setattr__(self, name: str, value: Any) -> None:
         raise TypeError("frozen mapping is immutable")
 
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-    __ior__ = _immutable
+    def __deepcopy__(self, memo: dict[int, Any]) -> "FrozenDict":
+        copied = type(self)(
+            {deepcopy(key, memo): deepcopy(value, memo) for key, value in self.items()}
+        )
+        memo[id(self)] = copied
+        return copied
 
 
 def _freeze_nested(value: Any) -> Any:
@@ -52,6 +68,18 @@ def _freeze_nested(value: Any) -> Any:
         return tuple(_freeze_nested(item) for item in value)
     if isinstance(value, (set, frozenset)):
         return frozenset(_freeze_nested(item) for item in value)
+    return value
+
+
+def _serialize_nested(value: Any, mode: str) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat() if mode == "json" else value
+    if isinstance(value, FrozenDict):
+        return {key: _serialize_nested(item, mode) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_serialize_nested(item, mode) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_serialize_nested(item, mode) for item in value)
     return value
 
 
@@ -68,11 +96,17 @@ class DomainModel(BaseModel):
     def _freeze_nested_values(cls, value: Any) -> Any:
         return _freeze_nested(value)
 
-    @field_serializer("*", when_used="json")
-    def _serialize_json_value(self, value: Any) -> Any:
-        if isinstance(value, datetime):
-            return value.isoformat()
-        return value
+    @field_serializer("*", when_used="always")
+    def _serialize_value(self, value: Any, info: Any) -> Any:
+        return _serialize_nested(value, info.mode)
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False):
+        values = self.__dict__.copy()
+        if deep:
+            values = deepcopy(values)
+        if update:
+            values.update(update)
+        return type(self).model_validate(values)
 
 
 class Dataset(DomainModel):
