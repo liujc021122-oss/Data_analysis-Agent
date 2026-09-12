@@ -3,10 +3,9 @@ from types import SimpleNamespace
 
 from docx import Document
 
-import data_analysis_agent as agent_module
 from data_analysis_agent import DataAnalysisAgent
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
-from utils.word_report_generator import generate_word_report
+from data_analysis_agent.reports.word import generate_word_report
 
 
 SAMPLE_CHART = Path(__file__).resolve().parents[1] / "fixtures" / "sample_chart.png"
@@ -50,7 +49,7 @@ def test_word_generation_failure_keeps_markdown_and_exposes_report_error(tmp_pat
     def fail_word_generation(**kwargs):
         raise RuntimeError("baseline Word failure")
 
-    monkeypatch.setattr(agent_module, "generate_word_report", fail_word_generation)
+    monkeypatch.setattr("data_analysis_agent.agent.core.generate_word_report", fail_word_generation)
 
     result = agent._generate_final_report()
 

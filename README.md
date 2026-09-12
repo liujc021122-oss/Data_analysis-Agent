@@ -140,6 +140,9 @@ source .venv/bin/activate
 
 # 安装依赖
 pip install -r requirements.txt
+
+# 安装本项目（提供 data-analysis-agent 命令）
+pip install -e .
 ```
 
 ### 2. 配置 API 密钥
@@ -167,8 +170,7 @@ OPENAI_MODEL=deepseek-chat
 ### 3. 基本使用
 
 ```python
-from data_analysis_agent import DataAnalysisAgent
-from config.llm_config import LLMConfig
+from data_analysis_agent import DataAnalysisAgent, LLMConfig
 
 # 初始化智能体
 llm_config = LLMConfig()
@@ -206,7 +208,20 @@ report = quick_analysis(
 )
 ```
 
-### 5. 自定义配置
+### 5. 命令行使用
+
+统一 CLI 要求显式传入输入文件；模块入口、安装后的命令和根目录兼容入口使用同一套实现：
+
+```bash
+python -m data_analysis_agent your_data.csv
+data-analysis-agent your_data.csv
+python main.py your_data.csv              # 兼容旧入口
+python -m data_analysis_agent data1.csv data2.csv --query "分析销售数据"
+```
+
+以上命令不会自动补充 `cpc.csv` 或 `shop.csv`；请在命令中明确列出实际存在的文件。使用 `--help` 查看完整选项。
+
+### 6. 自定义配置
 
 ```python
 agent = DataAnalysisAgent(
@@ -221,13 +236,6 @@ markdown_only_agent = DataAnalysisAgent(
     llm_config=llm_config,
     generate_word_report=False,
 )
-```
-
-> `main.py` 提供了一个完整示例（默认使用本地数据 `cpc.csv` / `shop.csv`，也可传入你自己的数据文件）：
-
-```bash
-python main.py                                # 使用默认本地示例数据
-python main.py 你的数据1.csv 你的数据2.csv     # 传入自定义数据文件
 ```
 
 ## 📦 返回值说明
@@ -348,7 +356,7 @@ ALLOWED_IMPORTS = {
 
 ### 兼容性
 
-- 🐍 Python 3.8+
+- 🐍 Python 3.10+
 - 📊 支持 pandas 兼容的数据格式
 - 🖼️ 需要 matplotlib 中文字体支持（SimHei）
 

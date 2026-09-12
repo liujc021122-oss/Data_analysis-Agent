@@ -1,7 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import data_analysis_agent as agent_module
 from data_analysis_agent import DataAnalysisAgent
 
 
@@ -49,7 +48,7 @@ def test_word_conversion_failure_keeps_markdown_and_reports_error(tmp_path, monk
     def fail_conversion(**kwargs):
         raise RuntimeError("转换器不可用")
 
-    monkeypatch.setattr(agent_module, "generate_word_report", fail_conversion)
+    monkeypatch.setattr("data_analysis_agent.agent.core.generate_word_report", fail_conversion)
 
     result = agent._generate_final_report()
 

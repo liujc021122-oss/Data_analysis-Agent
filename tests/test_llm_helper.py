@@ -1,5 +1,5 @@
-from config.llm_config import LLMConfig
-from utils.llm_helper import LLMHelper
+from data_analysis_agent.config.llm import LLMConfig
+from data_analysis_agent.services.llm import LLMHelper
 
 
 def make_helper(model: str) -> LLMHelper:
