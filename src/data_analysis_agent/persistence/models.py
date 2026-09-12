@@ -1,0 +1,79 @@
+from datetime import datetime
+from typing import Any
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+
+
+class PersistenceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class DatasetRecord(PersistenceModel):
+    dataset_id: UUID = Field(default_factory=uuid4)
+    name: StrictStr
+    source_uri: StrictStr
+    content_type: StrictStr = "text/csv"
+    size_bytes: StrictInt = Field(default=0, ge=0)
+    checksum: StrictStr | None = None
+    created_at: datetime
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalysisTaskRecord(PersistenceModel):
+    task_id: UUID = Field(default_factory=uuid4)
+    query: StrictStr
+    dataset_ids_json: list[StrictStr] = Field(default_factory=list)
+    status: StrictStr = "PENDING"
+    max_rounds: StrictInt = Field(default=10, gt=0)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    error_code: StrictStr | None = None
+    error_message: StrictStr | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskEventRecord(PersistenceModel):
+    event_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID
+    event_type: StrictStr
+    from_status: StrictStr | None = None
+    to_status: StrictStr
+    message: StrictStr | None = None
+    occurred_at: datetime
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCallRecord(PersistenceModel):
+    tool_call_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID
+    tool_name: StrictStr
+    arguments_json: dict[str, Any] = Field(default_factory=dict)
+    result_json: dict[str, Any] | StrictStr | None = None
+    status: StrictStr = "PENDING"
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_message: StrictStr | None = None
+
+
+class ExecutionResultRecord(PersistenceModel):
+    execution_result_id: UUID = Field(default_factory=uuid4)
+    tool_call_id: UUID | None = None
+    success: StrictBool
+    output_text: StrictStr = ""
+    error_text: StrictStr | None = None
+    variables_json: dict[str, Any] = Field(default_factory=dict)
+    duration_ms: StrictInt | None = Field(default=None, ge=0)
+
+
+class ArtifactRecord(PersistenceModel):
+    artifact_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID
+    artifact_type: StrictStr
+    name: StrictStr
+    file_path: StrictStr | None = None
+    format: StrictStr | None = None
+    mime_type: StrictStr | None = None
+    content_hash: StrictStr | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
