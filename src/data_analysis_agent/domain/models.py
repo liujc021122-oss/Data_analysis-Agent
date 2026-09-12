@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -28,12 +29,44 @@ def _nonblank(value: str) -> str:
     return value
 
 
+class FrozenDict(dict[str, Any]):
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("frozen mapping is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+
+def _freeze_nested(value: Any) -> Any:
+    if isinstance(value, FrozenDict):
+        return value
+    if isinstance(value, Mapping):
+        return FrozenDict({key: _freeze_nested(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_nested(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_freeze_nested(item) for item in value)
+    return value
+
+
 class DomainModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
+        validate_default=True,
         validate_assignment=True,
     )
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _freeze_nested_values(cls, value: Any) -> Any:
+        return _freeze_nested(value)
 
     @field_serializer("*", when_used="json")
     def _serialize_json_value(self, value: Any) -> Any:

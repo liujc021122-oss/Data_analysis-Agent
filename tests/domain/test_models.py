@@ -124,3 +124,75 @@ def test_domain_snapshots_are_frozen():
 
     with pytest.raises(ValidationError):
         task.status = TaskStatus.RUNNING
+
+
+def test_nested_mappings_and_lists_are_immutable_and_keep_json_shapes():
+    task_id = uuid4()
+    dataset = Dataset(
+        name="sales.csv",
+        source_uri="sales.csv",
+        metadata={"columns": ["id", {"name": "value"}]},
+    )
+    tool_call = ToolCall(
+        task_id=task_id,
+        tool_name="code_executor",
+        arguments={"steps": [{"code": "print(1)"}]},
+        result={"rows": [{"value": 1}]},
+    )
+    execution_result = ExecutionResult(
+        success=True,
+        variables={"items": [{"value": 1}]},
+    )
+    state = AgentState(task_id=task_id, context={"history": [{"round": 1}]})
+
+    with pytest.raises(TypeError):
+        dataset.metadata["columns"] = []
+    with pytest.raises((AttributeError, TypeError)):
+        dataset.metadata["columns"].append("name")
+    with pytest.raises(TypeError):
+        dataset.metadata["columns"][1]["name"] = "changed"
+    with pytest.raises(TypeError):
+        tool_call.arguments["steps"][0]["code"] = "print(2)"
+    with pytest.raises(TypeError):
+        tool_call.result["rows"][0]["value"] = 2
+    with pytest.raises(TypeError):
+        execution_result.variables["items"][0]["value"] = 2
+    with pytest.raises(TypeError):
+        state.context["history"][0]["round"] = 2
+
+    assert json.loads(dataset.model_dump_json())["metadata"] == {
+        "columns": ["id", {"name": "value"}]
+    }
+    assert json.loads(tool_call.model_dump_json())["arguments"] == {
+        "steps": [{"code": "print(1)"}]
+    }
+
+
+@pytest.mark.parametrize(
+    "model_factory",
+    [
+        lambda: Dataset(name="sales.csv", source_uri="sales.csv"),
+        lambda: AnalysisTask(query="x"),
+        lambda: TaskEvent(
+            task_id=uuid4(),
+            event_type=TaskEventType.STATUS_CHANGED,
+            to_status=TaskStatus.PENDING,
+        ),
+        lambda: ToolCall(task_id=uuid4(), tool_name="code_executor"),
+        lambda: ExecutionResult(success=True),
+        lambda: AgentState(task_id=uuid4()),
+    ],
+)
+def test_default_mappings_are_empty_and_immutable(model_factory):
+    model = model_factory()
+    mapping_fields = [
+        field_name
+        for field_name in ("metadata", "arguments", "result", "variables", "context")
+        if hasattr(model, field_name) and getattr(model, field_name) is not None
+    ]
+
+    for field_name in mapping_fields:
+        mapping = getattr(model, field_name)
+        assert mapping == {}
+        with pytest.raises(TypeError):
+            mapping["new"] = "value"
