@@ -1,11 +1,27 @@
+from collections.abc import Mapping
+from datetime import date, datetime, time
+from enum import Enum
 from uuid import UUID
-
-from pydantic import ValidationError
 
 from ..domain.enums import TaskEventType, TaskStatus
 from ..domain.errors import PersistenceMappingError
 from ..domain.models import AnalysisTask, TaskEvent
 from .models import AnalysisTaskRecord, TaskEventRecord
+
+
+def _normalize_json_value(value):
+    if isinstance(value, Mapping):
+        return {
+            _normalize_json_value(key): _normalize_json_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (tuple, list, set, frozenset)):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, Enum):
+        return _normalize_json_value(value.value)
+    if isinstance(value, (datetime, date, time, UUID)):
+        return value.isoformat() if hasattr(value, "isoformat") else str(value)
+    return value
 
 
 def _enum_value(enum_type, value, field_name):
@@ -28,7 +44,7 @@ def task_to_record(task: AnalysisTask) -> AnalysisTaskRecord:
         updated_at=task.updated_at,
         error_code=task.error_code,
         error_message=task.error_message,
-        metadata_json=dict(task.metadata),
+        metadata_json=_normalize_json_value(task.metadata),
     )
 
 
@@ -48,9 +64,9 @@ def record_to_task(record: AnalysisTaskRecord) -> AnalysisTask:
             error_message=record.error_message,
             metadata=dict(record.metadata_json),
         )
-    except (TypeError, ValueError, ValidationError) as exc:
-        if isinstance(exc, PersistenceMappingError):
-            raise
+    except PersistenceMappingError:
+        raise
+    except Exception as exc:
         raise PersistenceMappingError(
             "Unable to map AnalysisTaskRecord to AnalysisTask"
         ) from exc
@@ -65,7 +81,7 @@ def event_to_record(event: TaskEvent) -> TaskEventRecord:
         to_status=event.to_status.value,
         message=event.message,
         occurred_at=event.occurred_at,
-        metadata_json=dict(event.metadata),
+        metadata_json=_normalize_json_value(event.metadata),
     )
 
 
@@ -85,7 +101,9 @@ def record_to_event(record: TaskEventRecord) -> TaskEvent:
             occurred_at=record.occurred_at,
             metadata=dict(record.metadata_json),
         )
-    except (TypeError, ValueError, ValidationError) as exc:
+    except PersistenceMappingError:
+        raise
+    except Exception as exc:
         raise PersistenceMappingError(
             "Unable to map TaskEventRecord to TaskEvent"
         ) from exc

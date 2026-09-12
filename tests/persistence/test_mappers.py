@@ -1,3 +1,4 @@
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -14,6 +15,17 @@ from data_analysis_agent.persistence.mappers import (
     task_to_record,
 )
 from data_analysis_agent.persistence.models import AnalysisTaskRecord, TaskEventRecord
+
+
+class ExplodingMapping(Mapping[str, object]):
+    def __getitem__(self, key: str) -> object:
+        raise RuntimeError("metadata access failed")
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("broken",))
+
+    def __len__(self) -> int:
+        return 1
 
 
 def test_task_record_is_distinct_and_round_trips_domain_values():
@@ -63,6 +75,62 @@ def test_task_event_record_round_trips_shared_enum_values():
     assert restored == event
 
 
+def test_task_to_record_recursively_normalizes_metadata_for_json():
+    nested_id = uuid4()
+    nested_time = datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
+    task = AnalysisTask(
+        query="分析",
+        metadata={
+            "nested": {
+                "ids": (nested_id,),
+                "when": nested_time,
+                "status": TaskStatus.PENDING,
+                "tags": frozenset({"offline"}),
+            }
+        },
+    )
+
+    record = task_to_record(task)
+
+    assert record.metadata_json == {
+        "nested": {
+            "ids": [str(nested_id)],
+            "when": nested_time.isoformat(),
+            "status": "PENDING",
+            "tags": ["offline"],
+        }
+    }
+    assert record.model_dump_json()
+
+
+def test_event_to_record_recursively_normalizes_metadata_for_json():
+    nested_id = uuid4()
+    nested_time = datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
+    event = TaskEvent(
+        task_id=uuid4(),
+        event_type=TaskEventType.STATUS_CHANGED,
+        to_status=TaskStatus.QUEUED,
+        metadata={
+            "nested": {
+                "ids": (nested_id,),
+                "when": nested_time,
+                "status": TaskStatus.QUEUED,
+            }
+        },
+    )
+
+    record = event_to_record(event)
+
+    assert record.metadata_json == {
+        "nested": {
+            "ids": [str(nested_id)],
+            "when": nested_time.isoformat(),
+            "status": "QUEUED",
+        }
+    }
+    assert record.model_dump_json()
+
+
 def test_invalid_persistence_status_is_reported_as_mapping_error():
     record = AnalysisTaskRecord(
         task_id=uuid4(),
@@ -72,6 +140,34 @@ def test_invalid_persistence_status_is_reported_as_mapping_error():
 
     with pytest.raises(PersistenceMappingError, match="status"):
         record_to_task(record)
+
+
+def test_record_to_task_converts_unexpected_metadata_errors_to_mapping_error():
+    record = AnalysisTaskRecord.model_construct(
+        query="分析",
+        status="PENDING",
+        metadata_json=ExplodingMapping(),
+    )
+
+    with pytest.raises(PersistenceMappingError) as error:
+        record_to_task(record)
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
+def test_record_to_event_converts_unexpected_metadata_errors_to_mapping_error():
+    record = TaskEventRecord.model_construct(
+        task_id=uuid4(),
+        event_type="STATUS_CHANGED",
+        to_status="QUEUED",
+        occurred_at=datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc),
+        metadata_json=ExplodingMapping(),
+    )
+
+    with pytest.raises(PersistenceMappingError) as error:
+        record_to_event(record)
+
+    assert isinstance(error.value.__cause__, RuntimeError)
 
 
 def test_persistence_records_forbid_unknown_columns():
