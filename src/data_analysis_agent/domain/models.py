@@ -91,6 +91,19 @@ class DomainModel(BaseModel):
         validate_assignment=True,
     )
 
+    @classmethod
+    def model_construct(cls, _fields_set: set[str] | None = None, **values: Any):
+        """Construct a domain snapshot while preserving ``_fields_set`` semantics.
+
+        Pydantic's trusted construction path skips validation, which would also
+        skip this model's recursive immutable normalization. Domain snapshots
+        therefore use the strict validation path for every public constructor.
+        """
+        model = cls.model_validate(values)
+        if _fields_set is not None:
+            object.__setattr__(model, "__pydantic_fields_set__", _fields_set)
+        return model
+
     @field_validator("*", mode="after")
     @classmethod
     def _freeze_nested_values(cls, value: Any) -> Any:

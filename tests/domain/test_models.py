@@ -232,3 +232,18 @@ def test_model_copy_update_revalidates_and_deep_freezes_snapshot():
 
     deep_copy = task.model_copy(deep=True)
     assert deep_copy.metadata["history"][0]["round"] == 1
+
+
+def test_model_construct_deep_freezes_nested_mapping_and_list():
+    dataset = Dataset.model_construct(
+        _fields_set={"name", "source_uri"},
+        name="x",
+        source_uri="x",
+        metadata={"x": []},
+    )
+
+    assert dataset.model_fields_set == {"name", "source_uri"}
+    with pytest.raises(TypeError):
+        dataset.metadata["x"] = []
+    with pytest.raises((AttributeError, TypeError)):
+        dataset.metadata["x"].append("mutated")
