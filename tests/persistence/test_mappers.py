@@ -142,6 +142,19 @@ def test_invalid_persistence_status_is_reported_as_mapping_error():
         record_to_task(record)
 
 
+def test_empty_persistence_from_status_is_reported_as_mapping_error():
+    record = TaskEventRecord(
+        task_id=uuid4(),
+        event_type="STATUS_CHANGED",
+        from_status="",
+        to_status="QUEUED",
+        occurred_at=datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(PersistenceMappingError, match="from_status"):
+        record_to_event(record)
+
+
 def test_record_to_task_converts_unexpected_metadata_errors_to_mapping_error():
     record = AnalysisTaskRecord.model_construct(
         query="分析",

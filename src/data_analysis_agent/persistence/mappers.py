@@ -93,7 +93,7 @@ def record_to_event(record: TaskEventRecord) -> TaskEvent:
             event_type=_enum_value(TaskEventType, record.event_type, "event_type"),
             from_status=(
                 _enum_value(TaskStatus, record.from_status, "from_status")
-                if record.from_status
+                if record.from_status is not None
                 else None
             ),
             to_status=_enum_value(TaskStatus, record.to_status, "to_status"),
