@@ -65,6 +65,34 @@ def test_illegal_transitions_raise_a_specific_domain_error(current, target):
     assert exc_info.value.target_status is target
 
 
+@pytest.mark.parametrize(
+    ("current", "target"),
+    [
+        ("BROKEN", TaskStatus.QUEUED),
+        (TaskStatus.PENDING, "BROKEN"),
+    ],
+)
+def test_can_transition_rejects_invalid_status_inputs_with_type_error(
+    current, target
+):
+    with pytest.raises(TypeError, match="must be a TaskStatus"):
+        can_transition(current, target)
+
+
+@pytest.mark.parametrize(
+    ("current", "target"),
+    [
+        ("BROKEN", TaskStatus.QUEUED),
+        (TaskStatus.PENDING, "BROKEN"),
+    ],
+)
+def test_transition_status_rejects_invalid_status_inputs_with_type_error(
+    current, target
+):
+    with pytest.raises(TypeError, match="must be a TaskStatus"):
+        transition_status(current, target)
+
+
 def test_transition_task_returns_a_new_task_and_status_event():
     occurred_at = datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
     task = AnalysisTask(query="分析样例", status=TaskStatus.PENDING)

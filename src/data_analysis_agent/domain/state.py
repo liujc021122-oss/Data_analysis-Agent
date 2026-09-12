@@ -67,7 +67,14 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
 }
 
 
+def _validate_status(value: object, *, name: str) -> None:
+    if not isinstance(value, TaskStatus):
+        raise TypeError(f"{name} must be a TaskStatus, got {value!r}")
+
+
 def can_transition(current: TaskStatus, target: TaskStatus) -> bool:
+    _validate_status(current, name="current")
+    _validate_status(target, name="target")
     return target in LEGAL_STATUS_TRANSITIONS[current]
 
 
