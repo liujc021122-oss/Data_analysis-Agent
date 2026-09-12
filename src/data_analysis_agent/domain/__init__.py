@@ -12,6 +12,12 @@ from .models import (
     TaskEvent,
     ToolCall,
 )
+from .state import (
+    LEGAL_STATUS_TRANSITIONS,
+    can_transition,
+    transition_status,
+    transition_task,
+)
 
 __all__ = [
     "DomainError",
@@ -31,4 +37,8 @@ __all__ = [
     "ReportArtifact",
     "TaskEvent",
     "ToolCall",
+    "LEGAL_STATUS_TRANSITIONS",
+    "can_transition",
+    "transition_status",
+    "transition_task",
 ]
