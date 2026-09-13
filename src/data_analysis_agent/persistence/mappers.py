@@ -3,10 +3,10 @@ from datetime import date, datetime, time
 from enum import Enum
 from uuid import UUID
 
-from ..domain.enums import TaskEventType, TaskStatus
+from ..domain.enums import ReportFormat, TaskEventType, TaskStatus
 from ..domain.errors import PersistenceMappingError
-from ..domain.models import AnalysisTask, TaskEvent
-from .models import AnalysisTaskRecord, TaskEventRecord
+from ..domain.models import AnalysisTask, ChartArtifact, ReportArtifact, TaskEvent
+from .models import AnalysisTaskRecord, ArtifactRecord, ReportRecord, TaskEventRecord
 
 
 def _normalize_json_value(value):
@@ -45,6 +45,8 @@ def task_to_record(task: AnalysisTask) -> AnalysisTaskRecord:
         error_code=task.error_code,
         error_message=task.error_message,
         metadata_json=_normalize_json_value(task.metadata),
+        model_call_count=task.model_call_count,
+        model_duration_ms=task.model_duration_ms,
     )
 
 
@@ -63,6 +65,8 @@ def record_to_task(record: AnalysisTaskRecord) -> AnalysisTask:
             error_code=record.error_code,
             error_message=record.error_message,
             metadata=dict(record.metadata_json),
+            model_call_count=record.model_call_count,
+            model_duration_ms=record.model_duration_ms,
         )
     except PersistenceMappingError:
         raise
@@ -107,3 +111,49 @@ def record_to_event(record: TaskEventRecord) -> TaskEvent:
         raise PersistenceMappingError(
             "Unable to map TaskEventRecord to TaskEvent"
         ) from exc
+
+
+def artifact_to_record(artifact: ChartArtifact | ReportArtifact, task_id: UUID) -> ArtifactRecord:
+    is_chart = isinstance(artifact, ChartArtifact)
+    return ArtifactRecord(
+        artifact_id=artifact.artifact_id,
+        task_id=task_id,
+        artifact_type="CHART" if is_chart else "REPORT",
+        name=artifact.filename if is_chart else artifact.file_path.rsplit("/", 1)[-1],
+        file_path=artifact.file_path,
+        format=None if is_chart else artifact.format.value,
+        mime_type=artifact.mime_type if is_chart else None,
+        content_hash=artifact.content_hash,
+        size_bytes=artifact.size_bytes,
+        description=artifact.description if is_chart else artifact.title,
+        source_tool_call_id=artifact.source_tool_call_id if is_chart else None,
+        metadata_json=_normalize_json_value(artifact.metadata),
+        created_at=artifact.created_at,
+    )
+
+
+def record_to_chart(record: ArtifactRecord) -> ChartArtifact:
+    return ChartArtifact(artifact_id=record.artifact_id, filename=record.name,
+        file_path=record.file_path or record.name, mime_type=record.mime_type or "image/png",
+        description=record.description, source_tool_call_id=record.source_tool_call_id,
+        size_bytes=record.size_bytes, content_hash=record.content_hash,
+        created_at=record.created_at, metadata=dict(record.metadata_json))
+
+
+def record_to_report_artifact(record: ArtifactRecord) -> ReportArtifact:
+    try:
+        fmt = ReportFormat(record.format or "")
+    except ValueError as exc:
+        raise PersistenceMappingError("Invalid format in persistence record") from exc
+    return ReportArtifact(artifact_id=record.artifact_id, format=fmt,
+        file_path=record.file_path or record.name, title=record.description,
+        content_hash=record.content_hash, size_bytes=record.size_bytes,
+        created_at=record.created_at, metadata=dict(record.metadata_json))
+
+
+def report_to_record(report: ReportRecord) -> ReportRecord:
+    return report
+
+
+chart_artifact_to_record = artifact_to_record
+report_artifact_to_record = artifact_to_record

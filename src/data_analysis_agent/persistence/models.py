@@ -1,12 +1,21 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 
 
 class PersistenceModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _normalize_timestamps(cls, value):
+        if isinstance(value, datetime):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("persistence datetimes must be timezone-aware")
+            return value.astimezone(timezone.utc)
+        return value
 
 
 class DatasetRecord(PersistenceModel):
@@ -18,6 +27,7 @@ class DatasetRecord(PersistenceModel):
     checksum: StrictStr | None = None
     created_at: datetime
     metadata_json: dict[str, Any] = Field(default_factory=dict)
+    user_id: UUID | None = None
 
 
 class AnalysisTaskRecord(PersistenceModel):
@@ -31,6 +41,11 @@ class AnalysisTaskRecord(PersistenceModel):
     error_code: StrictStr | None = None
     error_message: StrictStr | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
+    user_id: UUID | None = None
+    idempotency_key: StrictStr | None = None
+    request_hash: StrictStr | None = None
+    model_call_count: StrictInt = Field(default=0, ge=0)
+    model_duration_ms: StrictInt = Field(default=0, ge=0)
 
 
 class TaskEventRecord(PersistenceModel):
@@ -76,4 +91,23 @@ class ArtifactRecord(PersistenceModel):
     mime_type: StrictStr | None = None
     content_hash: StrictStr | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    size_bytes: StrictInt = Field(default=0, ge=0)
+    description: StrictStr | None = None
+    source_tool_call_id: UUID | None = None
+
+
+class UserRecord(PersistenceModel):
+    user_id: UUID = Field(default_factory=uuid4)
+    created_at: datetime
+
+
+class ReportRecord(PersistenceModel):
+    report_id: UUID = Field(default_factory=uuid4)
+    artifact_id: UUID
+    task_id: UUID
+    format: StrictStr
+    storage_uri: StrictStr
+    size_bytes: StrictInt = Field(default=0, ge=0)
+    content_hash: StrictStr | None = None
     created_at: datetime

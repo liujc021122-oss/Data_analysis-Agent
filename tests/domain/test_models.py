@@ -354,6 +354,20 @@ def test_analysis_task_defaults_to_pending_and_preserves_m00_execution_keys():
     assert result.variables == {}
 
 
+def test_analysis_task_model_statistics_are_strict_and_json_serializable():
+    task = AnalysisTask(query="分析", model_call_count=2, model_duration_ms=35)
+
+    assert task.model_call_count == 2
+    assert task.model_duration_ms == 35
+    assert json.loads(task.model_dump_json())["model_call_count"] == 2
+
+
+@pytest.mark.parametrize("field", ["model_call_count", "model_duration_ms"])
+def test_analysis_task_rejects_negative_model_statistics(field):
+    with pytest.raises(ValidationError):
+        AnalysisTask(query="分析", **{field: -1})
+
+
 @pytest.mark.parametrize(
     ("factory", "field"),
     [

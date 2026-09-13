@@ -286,6 +286,8 @@ class AnalysisTask(DomainModel):
     error_code: StrictStr | None = None
     error_message: StrictStr | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    model_call_count: StrictInt = Field(default=0, ge=0)
+    model_duration_ms: StrictInt = Field(default=0, ge=0)
 
     _validate_query = field_validator("query")(_nonblank)
 
@@ -346,6 +348,8 @@ class ChartArtifact(DomainModel):
     source_tool_call_id: UUID | None = None
     created_at: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    size_bytes: StrictInt = Field(default=0, ge=0)
+    content_hash: StrictStr | None = None
 
     _validate_filename = field_validator("filename")(_nonblank)
     _validate_file_path = field_validator("file_path")(_nonblank)
@@ -357,6 +361,7 @@ class ReportArtifact(DomainModel):
     file_path: StrictStr
     title: StrictStr | None = None
     content_hash: StrictStr | None = None
+    size_bytes: StrictInt = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

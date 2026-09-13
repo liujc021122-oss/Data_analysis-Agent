@@ -1,5 +1,6 @@
 from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
+import json
 from uuid import uuid4
 
 import pytest
@@ -7,14 +8,16 @@ from pydantic import ValidationError
 
 from data_analysis_agent.domain.enums import TaskEventType, TaskStatus
 from data_analysis_agent.domain.errors import PersistenceMappingError
-from data_analysis_agent.domain.models import AnalysisTask, TaskEvent
+from data_analysis_agent.domain.models import AnalysisTask, ChartArtifact, ReportArtifact, TaskEvent
 from data_analysis_agent.persistence.mappers import (
+    artifact_to_record,
     event_to_record,
     record_to_event,
     record_to_task,
     task_to_record,
 )
-from data_analysis_agent.persistence.models import AnalysisTaskRecord, TaskEventRecord
+from data_analysis_agent.persistence.models import AnalysisTaskRecord, ArtifactRecord, ReportRecord, TaskEventRecord
+from data_analysis_agent.domain.enums import ReportFormat
 
 
 class ExplodingMapping(Mapping[str, object]):
@@ -186,3 +189,35 @@ def test_record_to_event_converts_unexpected_metadata_errors_to_mapping_error():
 def test_persistence_records_forbid_unknown_columns():
     with pytest.raises(ValidationError):
         AnalysisTaskRecord(query="分析", status="PENDING", unknown_column=True)
+
+
+def test_report_record_and_artifact_record_are_json_serializable():
+    now = datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
+    report = ReportRecord(
+        report_id=uuid4(), artifact_id=uuid4(), task_id=uuid4(),
+        format="MARKDOWN", storage_uri="s3://bucket/report.md",
+        size_bytes=12, content_hash="sha256:abc", created_at=now,
+    )
+    artifact = ArtifactRecord(
+        artifact_id=uuid4(), task_id=report.task_id, artifact_type="REPORT",
+        name="report.md", file_path="s3://bucket/report.md", size_bytes=12,
+        content_hash="sha256:abc", created_at=now,
+    )
+
+    assert json.loads(report.model_dump_json())["size_bytes"] == 12
+    assert json.loads(artifact.model_dump_json())["file_path"].startswith("s3://")
+
+
+def test_artifacts_round_trip_through_records():
+    now = datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
+    chart = ChartArtifact(
+        filename="chart.png", file_path="s3://bucket/chart.png", size_bytes=8,
+        content_hash="sha256:chart", created_at=now,
+    )
+    report = ReportArtifact(
+        format=ReportFormat.MARKDOWN, file_path="s3://bucket/report.md",
+        size_bytes=12, created_at=now,
+    )
+
+    assert artifact_to_record(chart, task_id=uuid4()).artifact_type == "CHART"
+    assert artifact_to_record(report, task_id=uuid4()).artifact_type == "REPORT"
