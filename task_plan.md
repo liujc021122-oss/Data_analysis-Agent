@@ -14,10 +14,11 @@ Verify the domain, persistence, and API model boundaries; preserve M00/M01 behav
 ## Evidence
 
 - Cross-layer contract tests: `2 passed in 3.45s`.
-- Full no-key regression: `126 passed in 26.20s`.
+- Full no-key regression: `162 passed` after final domain snapshot hardening.
 - Compileall, module help, root help, pip check, diff check, and external import verification exited 0.
 - The specified external command first failed with exit `9009` because `Get-Command python` resolved to the WindowsApps alias; the safe explicit-venv interpreter rerun passed.
 - No Agent/Worker/API runtime orchestration was added or changed.
+- Final hardening commits: `da11b9f`, `22e2275`, `f66e235`, and `cc384f7` close immutable snapshot, canonical JSON, UTC, cycle/key, and stable-set-sorting boundaries.
 
 ## Constraints
 
