@@ -459,6 +459,7 @@ Expected: all schema/migration/MySQL compile tests pass. Commit:
 ```powershell
 git add src/data_analysis_agent/persistence/database.py src/data_analysis_agent/persistence/orm_models.py alembic.ini alembic tests/database
 git commit -m "feat: add SQLAlchemy schema and initial migration"
+```
 
 ### Task 3: Persistence Records and Domain/ORM Mappers
 
