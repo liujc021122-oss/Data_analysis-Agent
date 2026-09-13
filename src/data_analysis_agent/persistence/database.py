@@ -64,6 +64,10 @@ def create_engine_from_settings(settings: Settings) -> Engine:
             raise DatabaseConfigurationError(
                 "DATABASE_URL must use sqlite or mysql backend"
             )
+        if settings.app_env == "production" and url.get_backend_name() != "mysql":
+            raise DatabaseConfigurationError(
+                "DATABASE_URL must use MySQL in production"
+            )
         return create_engine(url, future=True, pool_pre_ping=True)
     except DatabaseConfigurationError:
         raise

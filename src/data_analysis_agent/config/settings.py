@@ -130,7 +130,7 @@ def load_settings(
     model = _nonblank(values.get("OPENAI_MODEL"))
     settings = Settings(
         app_env=environment,
-        database_url=values.get("DATABASE_URL"),
+        database_url=_nonblank(values.get("DATABASE_URL")),
         redis_url=values.get("REDIS_URL"),
         storage_endpoint=values.get("STORAGE_ENDPOINT"),
         storage_bucket=values.get("STORAGE_BUCKET"),

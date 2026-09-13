@@ -77,6 +77,20 @@ def test_production_missing_fields_are_named_without_values(tmp_path):
     assert "secret-value" not in message
 
 
+def test_production_whitespace_database_url_is_missing(tmp_path):
+    with pytest.raises(ConfigurationError, match="DATABASE_URL"):
+        load_settings(
+            app_env="production",
+            environ={
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": " \t\n",
+            },
+            dotenv_dir=tmp_path,
+        )
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [
@@ -91,7 +105,10 @@ def test_invalid_values_name_their_configuration_key(tmp_path, key, value):
         "OPENAI_API_KEY": "offline-key",
         "OPENAI_BASE_URL": "https://offline.invalid",
         "OPENAI_MODEL": "offline-model",
-        "DATABASE_URL": "sqlite:///production-test.sqlite3",
+        "DATABASE_URL": (
+            "mysql+pymysql://user:password@db.example.invalid:3306/"
+            "data_analysis"
+        ),
         key: value,
     }
 
@@ -113,7 +130,10 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
             "OPENAI_API_KEY": "secret-that-must-not-be-logged",
             "OPENAI_BASE_URL": "https://offline.invalid",
             "OPENAI_MODEL": "offline-model",
-            "DATABASE_URL": "sqlite:///production-test.sqlite3",
+            "DATABASE_URL": (
+                "mysql+pymysql://user:password@db.example.invalid:3306/"
+                "data_analysis"
+            ),
         },
         dotenv_dir=tmp_path,
     )

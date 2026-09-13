@@ -33,6 +33,41 @@ def test_database_factory_accepts_sqlite_url(tmp_path):
     assert database.session_factory.kw["expire_on_commit"] is False
 
 
+def test_database_factory_accepts_production_mysql_url_without_connecting():
+    settings = load_settings(
+        app_env="production",
+        environ={
+            "OPENAI_API_KEY": "offline-key",
+            "OPENAI_BASE_URL": "https://offline.invalid",
+            "OPENAI_MODEL": "offline-model",
+            "DATABASE_URL": (
+                "mysql+pymysql://user:password@db.example.invalid:3306/"
+                "data_analysis"
+            ),
+        },
+    )
+
+    database = Database.from_settings(settings)
+
+    assert database.engine.url.get_backend_name() == "mysql"
+    assert database.engine.url.drivername == "mysql+pymysql"
+
+
+def test_database_factory_rejects_sqlite_url_for_production(tmp_path):
+    settings = load_settings(
+        app_env="production",
+        environ={
+            "OPENAI_API_KEY": "offline-key",
+            "OPENAI_BASE_URL": "https://offline.invalid",
+            "OPENAI_MODEL": "offline-model",
+            "DATABASE_URL": f"sqlite:///{tmp_path / 'production.sqlite3'}",
+        },
+    )
+
+    with pytest.raises(DatabaseConfigurationError, match="DATABASE_URL|MySQL"):
+        Database.from_settings(settings)
+
+
 @pytest.mark.parametrize("database_url", ["not-a-url", "ftp://example.invalid/db"])
 def test_database_factory_rejects_unsupported_database_url(database_url):
     settings = load_settings(
