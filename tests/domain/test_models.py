@@ -1,6 +1,7 @@
 import json
 from collections.abc import Mapping
 from datetime import date, datetime, time, timezone, timedelta
+from enum import Enum
 from uuid import uuid4
 
 import pytest
@@ -88,6 +89,77 @@ JSON_CONTAINER_FACTORIES = [
 def test_json_container_fields_reject_non_json_values(factory):
     with pytest.raises(ValidationError):
         factory()
+
+
+@pytest.mark.parametrize("recursive_kind", ["dict", "list"])
+def test_json_container_fields_reject_recursive_dict_and_list(recursive_kind):
+    if recursive_kind == "dict":
+        recursive_value = {}
+        recursive_value["self"] = recursive_value
+    else:
+        recursive_value = []
+        recursive_value.append(recursive_value)
+
+    with pytest.raises(ValidationError):
+        AnalysisTask(query="x", metadata=recursive_value)
+
+
+def test_json_container_fields_allow_shared_non_recursive_subobjects():
+    shared = {"value": 1}
+
+    task = AnalysisTask(query="x", metadata={"first": shared, "second": shared})
+
+    assert task.metadata == {
+        "first": {"value": 1},
+        "second": {"value": 1},
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {1: "int"},
+        {("tuple",): "tuple"},
+        {1: "int", "1": "string"},
+    ],
+    ids=["integer-key", "tuple-key", "canonical-key-collision"],
+)
+def test_json_container_fields_reject_non_string_or_colliding_mapping_keys(metadata):
+    with pytest.raises(ValidationError):
+        AnalysisTask(query="x", metadata=metadata)
+
+
+def test_json_container_fields_keep_string_enum_mapping_keys():
+    task = AnalysisTask(query="x", metadata={TaskStatus.RUNNING: "active"})
+
+    assert task.metadata == {"RUNNING": "active"}
+
+
+@pytest.mark.parametrize(
+    ("enum_value", "expected"),
+    [
+        (7, 7),
+        (1.5, 1.5),
+        (True, True),
+        ("value", "value"),
+    ],
+    ids=["int", "float", "bool", "string"],
+)
+def test_json_container_fields_recursively_canonicalize_enum_values(enum_value, expected):
+    class CustomEnum(Enum):
+        VALUE = enum_value
+
+    task = AnalysisTask(query="x", metadata={"value": CustomEnum.VALUE})
+
+    assert task.metadata == {"value": expected}
+
+
+def test_json_container_fields_reject_enum_with_non_json_value():
+    class InvalidEnum(Enum):
+        VALUE = object()
+
+    with pytest.raises(ValidationError):
+        AnalysisTask(query="x", metadata={"value": InvalidEnum.VALUE})
 
 
 @pytest.mark.parametrize(

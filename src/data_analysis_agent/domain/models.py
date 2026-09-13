@@ -95,10 +95,15 @@ _DOMAIN_TIME_FIELDS = (
 )
 
 
-def _canonical_json_value(value: Any) -> Any:
+def _canonical_json_value(
+    value: Any, _active_container_ids: set[int] | None = None
+) -> Any:
     """Return an immutable, JSON-native representation of a metadata value."""
+    active_container_ids = (
+        _active_container_ids if _active_container_ids is not None else set()
+    )
     if isinstance(value, Enum):
-        return str(value.value)
+        return _canonical_json_value(value.value, active_container_ids)
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, datetime):
@@ -114,25 +119,64 @@ def _canonical_json_value(value: Any) -> Any:
     if type(value) is str:
         return value
     if isinstance(value, Mapping):
-        items = []
-        for key, item in value.items():
-            canonical_key = _canonical_json_value(key)
-            if not isinstance(canonical_key, str):
-                canonical_key = str(canonical_key)
-            items.append((canonical_key, _canonical_json_value(item)))
-        return FrozenDict(dict(items))
+        container_id = id(value)
+        if container_id in active_container_ids:
+            raise ValueError("JSON metadata contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            items = []
+            canonical_keys = set()
+            for key, item in value.items():
+                canonical_key = _canonical_json_value(key, active_container_ids)
+                if not isinstance(canonical_key, str):
+                    raise ValueError("JSON metadata mapping keys must be strings")
+                if canonical_key in canonical_keys:
+                    raise ValueError(
+                        "JSON metadata mapping keys must be unique after canonicalization"
+                    )
+                canonical_keys.add(canonical_key)
+                items.append(
+                    (
+                        canonical_key,
+                        _canonical_json_value(item, active_container_ids),
+                    )
+                )
+            return FrozenDict(items)
+        finally:
+            active_container_ids.remove(container_id)
     if isinstance(value, (list, tuple)):
-        return tuple(_canonical_json_value(item) for item in value)
-    if isinstance(value, (set, frozenset)):
-        canonical_items = [_canonical_json_value(item) for item in value]
-        return tuple(
-            sorted(
-                canonical_items,
-                key=lambda item: json.dumps(
-                    item, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                ),
+        container_id = id(value)
+        if container_id in active_container_ids:
+            raise ValueError("JSON metadata contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            return tuple(
+                _canonical_json_value(item, active_container_ids) for item in value
             )
-        )
+        finally:
+            active_container_ids.remove(container_id)
+    if isinstance(value, (set, frozenset)):
+        container_id = id(value)
+        if container_id in active_container_ids:
+            raise ValueError("JSON metadata contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            canonical_items = [
+                _canonical_json_value(item, active_container_ids) for item in value
+            ]
+            return tuple(
+                sorted(
+                    canonical_items,
+                    key=lambda item: json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
+        finally:
+            active_container_ids.remove(container_id)
     raise ValueError(
         f"value of type {type(value).__name__} is not JSON-serializable metadata"
     )
