@@ -134,6 +134,8 @@ def artifact_to_record(artifact: ChartArtifact | ReportArtifact, task_id: UUID) 
 
 
 def record_to_chart(record: ArtifactRecord) -> ChartArtifact:
+    if record.artifact_type != "CHART":
+        raise PersistenceMappingError("Invalid artifact_type in persistence record")
     return ChartArtifact(artifact_id=record.artifact_id, filename=record.name,
         file_path=record.file_path or record.name, mime_type=record.mime_type or "image/png",
         title=record.title, description=record.description, source_tool_call_id=record.source_tool_call_id,

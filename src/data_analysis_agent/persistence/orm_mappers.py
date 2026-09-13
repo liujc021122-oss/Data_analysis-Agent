@@ -5,41 +5,41 @@ from .orm_models import AnalysisTaskORM, ArtifactORM, DatasetORM, ExecutionORM, 
 from .models import AnalysisTaskRecord, ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord, TaskEventRecord, ToolCallRecord, UserRecord
 
 
-def _uuid(value):
+def _uuid(value: UUID | str) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
 
-def user_orm_to_record(row):
+def user_orm_to_record(row: UserORM) -> UserRecord:
     return UserRecord(user_id=_uuid(row.user_id), created_at=row.created_at)
 
 
-def dataset_orm_to_record(row):
+def dataset_orm_to_record(row: DatasetORM) -> DatasetRecord:
     return DatasetRecord(dataset_id=_uuid(row.dataset_id), user_id=_uuid(row.user_id), name=row.name, source_uri=row.source_uri, content_type=row.content_type, size_bytes=row.size_bytes or 0, checksum=row.checksum, created_at=row.created_at, metadata_json=deepcopy(row.metadata_json or {}))
 
 
-def task_orm_to_record(row, dataset_ids):
+def task_orm_to_record(row: AnalysisTaskORM, dataset_ids: list[UUID]) -> AnalysisTaskRecord:
     return AnalysisTaskRecord(task_id=_uuid(row.task_id), user_id=_uuid(row.user_id), idempotency_key=row.idempotency_key, request_hash=row.request_hash, query=row.query, dataset_ids_json=[str(_uuid(i)) for i in dataset_ids], status=row.status.value if hasattr(row.status, "value") else row.status, max_rounds=row.max_rounds, created_at=row.created_at, updated_at=row.updated_at, error_code=row.error_code, error_message=row.error_message, metadata_json=deepcopy(row.metadata_json or {}), model_call_count=row.model_call_count or 0, model_duration_ms=row.model_duration_ms or 0)
 
 
-def event_orm_to_record(row):
+def event_orm_to_record(row: TaskEventORM) -> TaskEventRecord:
     value = lambda x: x.value if hasattr(x, "value") else x
     return TaskEventRecord(event_id=_uuid(row.event_id), task_id=_uuid(row.task_id), event_type=value(row.event_type), from_status=value(row.from_status), to_status=value(row.to_status), message=row.message, occurred_at=row.occurred_at, metadata_json=deepcopy(row.metadata_json or {}))
 
 
-def tool_call_orm_to_record(row):
+def tool_call_orm_to_record(row: ToolCallORM) -> ToolCallRecord:
     value = lambda x: x.value if hasattr(x, "value") else x
     return ToolCallRecord(tool_call_id=_uuid(row.tool_call_id), task_id=_uuid(row.task_id), tool_name=row.tool_name, arguments_json=deepcopy(row.arguments_json or {}), result_json=deepcopy(row.result_json), status=value(row.status), started_at=row.started_at, finished_at=row.finished_at, error_message=row.error_message)
 
 
-def execution_orm_to_record(row):
+def execution_orm_to_record(row: ExecutionORM) -> ExecutionResultRecord:
     return ExecutionResultRecord(execution_result_id=_uuid(row.execution_result_id), tool_call_id=_uuid(row.tool_call_id) if row.tool_call_id else None, success=row.success, output_text=row.output_text, error_text=row.error_text, variables_json=deepcopy(row.variables_json or {}), duration_ms=row.duration_ms)
 
 
-def artifact_orm_to_record(row):
+def artifact_orm_to_record(row: ArtifactORM) -> ArtifactRecord:
     return ArtifactRecord(artifact_id=_uuid(row.artifact_id), task_id=_uuid(row.task_id), artifact_type=row.artifact_type, name=row.name, file_path=row.file_path, format=row.format.value if hasattr(row.format, "value") else row.format, mime_type=row.mime_type, content_hash=row.content_hash, size_bytes=row.size_bytes or 0, description=row.description, source_tool_call_id=_uuid(row.source_tool_call_id) if row.source_tool_call_id else None, metadata_json=deepcopy(row.metadata_json or {}), created_at=row.created_at)
 
 
-def report_orm_to_record(row):
+def report_orm_to_record(row: ReportORM) -> ReportRecord:
     return ReportRecord(report_id=_uuid(row.report_id), artifact_id=_uuid(row.artifact_id), task_id=_uuid(row.task_id), format=row.format.value if hasattr(row.format, "value") else row.format, storage_uri=row.storage_uri, size_bytes=row.size_bytes or 0, content_hash=row.content_hash, created_at=row.created_at)
 
 

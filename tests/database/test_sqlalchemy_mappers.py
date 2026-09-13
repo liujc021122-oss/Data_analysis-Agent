@@ -68,16 +68,38 @@ def test_all_orm_mappers_round_trip_fields_and_isolate_nested_json():
         artifact_record_to_orm(records[6]), report_record_to_orm(records[7]),
     ]
 
-    assert inverse[0] is not rows[0] and inverse[0].user_id == user_id and inverse[0].created_at == now
-    assert inverse[1] is not rows[1] and inverse[1].dataset_id == dataset_id and inverse[1].user_id == user_id
-    assert (inverse[1].name, inverse[1].source_uri, inverse[1].size_bytes, inverse[1].checksum) == (rows[1].name, rows[1].source_uri, rows[1].size_bytes, rows[1].checksum)
-    assert inverse[2] is not rows[2] and inverse[2].task_id == task_id and inverse[2].user_id == user_id
-    assert (inverse[2].idempotency_key, inverse[2].request_hash, inverse[2].status, inverse[2].model_call_count, inverse[2].model_duration_ms) == (rows[2].idempotency_key, rows[2].request_hash, "ANALYZING", 3, 99)
-    assert inverse[3] is not rows[3] and inverse[3].event_type == "STATUS_CHANGED" and inverse[3].from_status == "RUNNING" and inverse[3].to_status == "ANALYZING"
-    assert inverse[4] is not rows[4] and inverse[4].tool_call_id == tool_id and inverse[4].status == "SUCCEEDED" and inverse[4].arguments_json == rows[4].arguments_json
-    assert inverse[5] is not rows[5] and inverse[5].execution_result_id == rows[5].execution_result_id and inverse[5].variables_json == rows[5].variables_json
-    assert inverse[6] is not rows[6] and inverse[6].artifact_id == rows[6].artifact_id and inverse[6].source_tool_call_id == tool_id and inverse[6].format is None
-    assert inverse[7] is not rows[7] and inverse[7].report_id == rows[7].report_id and inverse[7].format == "DOCX" and inverse[7].storage_uri == rows[7].storage_uri
-    assert records[1].dataset_ids_json if hasattr(records[1], "dataset_ids_json") else True
-    records[1].metadata_json["columns"].append("mutated")
+    assert inverse[0] is not rows[0] and (inverse[0].user_id, inverse[0].created_at) == (user_id, now)
+    assert inverse[1] is not rows[1] and (inverse[1].dataset_id, inverse[1].user_id, inverse[1].name, inverse[1].source_uri, inverse[1].content_type, inverse[1].size_bytes, inverse[1].checksum, inverse[1].created_at) == (dataset_id, user_id, rows[1].name, rows[1].source_uri, rows[1].content_type, rows[1].size_bytes, rows[1].checksum, now)
+    assert inverse[2] is not rows[2] and (inverse[2].task_id, inverse[2].user_id, inverse[2].query, inverse[2].status, inverse[2].max_rounds, inverse[2].created_at, inverse[2].updated_at, inverse[2].error_code, inverse[2].error_message, inverse[2].idempotency_key, inverse[2].request_hash, inverse[2].model_call_count, inverse[2].model_duration_ms) == (task_id, user_id, rows[2].query, "ANALYZING", 7, now, now, "E1", "warning", "idem-1", "sha256:req", 3, 99)
+    assert inverse[3] is not rows[3] and (inverse[3].event_id, inverse[3].task_id, inverse[3].event_type, inverse[3].from_status, inverse[3].to_status, inverse[3].message, inverse[3].occurred_at) == (rows[3].event_id, task_id, "STATUS_CHANGED", "RUNNING", "ANALYZING", "started", now)
+    assert inverse[4] is not rows[4] and (inverse[4].tool_call_id, inverse[4].task_id, inverse[4].tool_name, inverse[4].status, inverse[4].started_at, inverse[4].finished_at, inverse[4].error_message) == (tool_id, task_id, "plot", "SUCCEEDED", now, now, None)
+    assert inverse[5] is not rows[5] and (inverse[5].execution_result_id, inverse[5].tool_call_id, inverse[5].success, inverse[5].output_text, inverse[5].error_text, inverse[5].duration_ms) == (rows[5].execution_result_id, tool_id, False, "", "failed", 11)
+    assert inverse[6] is not rows[6] and (inverse[6].artifact_id, inverse[6].task_id, inverse[6].artifact_type, inverse[6].name, inverse[6].file_path, inverse[6].format, inverse[6].mime_type, inverse[6].content_hash, inverse[6].size_bytes, inverse[6].description, inverse[6].source_tool_call_id, inverse[6].created_at) == (rows[6].artifact_id, task_id, "CHART", "sales.png", "s3://bucket/sales.png", None, "image/png", "sha256:img", 128, "chart desc", tool_id, now)
+    assert inverse[7] is not rows[7] and (inverse[7].report_id, inverse[7].artifact_id, inverse[7].task_id, inverse[7].format, inverse[7].storage_uri, inverse[7].size_bytes, inverse[7].content_hash, inverse[7].created_at) == (rows[7].report_id, rows[7].artifact_id, task_id, "DOCX", "s3://bucket/report.docx", 256, "sha256:report", now)
+    assert records[2].dataset_ids_json == [str(dataset_id)]
+    for index in (1, 2, 3, 4, 5, 6):
+        assert records[index].model_dump() != {}
+    records[1].metadata_json["columns"].append("record mutation")
+    records[2].metadata_json["nested"]["columns"].append("record mutation")
+    records[3].metadata_json["nested"]["columns"].append("record mutation")
+    records[4].arguments_json["config"]["columns"].append("record mutation")
+    records[5].variables_json["nested"]["columns"].append("record mutation")
+    records[6].metadata_json["nested"]["columns"].append("record mutation")
     assert rows[1].metadata_json == nested
+    assert rows[2].metadata_json == {"nested": nested}
+    assert rows[3].metadata_json == {"nested": nested}
+    assert rows[4].arguments_json == {"config": nested}
+    assert rows[5].variables_json == {"nested": nested}
+    assert rows[6].metadata_json == {"nested": nested}
+    inverse[1].metadata_json["columns"].append("orm mutation")
+    inverse[2].metadata_json["nested"]["columns"].append("orm mutation")
+    inverse[3].metadata_json["nested"]["columns"].append("orm mutation")
+    inverse[4].arguments_json["config"]["columns"].append("orm mutation")
+    inverse[5].variables_json["nested"]["columns"].append("orm mutation")
+    inverse[6].metadata_json["nested"]["columns"].append("orm mutation")
+    assert records[1].metadata_json["columns"] == ["id", {"name": "amount"}, "record mutation"]
+    assert records[2].metadata_json["nested"]["columns"] == ["id", {"name": "amount"}, "record mutation"]
+    assert records[3].metadata_json["nested"]["columns"] == ["id", {"name": "amount"}, "record mutation"]
+    assert records[4].arguments_json["config"]["columns"] == ["id", {"name": "amount"}, "record mutation"]
+    assert records[5].variables_json["nested"]["columns"] == ["id", {"name": "amount"}, "record mutation"]
+    assert records[6].metadata_json["nested"]["columns"] == ["id", {"name": "amount"}, "record mutation"]

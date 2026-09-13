@@ -247,3 +247,14 @@ def test_record_to_report_artifact_rejects_non_report_artifact_type():
 
     with pytest.raises(PersistenceMappingError, match="artifact_type"):
         record_to_report_artifact(record)
+
+
+@pytest.mark.parametrize("artifact_type", ["REPORT", "UNKNOWN"])
+def test_record_to_chart_rejects_non_chart_artifact_type(artifact_type):
+    record = ArtifactRecord(
+        task_id=uuid4(), artifact_type=artifact_type, name="artifact",
+        file_path="s3://bucket/artifact", created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(PersistenceMappingError, match="artifact_type"):
+        record_to_chart(record)
