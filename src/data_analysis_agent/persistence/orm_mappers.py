@@ -1,8 +1,15 @@
 from copy import deepcopy
+from collections.abc import Mapping
 from uuid import UUID
 
+from ..domain.errors import PersistenceMappingError
 from .orm_models import AnalysisTaskORM, ArtifactORM, DatasetORM, ExecutionORM, ReportORM, TaskEventORM, ToolCallORM, UserORM
 from .models import AnalysisTaskRecord, ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord, TaskEventRecord, ToolCallRecord, UserRecord
+
+
+ARTIFACT_PERSISTENCE_NAMESPACE = "__data_analysis_agent_persistence__"
+ARTIFACT_TITLE_METADATA_KEY = "artifact_title"
+_MISSING = object()
 
 
 def _uuid(value: UUID | str) -> UUID:
@@ -36,7 +43,8 @@ def execution_orm_to_record(row: ExecutionORM) -> ExecutionResultRecord:
 
 
 def artifact_orm_to_record(row: ArtifactORM) -> ArtifactRecord:
-    return ArtifactRecord(artifact_id=_uuid(row.artifact_id), task_id=_uuid(row.task_id), artifact_type=row.artifact_type, name=row.name, file_path=row.file_path, format=row.format.value if hasattr(row.format, "value") else row.format, mime_type=row.mime_type, content_hash=row.content_hash, size_bytes=row.size_bytes or 0, description=row.description, source_tool_call_id=_uuid(row.source_tool_call_id) if row.source_tool_call_id else None, metadata_json=deepcopy(row.metadata_json or {}), created_at=row.created_at)
+    metadata_json, title = _artifact_metadata_from_storage(row.metadata_json)
+    return ArtifactRecord(artifact_id=_uuid(row.artifact_id), task_id=_uuid(row.task_id), artifact_type=row.artifact_type, name=row.name, file_path=row.file_path, format=row.format.value if hasattr(row.format, "value") else row.format, mime_type=row.mime_type, content_hash=row.content_hash, size_bytes=row.size_bytes or 0, description=row.description, title=title, source_tool_call_id=_uuid(row.source_tool_call_id) if row.source_tool_call_id else None, metadata_json=metadata_json, created_at=row.created_at)
 
 
 def report_orm_to_record(row: ReportORM) -> ReportRecord:
@@ -68,8 +76,44 @@ def execution_record_to_orm(record: ExecutionResultRecord) -> ExecutionORM:
 
 
 def artifact_record_to_orm(record: ArtifactRecord) -> ArtifactORM:
-    return ArtifactORM(artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), artifact_type=record.artifact_type, name=record.name, file_path=record.file_path, format=record.format, mime_type=record.mime_type, content_hash=record.content_hash, size_bytes=record.size_bytes, description=record.description, source_tool_call_id=_uuid(record.source_tool_call_id) if record.source_tool_call_id else None, metadata_json=deepcopy(record.metadata_json), created_at=record.created_at)
+    return ArtifactORM(artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), artifact_type=record.artifact_type, name=record.name, file_path=record.file_path, format=record.format, mime_type=record.mime_type, content_hash=record.content_hash, size_bytes=record.size_bytes, description=record.description, source_tool_call_id=_uuid(record.source_tool_call_id) if record.source_tool_call_id else None, metadata_json=_artifact_metadata_for_storage(record.metadata_json, record.title), created_at=record.created_at)
 
 
 def report_record_to_orm(record: ReportRecord) -> ReportORM:
     return ReportORM(report_id=_uuid(record.report_id), artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), format=record.format, storage_uri=record.storage_uri, size_bytes=record.size_bytes, content_hash=record.content_hash, created_at=record.created_at)
+
+
+def _artifact_metadata_for_storage(metadata_json: Mapping, title: str | None) -> dict:
+    if not isinstance(metadata_json, Mapping):
+        raise PersistenceMappingError("artifact metadata must be a mapping")
+    if ARTIFACT_PERSISTENCE_NAMESPACE in metadata_json:
+        raise PersistenceMappingError(
+            "artifact metadata uses the reserved persistence namespace"
+        )
+    metadata = deepcopy(dict(metadata_json))
+    if title is not None:
+        metadata[ARTIFACT_PERSISTENCE_NAMESPACE] = {
+            ARTIFACT_TITLE_METADATA_KEY: title,
+        }
+    return metadata
+
+
+def _artifact_metadata_from_storage(metadata_json: Mapping | None) -> tuple[dict, str | None]:
+    if metadata_json is not None and not isinstance(metadata_json, Mapping):
+        raise PersistenceMappingError("artifact metadata must be a mapping")
+    metadata = deepcopy(dict(metadata_json or {}))
+    persistence_values = metadata.pop(ARTIFACT_PERSISTENCE_NAMESPACE, _MISSING)
+    if persistence_values is _MISSING:
+        return metadata, None
+    if not isinstance(persistence_values, Mapping):
+        raise PersistenceMappingError(
+            "invalid artifact persistence metadata namespace"
+        )
+    if set(persistence_values) != {ARTIFACT_TITLE_METADATA_KEY}:
+        raise PersistenceMappingError(
+            "invalid artifact persistence metadata namespace"
+        )
+    title = persistence_values[ARTIFACT_TITLE_METADATA_KEY]
+    if not isinstance(title, str):
+        raise PersistenceMappingError("invalid artifact title metadata")
+    return metadata, title

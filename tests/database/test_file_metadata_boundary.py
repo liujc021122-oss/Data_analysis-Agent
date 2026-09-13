@@ -1,5 +1,7 @@
+import builtins
 from datetime import datetime, timezone
 from pathlib import Path
+import shutil
 from uuid import uuid4
 
 from data_analysis_agent.persistence.models import ArtifactRecord
@@ -16,8 +18,12 @@ def test_artifact_repository_persists_metadata_without_copying_file(uow_factory,
         created_at=datetime.now(timezone.utc),
     )
     def forbidden(*args, **kwargs):
-        raise AssertionError("repository accessed file contents")
+        raise AssertionError("repository accessed or created a file")
+    monkeypatch.setattr(builtins, "open", forbidden)
     monkeypatch.setattr(Path, "read_bytes", forbidden)
+    monkeypatch.setattr(shutil, "copy", forbidden)
+    monkeypatch.setattr(shutil, "copy2", forbidden)
+    monkeypatch.setattr(Path, "mkdir", forbidden)
     with uow_factory() as uow:
         user_id = uuid4()
         uow.users.ensure(UserRecord(user_id=user_id, created_at=artifact.created_at))

@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 
 from ..domain.errors import PersistenceMappingError
 from ..domain.enums import ReportFormat, ToolCallStatus
-from ..domain.models import AnalysisTask, ExecutionResult, TaskEvent, ToolCall
+from ..domain.models import AnalysisTask, ExecutionResult, TaskEvent, ToolCall, utc_now
 from .errors import EntityNotFoundError
-from .mappers import event_to_record, record_to_event, record_to_task, task_to_record
+from .mappers import _normalize_json_value, event_to_record, record_to_event, record_to_task, task_to_record
 from .models import (
     ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord,
     ToolCallRecord, UserRecord,
@@ -30,9 +30,6 @@ from .orm_models import (
     AnalysisTaskORM, ArtifactORM, DatasetORM, ExecutionORM, ReportORM,
     TaskEventORM, ToolCallORM, UserORM, task_dataset_link,
 )
-from ..domain.models import utc_now
-
-
 class UserRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -169,7 +166,7 @@ class ToolCallRepository:
     def add(self, call: ToolCall) -> ToolCall:
         row = tool_call_record_to_orm(ToolCallRecord(
             tool_call_id=call.tool_call_id, task_id=call.task_id, tool_name=call.tool_name,
-            arguments_json=dict(call.arguments), result_json=call.result,
+            arguments_json=_normalize_json_value(call.arguments), result_json=_normalize_json_value(call.result),
             status=call.status.value, started_at=call.started_at, finished_at=call.finished_at,
             error_message=call.error_message,
         ))
@@ -215,7 +212,7 @@ class ExecutionRepository:
             raise ValueError("duration_ms must be non-negative")
         record = ExecutionResultRecord(execution_result_id=uuid4(), tool_call_id=tool_call_id,
             success=execution.success, output_text=execution.output, error_text=execution.error,
-            variables_json=dict(execution.variables), duration_ms=execution.duration_ms)
+            variables_json=_normalize_json_value(execution.variables), duration_ms=execution.duration_ms)
         row = execution_record_to_orm(record)
         row.created_at = utc_now()
         self.session.add(row)
@@ -242,7 +239,7 @@ class ArtifactRepository:
         row = artifact_record_to_orm(record)
         self.session.add(row)
         self.session.flush()
-        return artifact_orm_to_record(row)
+        return self._to_record(row)
 
     def get(self, artifact_id: UUID) -> ArtifactRecord | None:
         try:
@@ -251,6 +248,14 @@ class ArtifactRepository:
             raise PersistenceMappingError("Invalid artifact format in persistence record") from exc
         if not row:
             return None
+        return self._to_record(row)
+
+    def list_for_task(self, task_id: UUID) -> list[ArtifactRecord]:
+        rows = self.session.scalars(select(ArtifactORM).where(ArtifactORM.task_id == task_id).order_by(ArtifactORM.created_at, ArtifactORM.artifact_id)).all()
+        return [self._to_record(row) for row in rows]
+
+    @staticmethod
+    def _to_record(row: ArtifactORM) -> ArtifactRecord:
         try:
             record = artifact_orm_to_record(row)
             if record.format is not None:
@@ -258,10 +263,6 @@ class ArtifactRepository:
             return record
         except (LookupError, ValueError) as exc:
             raise PersistenceMappingError("Invalid artifact format in persistence record") from exc
-
-    def list_for_task(self, task_id: UUID) -> list[ArtifactRecord]:
-        rows = self.session.scalars(select(ArtifactORM).where(ArtifactORM.task_id == task_id).order_by(ArtifactORM.created_at, ArtifactORM.artifact_id)).all()
-        return [self.get(row.artifact_id) for row in rows]
 
 
 class ReportRepository:
