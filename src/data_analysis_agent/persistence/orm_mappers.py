@@ -43,11 +43,33 @@ def report_orm_to_record(row):
     return ReportRecord(report_id=_uuid(row.report_id), artifact_id=_uuid(row.artifact_id), task_id=_uuid(row.task_id), format=row.format.value if hasattr(row.format, "value") else row.format, storage_uri=row.storage_uri, size_bytes=row.size_bytes or 0, content_hash=row.content_hash, created_at=row.created_at)
 
 
-def user_record_to_orm(record): return UserORM(user_id=_uuid(record.user_id), created_at=record.created_at)
-def dataset_record_to_orm(record): return DatasetORM(user_id=_uuid(record.user_id), dataset_id=_uuid(record.dataset_id), name=record.name, source_uri=record.source_uri, content_type=record.content_type, size_bytes=record.size_bytes, checksum=record.checksum, created_at=record.created_at, metadata_json=deepcopy(record.metadata_json))
-def task_record_to_orm(record): return AnalysisTaskORM(task_id=_uuid(record.task_id), user_id=_uuid(record.user_id), idempotency_key=record.idempotency_key, request_hash=record.request_hash, query=record.query, status=record.status, max_rounds=record.max_rounds, created_at=record.created_at, updated_at=record.updated_at, error_code=record.error_code, error_message=record.error_message, metadata_json=deepcopy(record.metadata_json), model_call_count=record.model_call_count, model_duration_ms=record.model_duration_ms)
-def event_record_to_orm(record): return TaskEventORM(event_id=_uuid(record.event_id), task_id=_uuid(record.task_id), event_type=record.event_type, from_status=record.from_status, to_status=record.to_status, message=record.message, occurred_at=record.occurred_at, metadata_json=deepcopy(record.metadata_json))
-def tool_call_record_to_orm(record): return ToolCallORM(tool_call_id=_uuid(record.tool_call_id), task_id=_uuid(record.task_id), tool_name=record.tool_name, arguments_json=deepcopy(record.arguments_json), result_json=deepcopy(record.result_json), status=record.status, started_at=record.started_at, finished_at=record.finished_at, error_message=record.error_message)
-def execution_record_to_orm(record): return ExecutionORM(execution_result_id=_uuid(record.execution_result_id), tool_call_id=_uuid(record.tool_call_id) if record.tool_call_id else None, success=record.success, output_text=record.output_text, error_text=record.error_text, variables_json=deepcopy(record.variables_json), duration_ms=record.duration_ms)
-def artifact_record_to_orm(record): return ArtifactORM(artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), artifact_type=record.artifact_type, name=record.name, file_path=record.file_path, format=record.format, mime_type=record.mime_type, content_hash=record.content_hash, size_bytes=record.size_bytes, description=record.description, source_tool_call_id=_uuid(record.source_tool_call_id) if record.source_tool_call_id else None, metadata_json=deepcopy(record.metadata_json), created_at=record.created_at)
-def report_record_to_orm(record): return ReportORM(report_id=_uuid(record.report_id), artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), format=record.format, storage_uri=record.storage_uri, size_bytes=record.size_bytes, content_hash=record.content_hash, created_at=record.created_at)
+def user_record_to_orm(record: UserRecord) -> UserORM:
+    return UserORM(user_id=_uuid(record.user_id), created_at=record.created_at)
+
+
+def dataset_record_to_orm(record: DatasetRecord) -> DatasetORM:
+    return DatasetORM(user_id=_uuid(record.user_id), dataset_id=_uuid(record.dataset_id), name=record.name, source_uri=record.source_uri, content_type=record.content_type, size_bytes=record.size_bytes, checksum=record.checksum, created_at=record.created_at, metadata_json=deepcopy(record.metadata_json))
+
+
+def task_record_to_orm(record: AnalysisTaskRecord) -> AnalysisTaskORM:
+    return AnalysisTaskORM(task_id=_uuid(record.task_id), user_id=_uuid(record.user_id), idempotency_key=record.idempotency_key, request_hash=record.request_hash, query=record.query, status=record.status, max_rounds=record.max_rounds, created_at=record.created_at, updated_at=record.updated_at, error_code=record.error_code, error_message=record.error_message, metadata_json=deepcopy(record.metadata_json), model_call_count=record.model_call_count, model_duration_ms=record.model_duration_ms)
+
+
+def event_record_to_orm(record: TaskEventRecord) -> TaskEventORM:
+    return TaskEventORM(event_id=_uuid(record.event_id), task_id=_uuid(record.task_id), event_type=record.event_type, from_status=record.from_status, to_status=record.to_status, message=record.message, occurred_at=record.occurred_at, metadata_json=deepcopy(record.metadata_json))
+
+
+def tool_call_record_to_orm(record: ToolCallRecord) -> ToolCallORM:
+    return ToolCallORM(tool_call_id=_uuid(record.tool_call_id), task_id=_uuid(record.task_id), tool_name=record.tool_name, arguments_json=deepcopy(record.arguments_json), result_json=deepcopy(record.result_json), status=record.status, started_at=record.started_at, finished_at=record.finished_at, error_message=record.error_message)
+
+
+def execution_record_to_orm(record: ExecutionResultRecord) -> ExecutionORM:
+    return ExecutionORM(execution_result_id=_uuid(record.execution_result_id), tool_call_id=_uuid(record.tool_call_id) if record.tool_call_id else None, success=record.success, output_text=record.output_text, error_text=record.error_text, variables_json=deepcopy(record.variables_json), duration_ms=record.duration_ms)
+
+
+def artifact_record_to_orm(record: ArtifactRecord) -> ArtifactORM:
+    return ArtifactORM(artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), artifact_type=record.artifact_type, name=record.name, file_path=record.file_path, format=record.format, mime_type=record.mime_type, content_hash=record.content_hash, size_bytes=record.size_bytes, description=record.description, source_tool_call_id=_uuid(record.source_tool_call_id) if record.source_tool_call_id else None, metadata_json=deepcopy(record.metadata_json), created_at=record.created_at)
+
+
+def report_record_to_orm(record: ReportRecord) -> ReportORM:
+    return ReportORM(report_id=_uuid(record.report_id), artifact_id=_uuid(record.artifact_id), task_id=_uuid(record.task_id), format=record.format, storage_uri=record.storage_uri, size_bytes=record.size_bytes, content_hash=record.content_hash, created_at=record.created_at)

@@ -126,6 +126,7 @@ def artifact_to_record(artifact: ChartArtifact | ReportArtifact, task_id: UUID) 
         content_hash=artifact.content_hash,
         size_bytes=artifact.size_bytes,
         description=artifact.description if is_chart else artifact.title,
+        title=artifact.title if is_chart else None,
         source_tool_call_id=artifact.source_tool_call_id if is_chart else None,
         metadata_json=_normalize_json_value(artifact.metadata),
         created_at=artifact.created_at,
@@ -135,12 +136,14 @@ def artifact_to_record(artifact: ChartArtifact | ReportArtifact, task_id: UUID) 
 def record_to_chart(record: ArtifactRecord) -> ChartArtifact:
     return ChartArtifact(artifact_id=record.artifact_id, filename=record.name,
         file_path=record.file_path or record.name, mime_type=record.mime_type or "image/png",
-        description=record.description, source_tool_call_id=record.source_tool_call_id,
+        title=record.title, description=record.description, source_tool_call_id=record.source_tool_call_id,
         size_bytes=record.size_bytes, content_hash=record.content_hash,
         created_at=record.created_at, metadata=dict(record.metadata_json))
 
 
 def record_to_report_artifact(record: ArtifactRecord) -> ReportArtifact:
+    if record.artifact_type != "REPORT":
+        raise PersistenceMappingError("Invalid artifact_type in persistence record")
     try:
         fmt = ReportFormat(record.format or "")
     except ValueError as exc:

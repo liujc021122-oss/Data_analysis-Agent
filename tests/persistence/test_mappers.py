@@ -13,6 +13,8 @@ from data_analysis_agent.persistence.mappers import (
     artifact_to_record,
     event_to_record,
     record_to_event,
+    record_to_chart,
+    record_to_report_artifact,
     record_to_task,
     task_to_record,
 )
@@ -221,3 +223,27 @@ def test_artifacts_round_trip_through_records():
 
     assert artifact_to_record(chart, task_id=uuid4()).artifact_type == "CHART"
     assert artifact_to_record(report, task_id=uuid4()).artifact_type == "REPORT"
+
+
+def test_chart_artifact_round_trip_preserves_title_and_description():
+    chart = ChartArtifact(
+        filename="chart.png", file_path="s3://bucket/chart.png", title="Revenue trend",
+        description="Monthly revenue", size_bytes=8, content_hash="sha256:chart",
+    )
+
+    record = artifact_to_record(chart, task_id=uuid4())
+    restored = record_to_chart(record)
+
+    assert record.description == "Monthly revenue"
+    assert restored.title == "Revenue trend"
+    assert restored.description == chart.description
+
+
+def test_record_to_report_artifact_rejects_non_report_artifact_type():
+    record = ArtifactRecord(
+        task_id=uuid4(), artifact_type="CHART", name="chart.png",
+        file_path="s3://bucket/chart.png", created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(PersistenceMappingError, match="artifact_type"):
+        record_to_report_artifact(record)

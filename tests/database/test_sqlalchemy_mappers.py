@@ -41,3 +41,43 @@ def test_each_orm_row_maps_to_json_serializable_record():
         artifact_record_to_orm(records[6]), report_record_to_orm(records[7]),
     ]
     assert all(type(row).__name__.endswith("ORM") for row in round_tripped)
+
+
+def test_all_orm_mappers_round_trip_fields_and_isolate_nested_json():
+    now = datetime(2026, 9, 12, 16, 0, tzinfo=timezone.utc)
+    user_id, dataset_id, task_id, tool_id = (uuid4() for _ in range(4))
+    nested = {"columns": ["id", {"name": "amount"}]}
+    rows = [
+        UserORM(user_id=user_id, created_at=now),
+        DatasetORM(dataset_id=dataset_id, user_id=user_id, name="sales.csv", source_uri="s3://bucket/sales.csv", content_type="text/csv", size_bytes=42, checksum="sha256:data", created_at=now, metadata_json=nested),
+        AnalysisTaskORM(task_id=task_id, user_id=user_id, idempotency_key="idem-1", request_hash="sha256:req", query="分析销售", status=TaskStatus.ANALYZING, max_rounds=7, created_at=now, updated_at=now, error_code="E1", error_message="warning", metadata_json={"nested": nested}, model_call_count=3, model_duration_ms=99),
+        TaskEventORM(event_id=uuid4(), task_id=task_id, event_type=TaskEventType.STATUS_CHANGED, from_status=TaskStatus.RUNNING, to_status=TaskStatus.ANALYZING, message="started", occurred_at=now, metadata_json={"nested": nested}),
+        ToolCallORM(tool_call_id=tool_id, task_id=task_id, tool_name="plot", arguments_json={"config": nested}, result_json={"rows": [1]}, status=ToolCallStatus.SUCCEEDED, started_at=now, finished_at=now, error_message=None),
+        ExecutionORM(execution_result_id=uuid4(), tool_call_id=tool_id, success=False, output_text="", error_text="failed", variables_json={"nested": nested}, duration_ms=11, created_at=now),
+        ArtifactORM(artifact_id=uuid4(), task_id=task_id, artifact_type="CHART", name="sales.png", file_path="s3://bucket/sales.png", format=None, mime_type="image/png", content_hash="sha256:img", size_bytes=128, description="chart desc", source_tool_call_id=tool_id, metadata_json={"nested": nested}, created_at=now),
+        ReportORM(report_id=uuid4(), artifact_id=uuid4(), task_id=task_id, format=ReportFormat.DOCX, storage_uri="s3://bucket/report.docx", size_bytes=256, content_hash="sha256:report", created_at=now),
+    ]
+    records = [
+        user_orm_to_record(rows[0]), dataset_orm_to_record(rows[1]), task_orm_to_record(rows[2], [dataset_id]),
+        event_orm_to_record(rows[3]), tool_call_orm_to_record(rows[4]), execution_orm_to_record(rows[5]),
+        artifact_orm_to_record(rows[6]), report_orm_to_record(rows[7]),
+    ]
+    inverse = [
+        user_record_to_orm(records[0]), dataset_record_to_orm(records[1]), task_record_to_orm(records[2]),
+        event_record_to_orm(records[3]), tool_call_record_to_orm(records[4]), execution_record_to_orm(records[5]),
+        artifact_record_to_orm(records[6]), report_record_to_orm(records[7]),
+    ]
+
+    assert inverse[0] is not rows[0] and inverse[0].user_id == user_id and inverse[0].created_at == now
+    assert inverse[1] is not rows[1] and inverse[1].dataset_id == dataset_id and inverse[1].user_id == user_id
+    assert (inverse[1].name, inverse[1].source_uri, inverse[1].size_bytes, inverse[1].checksum) == (rows[1].name, rows[1].source_uri, rows[1].size_bytes, rows[1].checksum)
+    assert inverse[2] is not rows[2] and inverse[2].task_id == task_id and inverse[2].user_id == user_id
+    assert (inverse[2].idempotency_key, inverse[2].request_hash, inverse[2].status, inverse[2].model_call_count, inverse[2].model_duration_ms) == (rows[2].idempotency_key, rows[2].request_hash, "ANALYZING", 3, 99)
+    assert inverse[3] is not rows[3] and inverse[3].event_type == "STATUS_CHANGED" and inverse[3].from_status == "RUNNING" and inverse[3].to_status == "ANALYZING"
+    assert inverse[4] is not rows[4] and inverse[4].tool_call_id == tool_id and inverse[4].status == "SUCCEEDED" and inverse[4].arguments_json == rows[4].arguments_json
+    assert inverse[5] is not rows[5] and inverse[5].execution_result_id == rows[5].execution_result_id and inverse[5].variables_json == rows[5].variables_json
+    assert inverse[6] is not rows[6] and inverse[6].artifact_id == rows[6].artifact_id and inverse[6].source_tool_call_id == tool_id and inverse[6].format is None
+    assert inverse[7] is not rows[7] and inverse[7].report_id == rows[7].report_id and inverse[7].format == "DOCX" and inverse[7].storage_uri == rows[7].storage_uri
+    assert records[1].dataset_ids_json if hasattr(records[1], "dataset_ids_json") else True
+    records[1].metadata_json["columns"].append("mutated")
+    assert rows[1].metadata_json == nested

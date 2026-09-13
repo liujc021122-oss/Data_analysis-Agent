@@ -94,6 +94,7 @@ class ArtifactRecord(PersistenceModel):
     created_at: datetime
     size_bytes: StrictInt = Field(default=0, ge=0)
     description: StrictStr | None = None
+    title: StrictStr | None = None
     source_tool_call_id: UUID | None = None
 
 
