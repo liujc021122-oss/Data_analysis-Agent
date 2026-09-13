@@ -64,6 +64,15 @@ class DatasetRepository:
         row = self.session.get(DatasetORM, dataset_id)
         return dataset_orm_to_record(row) if row else None
 
+    def get_for_user(self, dataset_id: UUID, user_id: UUID) -> DatasetRecord | None:
+        row = self.session.scalar(
+            select(DatasetORM).where(
+                DatasetORM.dataset_id == dataset_id,
+                DatasetORM.user_id == user_id,
+            )
+        )
+        return dataset_orm_to_record(row) if row else None
+
     def list_for_user(self, user_id: UUID) -> list[DatasetRecord]:
         rows = self.session.scalars(select(DatasetORM).where(DatasetORM.user_id == user_id).order_by(DatasetORM.created_at, DatasetORM.dataset_id)).all()
         return [dataset_orm_to_record(row) for row in rows]

@@ -24,7 +24,7 @@ class TaskPersistenceService:
         with self.uow_factory() as uow:
             uow.users.ensure(UserRecord(user_id=user_id, created_at=utc_now()))
             for dataset_id in request.dataset_ids:
-                if uow.datasets.get(dataset_id) is None:
+                if uow.datasets.get_for_user(dataset_id, user_id) is None:
                     raise EntityNotFoundError(f"dataset {dataset_id} not found")
             result = uow.tasks.create_idempotent_with_result(
                 user_id=user_id,

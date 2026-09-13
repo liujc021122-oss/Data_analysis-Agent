@@ -10,7 +10,11 @@ from data_analysis_agent.domain.errors import InvalidStatusTransitionError
 from data_analysis_agent.domain.models import utc_now
 from data_analysis_agent.persistence.errors import EntityNotFoundError
 from data_analysis_agent.persistence.models import DatasetRecord, UserRecord
-from data_analysis_agent.persistence.orm_models import AnalysisTaskORM, TaskEventORM
+from data_analysis_agent.persistence.orm_models import (
+    AnalysisTaskORM,
+    TaskEventORM,
+    task_dataset_link,
+)
 from data_analysis_agent.services.persistence import TaskPersistenceService
 
 
@@ -59,6 +63,28 @@ def test_missing_dataset_rolls_back_user_and_task(uow_factory):
         )
     with uow_factory() as uow:
         assert uow.users.get(user_id) is None
+
+
+def test_create_task_rejects_dataset_owned_by_another_user_without_side_effects(
+    uow_factory,
+):
+    owner_id, requester_id, dataset_id = uuid4(), uuid4(), uuid4()
+    with uow_factory() as uow:
+        uow.users.ensure(UserRecord(user_id=owner_id, created_at=utc_now()))
+        uow.datasets.add(_dataset(owner_id, dataset_id))
+        uow.commit()
+
+    with pytest.raises(EntityNotFoundError):
+        TaskPersistenceService(uow_factory).create_task(
+            user_id=requester_id,
+            request=_request("cross-tenant", dataset_ids=(dataset_id,)),
+        )
+
+    with uow_factory() as uow:
+        assert uow.users.get(requester_id) is None
+        assert uow.session.scalars(select(AnalysisTaskORM)).all() == []
+        assert uow.session.execute(select(task_dataset_link)).all() == []
+        assert uow.session.scalars(select(TaskEventORM)).all() == []
 
 
 def test_event_failure_rolls_back_task_and_initial_event(uow_factory, monkeypatch):
