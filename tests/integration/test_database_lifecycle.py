@@ -1,5 +1,9 @@
+import logging
 from pathlib import Path
 from uuid import uuid4
+
+from alembic import command
+from alembic.config import Config
 
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
 from data_analysis_agent.domain.enums import TaskStatus
@@ -88,3 +92,15 @@ def test_task_and_metadata_survive_engine_and_session_restart(tmp_path: Path):
         assert [path.name for path in tmp_path.iterdir()] == ["persistent.sqlite3"]
     finally:
         second.engine.dispose()
+
+
+def test_alembic_migration_does_not_disable_application_logger(tmp_path: Path):
+    database_path = tmp_path / "logger.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    application_logger = logging.getLogger("data_analysis_agent")
+    application_logger.disabled = False
+
+    command.upgrade(config, "head")
+
+    assert application_logger.disabled is False
