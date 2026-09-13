@@ -73,6 +73,7 @@ def test_production_missing_fields_are_named_without_values(tmp_path):
     assert "OPENAI_API_KEY" in message
     assert "OPENAI_BASE_URL" in message
     assert "OPENAI_MODEL" in message
+    assert "DATABASE_URL" in message
     assert "secret-value" not in message
 
 
@@ -90,6 +91,7 @@ def test_invalid_values_name_their_configuration_key(tmp_path, key, value):
         "OPENAI_API_KEY": "offline-key",
         "OPENAI_BASE_URL": "https://offline.invalid",
         "OPENAI_MODEL": "offline-model",
+        "DATABASE_URL": "sqlite:///production-test.sqlite3",
         key: value,
     }
 
@@ -111,6 +113,7 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
             "OPENAI_API_KEY": "secret-that-must-not-be-logged",
             "OPENAI_BASE_URL": "https://offline.invalid",
             "OPENAI_MODEL": "offline-model",
+            "DATABASE_URL": "sqlite:///production-test.sqlite3",
         },
         dotenv_dir=tmp_path,
     )

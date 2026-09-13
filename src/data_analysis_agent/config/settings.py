@@ -157,6 +157,7 @@ def load_settings(
                 ("OPENAI_API_KEY", settings.openai_api_key),
                 ("OPENAI_BASE_URL", settings.openai_base_url),
                 ("OPENAI_MODEL", settings.openai_model),
+                ("DATABASE_URL", settings.database_url),
             )
             if not value
         ]
