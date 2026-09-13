@@ -7,6 +7,13 @@ from data_analysis_agent.persistence.unit_of_work import UnitOfWork
 from data_analysis_agent.config.settings import load_settings
 
 
+def settings_for(database_url: str):
+    return load_settings(
+        app_env="test",
+        environ={"APP_ENV": "test", "DATABASE_URL": database_url},
+    )
+
+
 @pytest.fixture
 def engine(tmp_path: Path):
     settings = load_settings(

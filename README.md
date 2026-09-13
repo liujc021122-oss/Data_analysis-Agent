@@ -379,6 +379,23 @@ A: GitHub、Typora、VS Code 等支持 Mermaid 的环境可直接渲染；若本
 
 分析过程中的错误信息会保存在会话目录中，便于调试和优化。
 
+## 💾 持久化与部署
+
+生产环境使用 MySQL。配置示例：
+
+```text
+APP_ENV=production
+DATABASE_URL=mysql+pymysql://user:password@host:3306/data_analysis
+
+# 创建或升级生产数据库结构
+python -m alembic upgrade head
+
+# 离线测试使用临时 SQLite，不调用 MySQL、LLM 或对象存储
+python -m pytest tests/database tests/integration -q
+```
+
+`datasets.source_uri`、`artifacts.file_path` 和 `reports.storage_uri` 都是外部地址；持久化层只保存元数据，不读取、复制或写入 CSV、图片、Markdown 或 DOCX 内容。相同用户和 `idempotency_key` 的重复请求会返回原任务；同一用户复用 key 但请求内容变化时会报冲突。
+
 ## 🤝 贡献指南
 
 欢迎贡献代码和改进建议！
