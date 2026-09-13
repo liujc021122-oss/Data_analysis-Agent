@@ -27,6 +27,7 @@ def upgrade() -> None:
         sa.Column("content_type", sa.String(255), nullable=False), sa.Column("size_bytes", sa.BigInteger(), nullable=False),
         sa.Column("checksum", sa.String(255)), sa.Column("created_at", UTCDateTime(), nullable=False),
         sa.Column("metadata_json", sa.JSON(), nullable=False),
+        sa.CheckConstraint("size_bytes >= 0", name="ck_datasets_size_bytes_non_negative"),
     )
     op.create_index("ix_datasets_user_id", "datasets", ["user_id"])
     op.create_table("analysis_tasks",
@@ -39,6 +40,9 @@ def upgrade() -> None:
         sa.Column("error_code", sa.String(255)), sa.Column("error_message", sa.Text()), sa.Column("metadata_json", sa.JSON(), nullable=False),
         sa.Column("model_call_count", sa.BigInteger(), nullable=False), sa.Column("model_duration_ms", sa.BigInteger(), nullable=False),
         sa.UniqueConstraint("user_id", "idempotency_key", name="uq_analysis_tasks_user_idempotency"),
+        sa.CheckConstraint("max_rounds > 0", name="ck_analysis_tasks_max_rounds_positive"),
+        sa.CheckConstraint("model_call_count >= 0", name="ck_analysis_tasks_model_call_count_non_negative"),
+        sa.CheckConstraint("model_duration_ms >= 0", name="ck_analysis_tasks_model_duration_ms_non_negative"),
     )
     op.create_index("ix_analysis_tasks_status", "analysis_tasks", ["status"])
     op.create_index("ix_analysis_tasks_created_at", "analysis_tasks", ["created_at"])
@@ -54,6 +58,7 @@ def upgrade() -> None:
         sa.Column("from_status", _enum("PENDING", "QUEUED", "RUNNING", "EXPLORING", "CLEANING", "ANALYZING", "VALIDATING", "REPORTING", "COMPLETED", "FAILED", "CANCELLED", name="ck_task_events_from_status")),
         sa.Column("to_status", _enum("PENDING", "QUEUED", "RUNNING", "EXPLORING", "CLEANING", "ANALYZING", "VALIDATING", "REPORTING", "COMPLETED", "FAILED", "CANCELLED", name="ck_task_events_to_status"), nullable=False),
         sa.Column("message", sa.Text()), sa.Column("occurred_at", UTCDateTime(), nullable=False), sa.Column("metadata_json", sa.JSON(), nullable=False),
+        sa.CheckConstraint("event_type != 'STATUS_CHANGED' OR (from_status IS NULL AND to_status = 'PENDING') OR (from_status = 'PENDING' AND to_status IN ('QUEUED', 'FAILED', 'CANCELLED')) OR (from_status = 'QUEUED' AND to_status IN ('RUNNING', 'FAILED', 'CANCELLED')) OR (from_status = 'RUNNING' AND to_status IN ('EXPLORING', 'CLEANING', 'ANALYZING', 'VALIDATING', 'REPORTING', 'FAILED', 'CANCELLED')) OR (from_status = 'EXPLORING' AND to_status IN ('CLEANING', 'ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR (from_status = 'CLEANING' AND to_status IN ('ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR (from_status = 'ANALYZING' AND to_status IN ('EXPLORING', 'CLEANING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR (from_status = 'VALIDATING' AND to_status IN ('ANALYZING', 'REPORTING', 'FAILED', 'CANCELLED')) OR (from_status = 'REPORTING' AND to_status IN ('COMPLETED', 'FAILED', 'CANCELLED'))", name="ck_task_events_legal_status_transition"),
     )
     op.create_index("ix_task_events_task_occurred", "task_events", ["task_id", "occurred_at"])
     op.create_table("tool_calls",
@@ -67,6 +72,7 @@ def upgrade() -> None:
         sa.Column("execution_result_id", UUIDString(), primary_key=True), sa.Column("tool_call_id", UUIDString(), sa.ForeignKey("tool_calls.tool_call_id")),
         sa.Column("success", sa.Boolean(), nullable=False), sa.Column("output_text", sa.Text(), nullable=False), sa.Column("error_text", sa.Text()),
         sa.Column("variables_json", sa.JSON(), nullable=False), sa.Column("duration_ms", sa.BigInteger()), sa.Column("created_at", UTCDateTime(), nullable=False),
+        sa.CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="ck_executions_duration_ms_non_negative"),
     )
     op.create_table("artifacts",
         sa.Column("artifact_id", UUIDString(), primary_key=True), sa.Column("task_id", UUIDString(), sa.ForeignKey("analysis_tasks.task_id"), nullable=False),
@@ -74,6 +80,7 @@ def upgrade() -> None:
         sa.Column("format", _enum("MARKDOWN", "DOCX", name="ck_artifacts_format")), sa.Column("mime_type", sa.String(255)), sa.Column("content_hash", sa.String(255)),
         sa.Column("size_bytes", sa.BigInteger(), nullable=False), sa.Column("description", sa.Text()), sa.Column("source_tool_call_id", UUIDString(), sa.ForeignKey("tool_calls.tool_call_id")),
         sa.Column("metadata_json", sa.JSON(), nullable=False), sa.Column("created_at", UTCDateTime(), nullable=False),
+        sa.CheckConstraint("size_bytes >= 0", name="ck_artifacts_size_bytes_non_negative"),
     )
     op.create_index("ix_artifacts_task_id", "artifacts", ["task_id"])
     op.create_table("reports",
@@ -81,6 +88,7 @@ def upgrade() -> None:
         sa.Column("task_id", UUIDString(), sa.ForeignKey("analysis_tasks.task_id"), nullable=False), sa.Column("format", _enum("MARKDOWN", "DOCX", name="ck_reports_format"), nullable=False),
         sa.Column("storage_uri", sa.Text(), nullable=False), sa.Column("size_bytes", sa.BigInteger(), nullable=False), sa.Column("content_hash", sa.String(255)), sa.Column("created_at", UTCDateTime(), nullable=False),
         sa.UniqueConstraint("artifact_id", name="uq_reports_artifact_id"),
+        sa.CheckConstraint("size_bytes >= 0", name="ck_reports_size_bytes_non_negative"),
     )
     op.create_index("ix_reports_task_id", "reports", ["task_id"])
 

@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    CheckConstraint,
     Enum,
     ForeignKey,
     Index,
@@ -39,7 +40,10 @@ class UserORM(Base):
 
 class DatasetORM(Base):
     __tablename__ = "datasets"
-    __table_args__ = (Index("ix_datasets_user_id", "user_id"),)
+    __table_args__ = (
+        Index("ix_datasets_user_id", "user_id"),
+        CheckConstraint("size_bytes >= 0", name="ck_datasets_size_bytes_non_negative"),
+    )
 
     dataset_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
     user_id: Mapped[Any] = mapped_column(ForeignKey("users.user_id"), nullable=False)
@@ -59,6 +63,9 @@ class AnalysisTaskORM(Base):
         Index("ix_analysis_tasks_status", "status"),
         Index("ix_analysis_tasks_created_at", "created_at"),
         Index("ix_analysis_tasks_status_created_at", "status", "created_at"),
+        CheckConstraint("max_rounds > 0", name="ck_analysis_tasks_max_rounds_positive"),
+        CheckConstraint("model_call_count >= 0", name="ck_analysis_tasks_model_call_count_non_negative"),
+        CheckConstraint("model_duration_ms >= 0", name="ck_analysis_tasks_model_duration_ms_non_negative"),
     )
 
     task_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
@@ -88,7 +95,22 @@ task_dataset_link = Table(
 
 class TaskEventORM(Base):
     __tablename__ = "task_events"
-    __table_args__ = (Index("ix_task_events_task_occurred", "task_id", "occurred_at"),)
+    __table_args__ = (
+        Index("ix_task_events_task_occurred", "task_id", "occurred_at"),
+        CheckConstraint(
+            "event_type != 'STATUS_CHANGED' OR "
+            "(from_status IS NULL AND to_status = 'PENDING') OR "
+            "(from_status = 'PENDING' AND to_status IN ('QUEUED', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'QUEUED' AND to_status IN ('RUNNING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'RUNNING' AND to_status IN ('EXPLORING', 'CLEANING', 'ANALYZING', 'VALIDATING', 'REPORTING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'EXPLORING' AND to_status IN ('CLEANING', 'ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'CLEANING' AND to_status IN ('ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'ANALYZING' AND to_status IN ('EXPLORING', 'CLEANING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'VALIDATING' AND to_status IN ('ANALYZING', 'REPORTING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'REPORTING' AND to_status IN ('COMPLETED', 'FAILED', 'CANCELLED'))",
+            name="ck_task_events_legal_status_transition",
+        ),
+    )
 
     event_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
     task_id: Mapped[Any] = mapped_column(ForeignKey("analysis_tasks.task_id"), nullable=False)
@@ -108,7 +130,7 @@ class ToolCallORM(Base):
     task_id: Mapped[Any] = mapped_column(ForeignKey("analysis_tasks.task_id"), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
     arguments_json: Mapped[dict[str, Any]] = mapped_column(JSON(), nullable=False, default=dict)
-    result_json: Mapped[Any] = mapped_column(JSON())
+    result_json: Mapped[Any | None] = mapped_column(JSON())
     status: Mapped[Any] = mapped_column(enum_column(ToolCallStatus, "ck_tool_calls_status"), nullable=False)
     started_at: Mapped[Any | None] = mapped_column(UTCDateTime())
     finished_at: Mapped[Any | None] = mapped_column(UTCDateTime())
@@ -117,6 +139,7 @@ class ToolCallORM(Base):
 
 class ExecutionORM(Base):
     __tablename__ = "executions"
+    __table_args__ = (CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="ck_executions_duration_ms_non_negative"),)
 
     execution_result_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
     tool_call_id: Mapped[Any | None] = mapped_column(ForeignKey("tool_calls.tool_call_id"))
@@ -130,7 +153,10 @@ class ExecutionORM(Base):
 
 class ArtifactORM(Base):
     __tablename__ = "artifacts"
-    __table_args__ = (Index("ix_artifacts_task_id", "task_id"),)
+    __table_args__ = (
+        Index("ix_artifacts_task_id", "task_id"),
+        CheckConstraint("size_bytes >= 0", name="ck_artifacts_size_bytes_non_negative"),
+    )
 
     artifact_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
     task_id: Mapped[Any] = mapped_column(ForeignKey("analysis_tasks.task_id"), nullable=False)
@@ -149,7 +175,11 @@ class ArtifactORM(Base):
 
 class ReportORM(Base):
     __tablename__ = "reports"
-    __table_args__ = (Index("ix_reports_task_id", "task_id"), UniqueConstraint("artifact_id", name="uq_reports_artifact_id"))
+    __table_args__ = (
+        Index("ix_reports_task_id", "task_id"),
+        UniqueConstraint("artifact_id", name="uq_reports_artifact_id"),
+        CheckConstraint("size_bytes >= 0", name="ck_reports_size_bytes_non_negative"),
+    )
 
     report_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
     artifact_id: Mapped[Any] = mapped_column(ForeignKey("artifacts.artifact_id"), nullable=False)
