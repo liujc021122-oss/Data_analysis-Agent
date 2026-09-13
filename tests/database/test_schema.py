@@ -54,6 +54,35 @@ def test_task_idempotency_is_unique_and_task_dataset_is_composite_key(engine):
     assert primary_key["constrained_columns"] == ["task_id", "dataset_id"]
 
 
+def test_report_composite_foreign_key_rejects_artifact_from_another_task(engine):
+    init_database(engine)
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    now = datetime.now(timezone.utc)
+    user_id, first_task_id, second_task_id, artifact_id = [uuid4() for _ in range(4)]
+    with engine.begin() as connection:
+        connection.execute(insert(UserORM).values(user_id=user_id, created_at=now))
+        for task_id, key in ((first_task_id, "first"), (second_task_id, "second")):
+            connection.execute(insert(AnalysisTaskORM).values(
+                task_id=task_id, user_id=user_id, idempotency_key=key,
+                request_hash=key, query=key, status=TaskStatus.PENDING,
+                max_rounds=1, created_at=now, updated_at=now, metadata_json={},
+                model_call_count=0, model_duration_ms=0,
+            ))
+        connection.execute(insert(Base.metadata.tables["artifacts"]).values(
+            artifact_id=artifact_id, task_id=first_task_id, artifact_type="REPORT",
+            name="first.md", format="MARKDOWN", size_bytes=0, metadata_json={},
+            created_at=now,
+        ))
+        with pytest.raises(IntegrityError):
+            connection.execute(insert(Base.metadata.tables["reports"]).values(
+                report_id=uuid4(), artifact_id=artifact_id, task_id=second_task_id,
+                format="MARKDOWN", storage_uri="s3://second", size_bytes=0,
+                created_at=now,
+            ))
+
+
 def test_migration_is_repeatable_and_downgrade_removes_schema(tmp_path: Path):
     database_path = tmp_path / "migration.sqlite3"
     config = Config("alembic.ini")

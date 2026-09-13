@@ -8,7 +8,7 @@ from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
 from data_analysis_agent.domain.enums import TaskStatus
 from data_analysis_agent.domain.errors import InvalidStatusTransitionError
 from data_analysis_agent.domain.models import utc_now
-from data_analysis_agent.persistence.errors import EntityNotFoundError
+from data_analysis_agent.persistence.errors import EntityNotFoundError, IdempotencyConflictError
 from data_analysis_agent.persistence.models import DatasetRecord, UserRecord
 from data_analysis_agent.persistence.orm_models import (
     AnalysisTaskORM,
@@ -85,6 +85,31 @@ def test_create_task_rejects_dataset_owned_by_another_user_without_side_effects(
         assert uow.session.scalars(select(AnalysisTaskORM)).all() == []
         assert uow.session.execute(select(task_dataset_link)).all() == []
         assert uow.session.scalars(select(TaskEventORM)).all() == []
+
+
+def test_idempotency_conflict_wins_over_invalid_or_foreign_dataset(uow_factory):
+    user_id, owner_id, foreign_dataset_id = uuid4(), uuid4(), uuid4()
+    with uow_factory() as uow:
+        uow.users.ensure(UserRecord(user_id=owner_id, created_at=utc_now()))
+        uow.datasets.add(_dataset(owner_id, foreign_dataset_id))
+        uow.commit()
+
+    service = TaskPersistenceService(uow_factory)
+    for index, dataset_ids in enumerate(((uuid4(),), (foreign_dataset_id,))):
+        key = f"retry-invalid-dataset-{index}"
+        original = service.create_task(user_id=user_id, request=_request(key))
+
+        with pytest.raises(IdempotencyConflictError):
+            service.create_task(
+                user_id=user_id,
+                request=_request(key, query="changed", dataset_ids=dataset_ids),
+            )
+
+        with uow_factory() as uow:
+            preserved = uow.tasks.get(original.task_id)
+            assert preserved.query == original.query
+            assert preserved.dataset_ids == ()
+            assert uow.tasks.get(original.task_id).task_id == original.task_id
 
 
 def test_event_failure_rolls_back_task_and_initial_event(uow_factory, monkeypatch):

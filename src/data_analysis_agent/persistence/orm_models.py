@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     CheckConstraint,
     Enum,
+    ForeignKeyConstraint,
     ForeignKey,
     Index,
     String,
@@ -155,6 +156,7 @@ class ArtifactORM(Base):
     __tablename__ = "artifacts"
     __table_args__ = (
         Index("ix_artifacts_task_id", "task_id"),
+        UniqueConstraint("artifact_id", "task_id", name="uq_artifacts_artifact_task"),
         CheckConstraint("size_bytes >= 0", name="ck_artifacts_size_bytes_non_negative"),
     )
 
@@ -178,6 +180,11 @@ class ReportORM(Base):
     __table_args__ = (
         Index("ix_reports_task_id", "task_id"),
         UniqueConstraint("artifact_id", name="uq_reports_artifact_id"),
+        ForeignKeyConstraint(
+            ["artifact_id", "task_id"],
+            ["artifacts.artifact_id", "artifacts.task_id"],
+            name="fk_reports_artifact_task",
+        ),
         CheckConstraint("size_bytes >= 0", name="ck_reports_size_bytes_non_negative"),
     )
 

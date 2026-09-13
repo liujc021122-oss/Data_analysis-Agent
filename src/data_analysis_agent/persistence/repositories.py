@@ -402,7 +402,13 @@ class ReportRepository:
         self.session = session
 
     def add(self, record: ReportRecord) -> ReportRecord:
-        if self.session.get(ArtifactORM, record.artifact_id) is None:
+        artifact = self.session.scalar(
+            select(ArtifactORM).where(
+                ArtifactORM.artifact_id == record.artifact_id,
+                ArtifactORM.task_id == record.task_id,
+            )
+        )
+        if artifact is None:
             raise EntityNotFoundError(f"artifact {record.artifact_id} not found")
         row = report_record_to_orm(record)
         self.session.add(row)

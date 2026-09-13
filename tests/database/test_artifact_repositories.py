@@ -190,6 +190,52 @@ def test_ancillary_foreign_keys_and_report_uniqueness(uow_factory):
         uow.rollback()
 
 
+def test_report_rejects_artifact_belonging_to_another_task_without_leaking_existence(
+    uow_factory,
+):
+    now = datetime.now(timezone.utc)
+    owner_id = uuid4()
+    first_task_id, second_task_id, artifact_id = [uuid4() for _ in range(3)]
+    with uow_factory() as uow:
+        uow.users.ensure(UserRecord(user_id=owner_id, created_at=now))
+        uow.tasks.add(
+            user_id=owner_id,
+            task=AnalysisTask(task_id=first_task_id, query="first"),
+            idempotency_key="first",
+            request_hash="first-hash",
+        )
+        uow.tasks.add(
+            user_id=owner_id,
+            task=AnalysisTask(task_id=second_task_id, query="second"),
+            idempotency_key="second",
+            request_hash="second-hash",
+        )
+        uow.artifacts.add(
+            ArtifactRecord(
+                artifact_id=artifact_id,
+                task_id=first_task_id,
+                artifact_type="REPORT",
+                name="first.md",
+                file_path="s3://first",
+                format="MARKDOWN",
+                created_at=now,
+            )
+        )
+
+        with pytest.raises(EntityNotFoundError, match=rf"artifact {artifact_id} not found"):
+            uow.reports.add(
+                ReportRecord(
+                    report_id=uuid4(),
+                    artifact_id=artifact_id,
+                    task_id=second_task_id,
+                    format="MARKDOWN",
+                    storage_uri="s3://second",
+                    created_at=now,
+                )
+            )
+        assert uow.session.scalars(select(ReportORM)).all() == []
+        uow.rollback()
+
 def test_invalid_enum_rows_raise_mapping_error(uow_factory):
     with uow_factory() as uow:
         user_id, task_id = uuid4(), uuid4()
