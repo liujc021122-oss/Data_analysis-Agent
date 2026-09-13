@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -60,8 +61,15 @@ def test_database_factory_rejects_sqlite_url_for_production(tmp_path):
             "OPENAI_API_KEY": "offline-key",
             "OPENAI_BASE_URL": "https://offline.invalid",
             "OPENAI_MODEL": "offline-model",
-            "DATABASE_URL": f"sqlite:///{tmp_path / 'production.sqlite3'}",
+            "DATABASE_URL": (
+                "mysql+pymysql://user:password@db.example.invalid:3306/"
+                "data_analysis"
+            ),
         },
+    )
+    settings = replace(
+        settings,
+        database_url=f"sqlite:///{tmp_path / 'production.sqlite3'}",
     )
 
     with pytest.raises(DatabaseConfigurationError, match="DATABASE_URL|MySQL"):

@@ -91,6 +91,20 @@ def test_production_whitespace_database_url_is_missing(tmp_path):
         )
 
 
+def test_production_sqlite_database_url_is_rejected_at_settings_boundary(tmp_path):
+    with pytest.raises(ConfigurationError, match="DATABASE_URL|MySQL"):
+        load_settings(
+            app_env="production",
+            environ={
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": f"sqlite:///{tmp_path / 'production.sqlite3'}",
+            },
+            dotenv_dir=tmp_path,
+        )
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [

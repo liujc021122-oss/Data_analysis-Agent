@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Literal, Mapping, Optional
 
 from dotenv import dotenv_values
+from sqlalchemy.engine import make_url
 
 from .llm import LLMConfig
 
@@ -70,6 +71,17 @@ def _positive_int(values: Mapping[str, str], key: str, default: int) -> int:
     if parsed <= 0:
         raise ConfigurationError(f"{key} must be a positive integer")
     return parsed
+
+
+def _validate_production_database_url(database_url: str) -> None:
+    try:
+        backend = make_url(database_url).get_backend_name()
+    except Exception as exc:
+        raise ConfigurationError(
+            "DATABASE_URL must use MySQL in production"
+        ) from exc
+    if backend != "mysql":
+        raise ConfigurationError("DATABASE_URL must use MySQL in production")
 
 
 def _read_values(
@@ -165,6 +177,7 @@ def load_settings(
             raise ConfigurationError(
                 "Missing required production configuration: " + ", ".join(missing)
             )
+        _validate_production_database_url(settings.database_url)
     return settings
 
 
