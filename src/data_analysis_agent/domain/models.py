@@ -1,6 +1,9 @@
 from collections.abc import Mapping
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
+from enum import Enum
+import json
+import math
 from types import MappingProxyType
 from typing import Any
 from uuid import UUID, uuid4
@@ -76,6 +79,71 @@ def _freeze_nested(value: Any) -> Any:
     return value
 
 
+_JSON_CONTAINER_FIELDS = (
+    "metadata",
+    "arguments",
+    "result",
+    "variables",
+    "context",
+)
+_DOMAIN_TIME_FIELDS = (
+    "created_at",
+    "updated_at",
+    "occurred_at",
+    "started_at",
+    "finished_at",
+)
+
+
+def _canonical_json_value(value: Any) -> Any:
+    """Return an immutable, JSON-native representation of a metadata value."""
+    if isinstance(value, Enum):
+        return str(value.value)
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return _normalize_utc_datetime(value).isoformat()
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    if value is None or type(value) is bool or type(value) is int:
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("JSON metadata floats must be finite")
+        return value
+    if type(value) is str:
+        return value
+    if isinstance(value, Mapping):
+        items = []
+        for key, item in value.items():
+            canonical_key = _canonical_json_value(key)
+            if not isinstance(canonical_key, str):
+                canonical_key = str(canonical_key)
+            items.append((canonical_key, _canonical_json_value(item)))
+        return FrozenDict(dict(items))
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical_json_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        canonical_items = [_canonical_json_value(item) for item in value]
+        return tuple(
+            sorted(
+                canonical_items,
+                key=lambda item: json.dumps(
+                    item, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ),
+            )
+        )
+    raise ValueError(
+        f"value of type {type(value).__name__} is not JSON-serializable metadata"
+    )
+
+
+def _normalize_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("domain datetimes must be timezone-aware")
+    return value.astimezone(timezone.utc)
+
+
 def _serialize_nested(value: Any, mode: str) -> Any:
     if isinstance(value, datetime):
         return value.isoformat() if mode == "json" else value
@@ -113,6 +181,16 @@ class DomainModel(BaseModel):
     @classmethod
     def _freeze_nested_values(cls, value: Any) -> Any:
         return _freeze_nested(value)
+
+    @field_validator(*_JSON_CONTAINER_FIELDS, mode="before", check_fields=False)
+    @classmethod
+    def _canonicalize_json_fields(cls, value: Any) -> Any:
+        return _canonical_json_value(value)
+
+    @field_validator(*_DOMAIN_TIME_FIELDS, mode="after", check_fields=False)
+    @classmethod
+    def _normalize_domain_times(cls, value: datetime | None) -> datetime | None:
+        return _normalize_utc_datetime(value) if value is not None else None
 
     @field_serializer("*", when_used="always")
     def _serialize_value(self, value: Any, info: Any) -> Any:

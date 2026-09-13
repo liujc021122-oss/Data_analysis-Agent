@@ -1,6 +1,6 @@
 import json
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone, timedelta
 from uuid import uuid4
 
 import pytest
@@ -24,6 +24,149 @@ from data_analysis_agent.domain.models import (
     TaskEvent,
     ToolCall,
 )
+from data_analysis_agent.persistence.mappers import record_to_task, task_to_record
+
+
+JSON_CONTAINER_FACTORIES = [
+    pytest.param(
+        lambda: Dataset(name="sales.csv", source_uri="sales.csv", metadata={"bad": object()}),
+        id="Dataset.metadata",
+    ),
+    pytest.param(
+        lambda: AnalysisTask(query="x", metadata={"bad": object()}),
+        id="AnalysisTask.metadata",
+    ),
+    pytest.param(
+        lambda: TaskEvent(
+            task_id=uuid4(),
+            event_type=TaskEventType.STATUS_CHANGED,
+            to_status=TaskStatus.PENDING,
+            metadata={"bad": object()},
+        ),
+        id="TaskEvent.metadata",
+    ),
+    pytest.param(
+        lambda: ToolCall(task_id=uuid4(), tool_name="tool", arguments={"bad": object()}),
+        id="ToolCall.arguments",
+    ),
+    pytest.param(
+        lambda: ToolCall(task_id=uuid4(), tool_name="tool", result={"bad": object()}),
+        id="ToolCall.result",
+    ),
+    pytest.param(
+        lambda: ExecutionResult(success=True, variables={"bad": object()}),
+        id="ExecutionResult.variables",
+    ),
+    pytest.param(
+        lambda: MetricArtifact(name="metric", value=1.0, metadata={"bad": object()}),
+        id="MetricArtifact.metadata",
+    ),
+    pytest.param(
+        lambda: ChartArtifact(
+            filename="chart.png",
+            file_path="outputs/chart.png",
+            metadata={"bad": object()},
+        ),
+        id="ChartArtifact.metadata",
+    ),
+    pytest.param(
+        lambda: ReportArtifact(
+            format=ReportFormat.MARKDOWN,
+            file_path="outputs/report.md",
+            metadata={"bad": object()},
+        ),
+        id="ReportArtifact.metadata",
+    ),
+    pytest.param(
+        lambda: AgentState(task_id=uuid4(), context={"bad": object()}),
+        id="AgentState.context",
+    ),
+]
+
+
+@pytest.mark.parametrize("factory", JSON_CONTAINER_FACTORIES)
+def test_json_container_fields_reject_non_json_values(factory):
+    with pytest.raises(ValidationError):
+        factory()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda value: Dataset(name="sales.csv", source_uri="sales.csv", created_at=value),
+        lambda value: AnalysisTask(query="x", created_at=value),
+        lambda value: AnalysisTask(query="x", updated_at=value),
+        lambda value: TaskEvent(
+            task_id=uuid4(),
+            event_type=TaskEventType.STATUS_CHANGED,
+            to_status=TaskStatus.PENDING,
+            occurred_at=value,
+        ),
+        lambda value: ToolCall(task_id=uuid4(), tool_name="tool", started_at=value),
+        lambda value: ToolCall(task_id=uuid4(), tool_name="tool", finished_at=value),
+        lambda value: MetricArtifact(name="metric", value=1.0, created_at=value),
+        lambda value: ChartArtifact(
+            filename="chart.png", file_path="outputs/chart.png", created_at=value
+        ),
+        lambda value: ReportArtifact(
+            format=ReportFormat.MARKDOWN, file_path="outputs/report.md", created_at=value
+        ),
+        lambda value: AgentState(task_id=uuid4(), updated_at=value),
+    ],
+)
+def test_domain_time_fields_reject_naive_datetime(factory):
+    with pytest.raises(ValidationError):
+        factory(datetime(2026, 9, 12, 8, 0))
+
+
+def test_aware_domain_times_are_normalized_to_utc():
+    non_utc = datetime(2026, 9, 12, 16, 0, tzinfo=timezone(timedelta(hours=8)))
+
+    task = AnalysisTask(query="x", created_at=non_utc, updated_at=non_utc)
+
+    assert task.created_at == datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
+    assert task.updated_at == datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)
+
+
+def test_typed_metadata_is_canonical_and_survives_task_persistence_round_trip():
+    nested_id = uuid4()
+    nested_time = datetime(2026, 9, 12, 16, 0, tzinfo=timezone(timedelta(hours=8)))
+    task = AnalysisTask(
+        query="canonical metadata",
+        metadata={
+            "id": nested_id,
+            "when": nested_time,
+            "status": TaskStatus.RUNNING,
+            "tuple": ("first", 2),
+            "set": {"b", "a"},
+            "date": date(2026, 9, 12),
+            "time": time(8, 0),
+        },
+    )
+
+    assert task.metadata == {
+        "id": str(nested_id),
+        "when": "2026-09-12T08:00:00+00:00",
+        "status": "RUNNING",
+        "tuple": ("first", 2),
+        "set": ("a", "b"),
+        "date": "2026-09-12",
+        "time": "08:00:00",
+    }
+    record = task_to_record(task)
+    restored = record_to_task(record)
+
+    assert record.metadata_json == {
+        "id": str(nested_id),
+        "when": "2026-09-12T08:00:00+00:00",
+        "status": "RUNNING",
+        "tuple": ["first", 2],
+        "set": ["a", "b"],
+        "date": "2026-09-12",
+        "time": "08:00:00",
+    }
+    assert restored == task
+    assert json.loads(task.model_dump_json())["metadata"] == record.metadata_json
 
 
 def test_all_core_models_construct_and_serialize_to_json():
