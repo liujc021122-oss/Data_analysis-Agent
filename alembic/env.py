@@ -5,6 +5,7 @@ from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -30,6 +31,17 @@ def configured_url() -> str:
         raise DatabaseConfigurationError(
             "DATABASE_URL is required to run Alembic migrations"
         )
+    if os.environ.get("APP_ENV", "development") == "production":
+        try:
+            backend = make_url(configured).get_backend_name()
+        except Exception as exc:
+            raise DatabaseConfigurationError(
+                "DATABASE_URL must use MySQL in production"
+            ) from exc
+        if backend != "mysql":
+            raise DatabaseConfigurationError(
+                "DATABASE_URL must use MySQL in production"
+            )
     return configured
 
 

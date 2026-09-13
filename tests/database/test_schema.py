@@ -2,6 +2,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+import pytest
 from sqlalchemy import create_engine, inspect, insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects import mysql
@@ -9,6 +10,7 @@ from sqlalchemy.schema import CreateTable
 
 from data_analysis_agent.persistence.database import Base, init_database
 from data_analysis_agent.persistence import orm_models  # noqa: F401
+from data_analysis_agent.persistence.errors import DatabaseConfigurationError
 from data_analysis_agent.persistence.orm_models import (
     AnalysisTaskORM,
     TaskEventORM,
@@ -67,6 +69,18 @@ def test_migration_is_repeatable_and_downgrade_removes_schema(tmp_path: Path):
         assert not (EXPECTED_TABLES & set(inspect(migration_engine).get_table_names()))
     finally:
         migration_engine.dispose()
+
+
+def test_production_alembic_rejects_sqlite_url_without_llm_settings(
+    monkeypatch, tmp_path: Path
+):
+    database_path = tmp_path / "production.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(DatabaseConfigurationError, match="MySQL.*DATABASE_URL|DATABASE_URL.*MySQL"):
+        command.upgrade(config, "head")
 
 
 def test_initial_tables_compile_for_mysql():
