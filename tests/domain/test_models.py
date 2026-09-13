@@ -28,6 +28,23 @@ from data_analysis_agent.domain.models import (
 from data_analysis_agent.persistence.mappers import record_to_task, task_to_record
 
 
+class HashableMapping(Mapping[str, str]):
+    def __init__(self, **items: str) -> None:
+        self._items = dict(items)
+
+    def __getitem__(self, key: str) -> str:
+        return self._items[key]
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __hash__(self) -> int:
+        return hash(tuple(sorted(self._items.items())))
+
+
 JSON_CONTAINER_FACTORIES = [
     pytest.param(
         lambda: Dataset(name="sales.csv", source_uri="sales.csv", metadata={"bad": object()}),
@@ -239,6 +256,28 @@ def test_typed_metadata_is_canonical_and_survives_task_persistence_round_trip():
     }
     assert restored == task
     assert json.loads(task.model_dump_json())["metadata"] == record.metadata_json
+
+
+def test_hashable_mappings_in_sets_are_frozen_and_json_serializable():
+    task = AnalysisTask(
+        query="hashable mappings",
+        metadata={
+            "set": {HashableMapping(kind="set")},
+            "frozenset": frozenset({HashableMapping(kind="frozenset")}),
+        },
+    )
+
+    assert isinstance(task.metadata["set"], tuple)
+    assert isinstance(task.metadata["frozenset"], tuple)
+    assert isinstance(task.metadata["set"][0], FrozenDict)
+    assert isinstance(task.metadata["frozenset"][0], FrozenDict)
+    with pytest.raises(TypeError):
+        task.metadata["set"][0]["kind"] = "mutated"
+
+    assert json.loads(task.model_dump_json())["metadata"] == {
+        "set": [{"kind": "set"}],
+        "frozenset": [{"kind": "frozenset"}],
+    }
 
 
 def test_all_core_models_construct_and_serialize_to_json():

@@ -164,22 +164,35 @@ def _canonical_json_value(
             canonical_items = [
                 _canonical_json_value(item, active_container_ids) for item in value
             ]
-            return tuple(
-                sorted(
+            try:
+                sorted_items = sorted(
                     canonical_items,
                     key=lambda item: json.dumps(
-                        item,
+                        _json_sort_shape(item),
                         ensure_ascii=False,
                         sort_keys=True,
                         separators=(",", ":"),
                     ),
                 )
-            )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "JSON metadata set items must have a stable JSON representation"
+                ) from exc
+            return tuple(sorted_items)
         finally:
             active_container_ids.remove(container_id)
     raise ValueError(
         f"value of type {type(value).__name__} is not JSON-serializable metadata"
     )
+
+
+def _json_sort_shape(value: Any) -> Any:
+    """Return a mutable JSON-ready shape for canonical collection sorting."""
+    if isinstance(value, FrozenDict):
+        return {key: _json_sort_shape(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_sort_shape(item) for item in value]
+    return value
 
 
 def _normalize_utc_datetime(value: datetime) -> datetime:
