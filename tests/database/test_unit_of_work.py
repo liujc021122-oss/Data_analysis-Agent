@@ -46,6 +46,18 @@ def test_uow_translates_commit_and_rollback_sqlalchemy_failures(uow_factory, mon
             uow.rollback()
 
 
+def test_uow_commit_preserves_commit_failure_when_rollback_also_fails(uow_factory, monkeypatch):
+    uow = uow_factory()
+    try:
+        monkeypatch.setattr(uow.session, "commit", lambda: (_ for _ in ()).throw(SQLAlchemyError("commit failure")))
+        monkeypatch.setattr(uow.session, "rollback", lambda: (_ for _ in ()).throw(SQLAlchemyError("rollback failure")))
+        with pytest.raises(TransactionError, match="commit") as error:
+            uow.commit()
+        assert isinstance(error.value.__cause__, SQLAlchemyError)
+    finally:
+        uow.session.close()
+
+
 def test_uow_exposes_future_repository_slots(uow_factory):
     with uow_factory() as uow:
         assert all(hasattr(uow, name) for name in ("users", "datasets", "tasks", "task_events", "tool_calls", "executions", "artifacts", "reports"))

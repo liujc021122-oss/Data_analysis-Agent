@@ -32,9 +32,17 @@ class UnitOfWork:
     def commit(self):
         try:
             self.session.commit()
-        except SQLAlchemyError as exc:
-            self.session.rollback()
-            raise TransactionError("database transaction commit failed") from exc
+        except SQLAlchemyError as commit_error:
+            try:
+                self.session.rollback()
+            except SQLAlchemyError as rollback_error:
+                error = TransactionError(
+                    "database transaction commit failed; rollback failed"
+                )
+                error.__cause__ = commit_error
+                error.__context__ = rollback_error
+                raise error
+            raise TransactionError("database transaction commit failed") from commit_error
 
     def rollback(self):
         try:

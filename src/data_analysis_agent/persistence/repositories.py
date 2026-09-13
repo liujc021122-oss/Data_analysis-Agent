@@ -115,7 +115,13 @@ class TaskRepository:
         return self._to_domain(row) if row else None
 
     def _to_domain(self, row: AnalysisTaskORM) -> AnalysisTask:
-        dataset_ids = list(self.session.execute(select(task_dataset_link.c.dataset_id).where(task_dataset_link.c.task_id == row.task_id)).scalars())
+        dataset_ids = list(
+            self.session.execute(
+                select(task_dataset_link.c.dataset_id)
+                .where(task_dataset_link.c.task_id == row.task_id)
+                .order_by(task_dataset_link.c.dataset_id)
+            ).scalars()
+        )
         try:
             return record_to_task(task_orm_to_record(row, dataset_ids))
         except LookupError as exc:

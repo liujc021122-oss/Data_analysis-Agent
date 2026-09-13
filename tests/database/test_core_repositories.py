@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from data_analysis_agent.domain.enums import TaskEventType, TaskStatus
@@ -34,6 +33,28 @@ def test_core_repositories_create_query_update_and_attach(uow_factory):
         assert uow.datasets.get(dataset_id).source_uri == dataset.source_uri
         assert uow.datasets.list_for_user(user_id) == [dataset]
         assert uow.tasks.get_for_update(task_id) == restored
+
+
+def test_task_dataset_ids_are_returned_in_dataset_id_order(uow_factory):
+    user_id, task_id = uuid4(), uuid4()
+    first_id, second_id = sorted((uuid4(), uuid4()))
+    with uow_factory() as uow:
+        uow.users.ensure(UserRecord(user_id=user_id, created_at=datetime.now(timezone.utc)))
+        uow.datasets.add(_dataset(user_id, first_id))
+        uow.datasets.add(_dataset(user_id, second_id))
+        uow.tasks.add(user_id=user_id, task=AnalysisTask(task_id=task_id, query="q"), idempotency_key="k", request_hash="h")
+        uow.tasks.attach_dataset(task_id=task_id, dataset_id=second_id)
+        uow.tasks.attach_dataset(task_id=task_id, dataset_id=first_id)
+        uow.commit()
+    with uow_factory() as uow:
+        assert uow.tasks.get(task_id).dataset_ids == (first_id, second_id)
+
+
+def test_dataset_add_for_missing_user_raises_integrity_error(uow_factory):
+    with uow_factory() as uow:
+        with pytest.raises(IntegrityError):
+            uow.datasets.add(_dataset(uuid4(), uuid4()))
+        uow.rollback()
 
 
 def test_repositories_rollback_all_four_entities(uow_factory):
@@ -97,3 +118,5 @@ def test_failed_commit_becomes_transaction_error_and_leaves_no_rows(uow_factory)
             uow.users.ensure(UserRecord(user_id=user_id, created_at=datetime.now(timezone.utc)))
             uow.session.add(__import__("data_analysis_agent.persistence.orm_models", fromlist=["UserORM"]).UserORM(user_id=user_id, created_at=datetime.now(timezone.utc)))
             uow.commit()
+    with uow_factory() as uow:
+        assert uow.users.get(user_id) is None

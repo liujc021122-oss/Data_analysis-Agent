@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import CHAR, DateTime, create_engine
+from sqlalchemy import CHAR, DateTime, create_engine, event
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
@@ -68,11 +68,22 @@ def create_engine_from_settings(settings: Settings) -> Engine:
             raise DatabaseConfigurationError(
                 "DATABASE_URL must use MySQL in production"
             )
-        return create_engine(url, future=True, pool_pre_ping=True)
+        engine = create_engine(url, future=True, pool_pre_ping=True)
+        if url.get_backend_name() == "sqlite":
+            event.listen(engine, "connect", _enable_sqlite_foreign_keys)
+        return engine
     except DatabaseConfigurationError:
         raise
     except Exception as exc:
         raise DatabaseConfigurationError(f"Invalid DATABASE_URL: {raw_url}") from exc
+
+
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
