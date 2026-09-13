@@ -1,13 +1,14 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
-from data_analysis_agent.domain.models import AnalysisTask
+from data_analysis_agent.domain.models import AnalysisTask, utc_now
 from data_analysis_agent.persistence.errors import IdempotencyConflictError
 from data_analysis_agent.persistence.models import UserRecord
-from data_analysis_agent.domain.models import utc_now
-from data_analysis_agent.persistence.repositories import TaskCreationResult
+from data_analysis_agent.persistence.repositories import TaskCreationResult, TaskRepository
 from data_analysis_agent.services.idempotency import compute_request_hash
 from data_analysis_agent.services.persistence import TaskPersistenceService
 
@@ -32,6 +33,50 @@ def test_request_hash_excludes_idempotency_key_but_preserves_request_fields():
     second = AnalysisTaskCreateRequest(query="分析", idempotency_key="two")
 
     assert compute_request_hash(first) == compute_request_hash(second)
+
+
+def test_request_hash_preserves_dataset_order():
+    first_id, second_id = uuid4(), uuid4()
+    first = AnalysisTaskCreateRequest(
+        query="分析",
+        idempotency_key="one",
+        dataset_ids=(first_id, second_id),
+    )
+    same_order = AnalysisTaskCreateRequest(
+        query="分析",
+        idempotency_key="two",
+        dataset_ids=(first_id, second_id),
+    )
+    reversed_order = AnalysisTaskCreateRequest(
+        query="分析",
+        idempotency_key="three",
+        dataset_ids=(second_id, first_id),
+    )
+
+    assert compute_request_hash(first) == compute_request_hash(same_order)
+    assert compute_request_hash(first) != compute_request_hash(reversed_order)
+
+
+def test_only_the_named_idempotency_constraint_is_classified():
+    named = IntegrityError(
+        "insert",
+        {},
+        SimpleNamespace(
+            diag=SimpleNamespace(
+                constraint_name="uq_analysis_tasks_user_idempotency"
+            )
+        ),
+    )
+    unrelated = IntegrityError(
+        "analysis_tasks.user_id analysis_tasks.idempotency_key",
+        {},
+        SimpleNamespace(
+            diag=SimpleNamespace(constraint_name="other_unique_constraint")
+        ),
+    )
+
+    assert TaskRepository._is_idempotency_conflict(named)
+    assert not TaskRepository._is_idempotency_conflict(unrelated)
 
 
 def test_unique_conflict_requeries_and_returns_the_winning_task(uow_factory, monkeypatch):

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -6,8 +7,9 @@ from sqlalchemy import select
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
 from data_analysis_agent.domain.enums import TaskStatus
 from data_analysis_agent.domain.errors import InvalidStatusTransitionError
+from data_analysis_agent.domain.models import utc_now
 from data_analysis_agent.persistence.errors import EntityNotFoundError
-from data_analysis_agent.persistence.models import DatasetRecord
+from data_analysis_agent.persistence.models import DatasetRecord, UserRecord
 from data_analysis_agent.persistence.orm_models import AnalysisTaskORM, TaskEventORM
 from data_analysis_agent.services.persistence import TaskPersistenceService
 
@@ -19,7 +21,7 @@ def _dataset(user_id, dataset_id):
         name="sample.csv",
         source_uri="s3://bucket/sample.csv",
         size_bytes=3,
-        created_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        created_at=datetime.now(timezone.utc),
     )
 
 
@@ -32,7 +34,7 @@ def _request(key, query="分析销售数据", dataset_ids=()):
 def test_idempotent_creation_has_one_association_and_initial_event(uow_factory):
     user_id, dataset_id = uuid4(), uuid4()
     with uow_factory() as uow:
-        uow.users.ensure(__import__("data_analysis_agent.persistence.models", fromlist=["UserRecord"]).UserRecord(user_id=user_id, created_at=__import__("data_analysis_agent.domain.models", fromlist=["utc_now"]).utc_now()))
+        uow.users.ensure(UserRecord(user_id=user_id, created_at=utc_now()))
         uow.datasets.add(_dataset(user_id, dataset_id))
         uow.commit()
     service = TaskPersistenceService(uow_factory)

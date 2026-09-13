@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -75,6 +76,8 @@ class TaskCreationResult:
 
 
 class TaskRepository:
+    _IDEMPOTENCY_CONSTRAINT_NAME = "uq_analysis_tasks_user_idempotency"
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -167,11 +170,35 @@ class TaskRepository:
 
     @staticmethod
     def _is_idempotency_conflict(exc: IntegrityError) -> bool:
-        text = str(exc).lower()
-        return (
-            "uq_analysis_tasks_user_idempotency" in text
-            or ("analysis_tasks.user_id" in text and "analysis_tasks.idempotency_key" in text)
+        original = exc.orig
+        diagnostic = getattr(original, "diag", None)
+        constraint_name = getattr(diagnostic, "constraint_name", None)
+        if constraint_name is None:
+            constraint_name = getattr(original, "constraint_name", None)
+        if constraint_name is not None:
+            return constraint_name == TaskRepository._IDEMPOTENCY_CONSTRAINT_NAME
+
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(TaskRepository._IDEMPOTENCY_CONSTRAINT_NAME)}(?![A-Za-z0-9_])",
+            str(original),
+        ):
+            return True
+
+        # SQLite does not include a named constraint in its error message.
+        # Its unique-constraint error code plus the exact qualified columns
+        # derived from the named ORM constraint is the dialect-specific check.
+        if getattr(original, "sqlite_errorname", None) != "SQLITE_CONSTRAINT_UNIQUE":
+            return False
+        constraint = next(
+            constraint
+            for constraint in AnalysisTaskORM.__table__.constraints
+            if constraint.name == TaskRepository._IDEMPOTENCY_CONSTRAINT_NAME
         )
+        columns = ", ".join(
+            f"{AnalysisTaskORM.__table__.name}.{column.name}"
+            for column in constraint.columns
+        )
+        return str(original) == f"UNIQUE constraint failed: {columns}"
 
     def get(self, task_id: UUID) -> AnalysisTask | None:
         return self._read(task_id, for_update=False)
