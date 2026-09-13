@@ -33,9 +33,11 @@ class TaskPersistenceService:
                 for dataset_id in request.dataset_ids:
                     if uow.datasets.get_for_user(dataset_id, user_id) is None:
                         raise EntityNotFoundError(f"dataset {dataset_id} not found")
-                for dataset_id in request.dataset_ids:
+                for position, dataset_id in enumerate(request.dataset_ids):
                     uow.tasks.attach_dataset(
-                        task_id=result.task.task_id, dataset_id=dataset_id
+                        task_id=result.task.task_id,
+                        dataset_id=dataset_id,
+                        position=position,
                     )
                 uow.task_events.append(
                     TaskEvent(

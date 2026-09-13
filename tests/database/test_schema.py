@@ -1,9 +1,11 @@
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
 import pytest
-from sqlalchemy import create_engine, inspect, insert
+from sqlalchemy import create_engine, inspect, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects import mysql
 from sqlalchemy.schema import CreateTable
@@ -52,6 +54,66 @@ def test_task_idempotency_is_unique_and_task_dataset_is_composite_key(engine):
     assert "uq_analysis_tasks_user_idempotency" in unique_names
     primary_key = inspector.get_pk_constraint("analysis_task_datasets")
     assert primary_key["constrained_columns"] == ["task_id", "dataset_id"]
+    unique_names = {
+        item["name"]
+        for item in inspector.get_unique_constraints("analysis_task_datasets")
+    }
+    assert "uq_analysis_task_datasets_task_position" in unique_names
+    assert "position" in {column["name"] for column in inspector.get_columns("analysis_task_datasets")}
+
+
+def test_migration_backfills_dataset_positions_deterministically(tmp_path: Path):
+    database_path = tmp_path / "legacy-migration.sqlite3"
+    db_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", db_url)
+    command.upgrade(config, "20260913_0002")
+    migration_engine = create_engine(db_url)
+    user_id, task_id = uuid4(), uuid4()
+    first_id, second_id = sorted([uuid4(), uuid4()])
+    now = datetime.now(timezone.utc)
+    try:
+        with migration_engine.begin() as connection:
+            connection.execute(insert(UserORM).values(user_id=user_id, created_at=now))
+            connection.execute(insert(AnalysisTaskORM).values(
+                task_id=task_id, user_id=user_id, idempotency_key="legacy",
+                request_hash="legacy", query="legacy", status=TaskStatus.PENDING,
+                max_rounds=1, created_at=now, updated_at=now, metadata_json={},
+                model_call_count=0, model_duration_ms=0,
+            ))
+            datasets = Base.metadata.tables["datasets"]
+            for dataset_id in (first_id, second_id):
+                connection.execute(insert(datasets).values(
+                    dataset_id=dataset_id, user_id=user_id, name=str(dataset_id),
+                    source_uri="s3://legacy", content_type="text/csv", size_bytes=0,
+                    created_at=now, metadata_json={},
+                ))
+            legacy_link = Base.metadata.tables["analysis_task_datasets"]
+            for dataset_id in (second_id, first_id):
+                connection.execute(insert(legacy_link).values(
+                    task_id=task_id, dataset_id=dataset_id,
+                ))
+
+        command.upgrade(config, "head")
+        inspector = inspect(migration_engine)
+        unique_names = {
+            item["name"]
+            for item in inspector.get_unique_constraints("analysis_task_datasets")
+        }
+        assert "uq_analysis_task_datasets_task_position" in unique_names
+        with migration_engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    legacy_link.c.dataset_id,
+                    legacy_link.c.position,
+                ).where(legacy_link.c.task_id == task_id)
+            ).all()
+        assert [(row.dataset_id, row.position) for row in rows] == [
+            (first_id, 0),
+            (second_id, 1),
+        ]
+    finally:
+        migration_engine.dispose()
 
 
 def test_report_composite_foreign_key_rejects_artifact_from_another_task(engine):

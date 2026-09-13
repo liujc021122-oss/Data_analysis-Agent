@@ -25,3 +25,22 @@ Verify the domain, persistence, and API model boundaries; preserve M00/M01 behav
 - Do not change M00/M01 runtime orchestration.
 - Do not add API keys, virtual environments, temporary external directories, or generated reports to Git.
 - Preserve the existing SDD ledger at `.git/worktrees/m02-domain-models/sdd/progress.md`.
+
+## M03 Final Review Fix: ordered task-dataset associations
+
+### Goal
+
+Persist request tuple order for task datasets across creation, reload, restart, and idempotent lookup while preserving ownership, foreign keys, duplicate protection, and order-sensitive request hashing.
+
+### Phases
+
+- [x] Add order regression and migration assertions; run RED.
+- [x] Implement ORM/repository/service ordering and reversible migration; run GREEN.
+- [x] Run focused/full verification and SQLite migration lifecycle checks.
+- [x] Update SDD report, self-review, and commit all changes.
+
+### Errors Encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| PowerShell smoke wrapper | 1 | Simplified to direct explicit-venv Python invocation; smoke passed |

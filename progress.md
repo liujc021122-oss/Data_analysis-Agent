@@ -2,6 +2,18 @@
 
 ## Task 6
 
+## M03 Final Review Fix
+
+- Status: complete.
+- Branch: `codex/m03-database-persistence`, implementation commit pending amend after ledger finalization.
+- Root cause traced; no production files changed before the failing tests.
+- RED order/migration regressions: `4 failed in 2.37s` for the expected UUID-ordering and missing-position failures.
+- GREEN targeted regressions: `4 passed in 1.15s`.
+- Focused required slice: `29 passed in 4.77s`; full suite: `232 passed in 33.02s`.
+- `compileall -q src alembic`, `pip check`, and `git diff --check` exited 0; pip reported `No broken requirements found.`
+- Explicit SQLite smoke: upgrade head, repeat upgrade, downgrade base, and delete database all succeeded; temporary database absent.
+- Final implementation commit created as `237f9bd`; the ledger status update is being folded into the same final commit.
+
 - Status: complete.
 - Starting point: Task 5 commit `ae34fa8`; existing SDD baseline records 67 passed with empty API settings.
 - Implementation-plan commit: `a6b6688`.

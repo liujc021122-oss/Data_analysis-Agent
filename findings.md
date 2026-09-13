@@ -10,3 +10,9 @@
 - Final domain hardening commits `da11b9f`, `22e2275`, `f66e235`, and `cc384f7` close pre-constructed FrozenDict, JSON type, UTC time, cycle/key, and stable-set-sorting boundaries.
 - The host's `python` command is a WindowsApps alias and produced exit 9009 for the brief's external check. The explicit shared venv interpreter is a safe equivalent and passed after reinstalling this worktree editable with `pip install -e . --no-deps`.
 - The external check used the explicitly named temporary directory `data-analysis-agent-m02-external`; it was not added to Git.
+
+## M03 Final Review Fix
+
+- `TaskRepository._to_domain` currently orders association rows by `dataset_id`; `compute_request_hash` intentionally hashes the request's tuple order.
+- `TaskPersistenceService` already iterates the request tuple in order, but `attach_dataset` has no position field and old callers rely on its two-argument signature.
+- Existing association rows from revision 0001 have no meaningful persisted order, so revision 0003 must backfill deterministically by `(task_id, dataset_id)` before making position non-null and adding per-task position uniqueness.

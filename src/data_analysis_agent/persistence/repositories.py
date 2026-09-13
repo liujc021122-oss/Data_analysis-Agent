@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import re
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
@@ -233,12 +233,27 @@ class TaskRepository:
         self.session.flush()
         return self._to_domain(row)
 
-    def attach_dataset(self, *, task_id: UUID, dataset_id: UUID) -> None:
+    def attach_dataset(
+        self, *, task_id: UUID, dataset_id: UUID, position: int | None = None
+    ) -> None:
         if self.session.get(AnalysisTaskORM, task_id) is None:
             raise EntityNotFoundError(f"task {task_id} not found")
         if self.session.get(DatasetORM, dataset_id) is None:
             raise EntityNotFoundError(f"dataset {dataset_id} not found")
-        self.session.execute(task_dataset_link.insert().values(task_id=task_id, dataset_id=dataset_id))
+        if position is None:
+            last_position = self.session.scalar(
+                select(func.max(task_dataset_link.c.position)).where(
+                    task_dataset_link.c.task_id == task_id
+                )
+            )
+            position = 0 if last_position is None else last_position + 1
+        if position < 0:
+            raise ValueError("position must be non-negative")
+        self.session.execute(
+            task_dataset_link.insert().values(
+                task_id=task_id, dataset_id=dataset_id, position=position
+            )
+        )
         self.session.flush()
 
     def _read(self, task_id: UUID, *, for_update: bool) -> AnalysisTask | None:
@@ -259,7 +274,7 @@ class TaskRepository:
             self.session.execute(
                 select(task_dataset_link.c.dataset_id)
                 .where(task_dataset_link.c.task_id == row.task_id)
-                .order_by(task_dataset_link.c.dataset_id)
+                .order_by(task_dataset_link.c.position)
             ).scalars()
         )
         try:

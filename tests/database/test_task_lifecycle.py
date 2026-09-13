@@ -55,6 +55,38 @@ def test_idempotent_creation_has_one_association_and_initial_event(uow_factory):
         assert events[0].to_status is TaskStatus.PENDING
 
 
+def test_multi_dataset_order_survives_reload_and_reversed_idempotent_retry(
+    uow_factory,
+):
+    user_id, first_id, second_id = uuid4(), uuid4(), uuid4()
+    with uow_factory() as uow:
+        uow.users.ensure(UserRecord(user_id=user_id, created_at=utc_now()))
+        uow.datasets.add(_dataset(user_id, first_id))
+        uow.datasets.add(_dataset(user_id, second_id))
+        uow.commit()
+
+    service = TaskPersistenceService(uow_factory)
+    request_order = (second_id, first_id)
+    task = service.create_task(
+        user_id=user_id, request=_request("ordered", dataset_ids=request_order)
+    )
+    assert task.dataset_ids == request_order
+
+    with uow_factory() as uow:
+        assert uow.tasks.get(task.task_id).dataset_ids == request_order
+
+    with pytest.raises(IdempotencyConflictError):
+        service.create_task(
+            user_id=user_id,
+            request=_request(
+                "ordered", dataset_ids=tuple(reversed(request_order))
+            ),
+        )
+
+    with uow_factory() as uow:
+        assert uow.tasks.get(task.task_id).dataset_ids == request_order
+
+
 def test_missing_dataset_rolls_back_user_and_task(uow_factory):
     user_id = uuid4()
     with pytest.raises(EntityNotFoundError):

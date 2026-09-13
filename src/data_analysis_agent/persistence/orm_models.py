@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     ForeignKeyConstraint,
     ForeignKey,
+    Integer,
     Index,
     String,
     Table,
@@ -90,6 +91,10 @@ task_dataset_link = Table(
     Base.metadata,
     Column("task_id", UUIDString(), ForeignKey("analysis_tasks.task_id"), primary_key=True),
     Column("dataset_id", UUIDString(), ForeignKey("datasets.dataset_id"), primary_key=True),
+    Column("position", Integer(), nullable=False),
+    UniqueConstraint(
+        "task_id", "position", name="uq_analysis_task_datasets_task_position"
+    ),
     Index("ix_analysis_task_datasets_dataset_id", "dataset_id"),
 )
 

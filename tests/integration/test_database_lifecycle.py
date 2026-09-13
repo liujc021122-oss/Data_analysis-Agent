@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+import pytest
 
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
 from data_analysis_agent.domain.enums import TaskStatus
@@ -17,6 +18,7 @@ from data_analysis_agent.persistence import (
     UserRecord,
     init_database,
 )
+from data_analysis_agent.persistence.errors import IdempotencyConflictError
 from data_analysis_agent.services import TaskPersistenceService
 
 from tests.database.conftest import settings_for
@@ -90,6 +92,59 @@ def test_task_and_metadata_survive_engine_and_session_restart(tmp_path: Path):
         assert database_path.exists()
         assert not csv_path.exists()
         assert [path.name for path in tmp_path.iterdir()] == ["persistent.sqlite3"]
+    finally:
+        second.engine.dispose()
+
+
+def test_multi_dataset_order_survives_restart_and_reversed_idempotent_retry(
+    tmp_path: Path,
+):
+    database_path = tmp_path / "ordered-persistent.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    user_id, first_id, second_id = uuid4(), uuid4(), uuid4()
+    request_order = (second_id, first_id)
+    request = AnalysisTaskCreateRequest(
+        query="分析销售趋势",
+        idempotency_key="ordered-restart-key",
+        dataset_ids=request_order,
+    )
+
+    first = Database.from_settings(settings_for(database_url))
+    init_database(first.engine)
+    with UnitOfWork(first.session_factory) as uow:
+        uow.users.ensure(UserRecord(user_id=user_id, created_at=utc_now()))
+        for dataset_id in (first_id, second_id):
+            uow.datasets.add(DatasetRecord(
+                dataset_id=dataset_id,
+                user_id=user_id,
+                name=f"{dataset_id}.csv",
+                source_uri=f"s3://bucket/{dataset_id}.csv",
+                created_at=utc_now(),
+            ))
+        uow.commit()
+
+    task = TaskPersistenceService(
+        lambda: UnitOfWork(first.session_factory)
+    ).create_task(user_id=user_id, request=request)
+    assert task.dataset_ids == request_order
+    first.engine.dispose()
+
+    second = Database.from_settings(settings_for(database_url))
+    try:
+        service = TaskPersistenceService(lambda: UnitOfWork(second.session_factory))
+        with UnitOfWork(second.session_factory) as uow:
+            assert uow.tasks.get(task.task_id).dataset_ids == request_order
+
+        with pytest.raises(IdempotencyConflictError):
+            service.create_task(
+                user_id=user_id,
+                request=request.model_copy(
+                    update={"dataset_ids": tuple(reversed(request_order))}
+                ),
+            )
+
+        with UnitOfWork(second.session_factory) as uow:
+            assert uow.tasks.get(task.task_id).dataset_ids == request_order
     finally:
         second.engine.dispose()
 

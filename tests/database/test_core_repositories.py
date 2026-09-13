@@ -35,7 +35,7 @@ def test_core_repositories_create_query_update_and_attach(uow_factory):
         assert uow.tasks.get_for_update(task_id) == restored
 
 
-def test_task_dataset_ids_are_returned_in_dataset_id_order(uow_factory):
+def test_task_dataset_ids_are_returned_in_attachment_order(uow_factory):
     user_id, task_id = uuid4(), uuid4()
     first_id, second_id = sorted((uuid4(), uuid4()))
     with uow_factory() as uow:
@@ -47,7 +47,7 @@ def test_task_dataset_ids_are_returned_in_dataset_id_order(uow_factory):
         uow.tasks.attach_dataset(task_id=task_id, dataset_id=first_id)
         uow.commit()
     with uow_factory() as uow:
-        assert uow.tasks.get(task_id).dataset_ids == (first_id, second_id)
+        assert uow.tasks.get(task_id).dataset_ids == (second_id, first_id)
 
 
 def test_dataset_add_for_missing_user_raises_integrity_error(uow_factory):
@@ -86,16 +86,21 @@ def test_task_update_preserves_owner_and_idempotency_and_events_are_ordered(uow_
 
 
 def test_missing_entities_and_duplicate_association_raise(uow_factory):
-    user_id, dataset_id, task_id = uuid4(), uuid4(), uuid4()
+    user_id, dataset_id, second_dataset_id, task_id = uuid4(), uuid4(), uuid4(), uuid4()
     with uow_factory() as uow:
         with pytest.raises(EntityNotFoundError, match="task"):
             uow.tasks.attach_dataset(task_id=uuid4(), dataset_id=uuid4())
         uow.users.ensure(UserRecord(user_id=user_id, created_at=datetime.now(timezone.utc)))
         uow.datasets.add(_dataset(user_id, dataset_id))
+        uow.datasets.add(_dataset(user_id, second_dataset_id))
         uow.tasks.add(user_id=user_id, task=AnalysisTask(task_id=task_id, query="q"), idempotency_key="k", request_hash="h")
         uow.tasks.attach_dataset(task_id=task_id, dataset_id=dataset_id)
         with pytest.raises(IntegrityError, match="UNIQUE"):
             uow.tasks.attach_dataset(task_id=task_id, dataset_id=dataset_id)
+        with pytest.raises(IntegrityError, match="UNIQUE"):
+            uow.tasks.attach_dataset(
+                task_id=task_id, dataset_id=second_dataset_id, position=0
+            )
         uow.rollback()
 
 
