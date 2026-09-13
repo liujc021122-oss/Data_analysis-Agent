@@ -18,6 +18,7 @@ from data_analysis_agent.domain.models import (
     ChartArtifact,
     Dataset,
     ExecutionResult,
+    FrozenDict,
     MetricArtifact,
     ReportArtifact,
     TaskEvent,
@@ -166,6 +167,21 @@ def test_nested_mappings_and_lists_are_immutable_and_keep_json_shapes():
     }
     assert json.loads(tool_call.model_dump_json())["arguments"] == {
         "steps": [{"code": "print(1)"}]
+    }
+
+
+def test_existing_frozen_dict_is_recursively_refrozen():
+    dataset = Dataset(
+        name="sales.csv",
+        source_uri="sales.csv",
+        metadata={"nested": FrozenDict({"items": []})},
+    )
+
+    with pytest.raises((AttributeError, TypeError)):
+        dataset.metadata["nested"]["items"].append("mutated")
+
+    assert json.loads(dataset.model_dump_json())["metadata"] == {
+        "nested": {"items": []}
     }
 
 

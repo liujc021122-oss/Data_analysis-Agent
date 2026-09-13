@@ -61,7 +61,12 @@ class FrozenDict(Mapping[str, Any]):
 
 def _freeze_nested(value: Any) -> Any:
     if isinstance(value, FrozenDict):
-        return value
+        return FrozenDict(
+            {
+                _freeze_nested(key): _freeze_nested(item)
+                for key, item in value.items()
+            }
+        )
     if isinstance(value, Mapping):
         return FrozenDict({key: _freeze_nested(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
