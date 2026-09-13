@@ -17,11 +17,19 @@ from data_analysis_agent.domain.enums import ReportFormat, TaskEventType, TaskSt
 
 
 def test_create_request_validates_and_serializes_without_a_dataset():
-    request = AnalysisTaskCreateRequest(query="分析销售数据")
+    request = AnalysisTaskCreateRequest(query="分析销售数据", idempotency_key="contract-key")
 
     assert request.dataset_ids == ()
     assert request.max_rounds == 10
     assert json.loads(request.model_dump_json())["query"] == "分析销售数据"
+
+
+def test_create_request_requires_a_nonblank_idempotency_key():
+    with pytest.raises(ValidationError, match="idempotency_key"):
+        AnalysisTaskCreateRequest(query="分析")
+
+    with pytest.raises(ValidationError, match="idempotency_key"):
+        AnalysisTaskCreateRequest(query="分析", idempotency_key="  ")
 
 
 @pytest.mark.parametrize(

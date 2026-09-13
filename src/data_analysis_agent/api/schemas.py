@@ -32,11 +32,13 @@ class APIModel(BaseModel):
 
 class AnalysisTaskCreateRequest(APIModel):
     query: StrictStr
+    idempotency_key: StrictStr
     dataset_ids: tuple[UUID, ...] = ()
     max_rounds: StrictInt = Field(default=10, gt=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     _validate_query = field_validator("query")(_nonblank)
+    _validate_idempotency_key = field_validator("idempotency_key")(_nonblank)
 
 
 class ErrorResponse(APIModel):

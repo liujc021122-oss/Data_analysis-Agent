@@ -1,13 +1,15 @@
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
-from sqlalchemy.exc import StatementError
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from ..domain.errors import PersistenceMappingError
 from ..domain.enums import ReportFormat, ToolCallStatus
 from ..domain.models import AnalysisTask, ExecutionResult, TaskEvent, ToolCall, utc_now
 from .errors import EntityNotFoundError
+from .errors import IdempotencyConflictError
 from .mappers import _normalize_json_value, event_to_record, record_to_event, record_to_task, task_to_record
 from .models import (
     ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord,
@@ -66,6 +68,12 @@ class DatasetRepository:
         return [dataset_orm_to_record(row) for row in rows]
 
 
+@dataclass(frozen=True)
+class TaskCreationResult:
+    task: AnalysisTask
+    created: bool
+
+
 class TaskRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -76,6 +84,94 @@ class TaskRepository:
         self.session.add(row)
         self.session.flush()
         return self._to_domain(row)
+
+    def create_idempotent_with_result(
+        self, *, user_id: UUID, task: AnalysisTask, idempotency_key: str, request_hash: str
+    ) -> TaskCreationResult:
+        existing = self._get_by_idempotency(user_id, idempotency_key)
+        if existing is not None:
+            existing_task, existing_hash = existing
+            return self._check_idempotency(existing_task, existing_hash, request_hash)
+
+        record = task_to_record(task).model_copy(
+            update={
+                "user_id": user_id,
+                "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
+            }
+        )
+        row = task_record_to_orm(record)
+        try:
+            with self.session.begin_nested():
+                self.session.add(row)
+                self.session.flush()
+        except IntegrityError as exc:
+            if not self._is_idempotency_conflict(exc):
+                raise
+            winner = self._get_by_idempotency(user_id, idempotency_key)
+            if winner is None:
+                raise
+            winner_task, winner_hash = winner
+            return self._check_idempotency(winner_task, winner_hash, request_hash)
+        return TaskCreationResult(task, True)
+
+    def create_idempotent(
+        self, *, user_id: UUID, task: AnalysisTask, idempotency_key: str, request_hash: str
+    ) -> AnalysisTask:
+        return self.create_idempotent_with_result(
+            user_id=user_id,
+            task=task,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        ).task
+
+    def record_model_call(self, *, task_id: UUID, duration_ms: int) -> AnalysisTask:
+        if duration_ms < 0:
+            raise ValueError("duration_ms must be non-negative")
+        statement = (
+            update(AnalysisTaskORM)
+            .where(AnalysisTaskORM.task_id == task_id)
+            .values(
+                model_call_count=AnalysisTaskORM.model_call_count + 1,
+                model_duration_ms=AnalysisTaskORM.model_duration_ms + duration_ms,
+                updated_at=utc_now(),
+            )
+        )
+        result = self.session.execute(statement)
+        if result.rowcount != 1:
+            raise EntityNotFoundError(f"task {task_id} not found")
+        self.session.flush()
+        restored = self.get(task_id)
+        if restored is None:
+            raise EntityNotFoundError(f"task {task_id} not found")
+        return restored
+
+    def _get_by_idempotency(
+        self, user_id: UUID, idempotency_key: str
+    ) -> tuple[AnalysisTask, str] | None:
+        row = self.session.scalars(
+            select(AnalysisTaskORM).where(
+                AnalysisTaskORM.user_id == user_id,
+                AnalysisTaskORM.idempotency_key == idempotency_key,
+            )
+        ).first()
+        return (self._to_domain(row), row.request_hash) if row else None
+
+    @staticmethod
+    def _check_idempotency(
+        task: AnalysisTask, existing_hash: str, request_hash: str
+    ) -> TaskCreationResult:
+        if existing_hash != request_hash:
+            raise IdempotencyConflictError("idempotency key was reused for a different request")
+        return TaskCreationResult(task, False)
+
+    @staticmethod
+    def _is_idempotency_conflict(exc: IntegrityError) -> bool:
+        text = str(exc).lower()
+        return (
+            "uq_analysis_tasks_user_idempotency" in text
+            or ("analysis_tasks.user_id" in text and "analysis_tasks.idempotency_key" in text)
+        )
 
     def get(self, task_id: UUID) -> AnalysisTask | None:
         return self._read(task_id, for_update=False)
