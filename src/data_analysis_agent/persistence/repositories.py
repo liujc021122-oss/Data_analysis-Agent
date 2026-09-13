@@ -1,14 +1,18 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 
 from ..domain.errors import PersistenceMappingError
-from ..domain.models import AnalysisTask, TaskEvent
+from ..domain.enums import ReportFormat, ToolCallStatus
+from ..domain.models import AnalysisTask, ExecutionResult, TaskEvent, ToolCall
 from .errors import EntityNotFoundError
 from .mappers import event_to_record, record_to_event, record_to_task, task_to_record
-from .models import DatasetRecord, UserRecord
+from .models import (
+    ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord,
+    ToolCallRecord, UserRecord,
+)
 from .orm_mappers import (
     dataset_orm_to_record,
     event_orm_to_record,
@@ -18,8 +22,15 @@ from .orm_mappers import (
     event_record_to_orm,
     task_record_to_orm,
     user_record_to_orm,
+    artifact_orm_to_record, execution_orm_to_record, report_orm_to_record,
+    tool_call_orm_to_record, artifact_record_to_orm, execution_record_to_orm,
+    report_record_to_orm, tool_call_record_to_orm,
 )
-from .orm_models import AnalysisTaskORM, DatasetORM, TaskEventORM, UserORM, task_dataset_link
+from .orm_models import (
+    AnalysisTaskORM, ArtifactORM, DatasetORM, ExecutionORM, ReportORM,
+    TaskEventORM, ToolCallORM, UserORM, task_dataset_link,
+)
+from ..domain.models import utc_now
 
 
 class UserRepository:
@@ -149,3 +160,136 @@ class TaskEventRepository:
             return [record_to_event(event_orm_to_record(row)) for row in rows]
         except LookupError as exc:
             raise PersistenceMappingError("Invalid event field in persistence record") from exc
+
+
+class ToolCallRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, call: ToolCall) -> ToolCall:
+        row = tool_call_record_to_orm(ToolCallRecord(
+            tool_call_id=call.tool_call_id, task_id=call.task_id, tool_name=call.tool_name,
+            arguments_json=dict(call.arguments), result_json=call.result,
+            status=call.status.value, started_at=call.started_at, finished_at=call.finished_at,
+            error_message=call.error_message,
+        ))
+        self.session.add(row)
+        self.session.flush()
+        return self._to_domain(row)
+
+    def get(self, tool_call_id: UUID) -> ToolCall | None:
+        row = self._row(tool_call_id)
+        return self._to_domain(row) if row else None
+
+    def list_for_task(self, task_id: UUID) -> list[ToolCall]:
+        try:
+            rows = self.session.scalars(select(ToolCallORM).where(ToolCallORM.task_id == task_id).order_by(ToolCallORM.started_at, ToolCallORM.tool_call_id)).all()
+        except (LookupError, StatementError) as exc:
+            raise PersistenceMappingError("Invalid tool call status in persistence record") from exc
+        return [self._to_domain(row) for row in rows]
+
+    def _row(self, tool_call_id):
+        try:
+            return self.session.get(ToolCallORM, tool_call_id)
+        except (LookupError, StatementError) as exc:
+            raise PersistenceMappingError("Invalid tool call status in persistence record") from exc
+
+    def _to_domain(self, row):
+        try:
+            record = tool_call_orm_to_record(row)
+            return ToolCall(tool_call_id=record.tool_call_id, task_id=record.task_id,
+                            tool_name=record.tool_name, arguments=record.arguments_json,
+                            result=record.result_json, status=ToolCallStatus(record.status),
+                            started_at=record.started_at, finished_at=record.finished_at,
+                            error_message=record.error_message)
+        except (LookupError, ValueError, TypeError) as exc:
+            raise PersistenceMappingError("Invalid tool call status in persistence record") from exc
+
+
+class ExecutionRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, execution: ExecutionResult, *, tool_call_id: UUID | None = None) -> ExecutionResult:
+        if execution.duration_ms is not None and execution.duration_ms < 0:
+            raise ValueError("duration_ms must be non-negative")
+        record = ExecutionResultRecord(execution_result_id=uuid4(), tool_call_id=tool_call_id,
+            success=execution.success, output_text=execution.output, error_text=execution.error,
+            variables_json=dict(execution.variables), duration_ms=execution.duration_ms)
+        row = execution_record_to_orm(record)
+        row.created_at = utc_now()
+        self.session.add(row)
+        self.session.flush()
+        return self._to_domain(row)
+
+    def list_for_tool_call(self, tool_call_id: UUID) -> list[ExecutionResult]:
+        rows = self.session.scalars(select(ExecutionORM).where(ExecutionORM.tool_call_id == tool_call_id).order_by(ExecutionORM.created_at, ExecutionORM.execution_result_id)).all()
+        return [self._to_domain(row) for row in rows]
+
+    @staticmethod
+    def _to_domain(row):
+        record = execution_orm_to_record(row)
+        return ExecutionResult(success=record.success, output=record.output_text,
+                               error=record.error_text, variables=record.variables_json,
+                               duration_ms=record.duration_ms)
+
+
+class ArtifactRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, record: ArtifactRecord) -> ArtifactRecord:
+        row = artifact_record_to_orm(record)
+        self.session.add(row)
+        self.session.flush()
+        return artifact_orm_to_record(row)
+
+    def get(self, artifact_id: UUID) -> ArtifactRecord | None:
+        try:
+            row = self.session.get(ArtifactORM, artifact_id)
+        except (LookupError, StatementError) as exc:
+            raise PersistenceMappingError("Invalid artifact format in persistence record") from exc
+        if not row:
+            return None
+        try:
+            record = artifact_orm_to_record(row)
+            if record.format is not None:
+                ReportFormat(record.format)
+            return record
+        except (LookupError, ValueError) as exc:
+            raise PersistenceMappingError("Invalid artifact format in persistence record") from exc
+
+    def list_for_task(self, task_id: UUID) -> list[ArtifactRecord]:
+        rows = self.session.scalars(select(ArtifactORM).where(ArtifactORM.task_id == task_id).order_by(ArtifactORM.created_at, ArtifactORM.artifact_id)).all()
+        return [self.get(row.artifact_id) for row in rows]
+
+
+class ReportRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, record: ReportRecord) -> ReportRecord:
+        if self.session.get(ArtifactORM, record.artifact_id) is None:
+            raise EntityNotFoundError(f"artifact {record.artifact_id} not found")
+        row = report_record_to_orm(record)
+        self.session.add(row)
+        self.session.flush()
+        return report_orm_to_record(row)
+
+    def get(self, report_id: UUID) -> ReportRecord | None:
+        try:
+            row = self.session.get(ReportORM, report_id)
+        except (LookupError, StatementError) as exc:
+            raise PersistenceMappingError("Invalid report format in persistence record") from exc
+        if not row:
+            return None
+        try:
+            record = report_orm_to_record(row)
+            ReportFormat(record.format)
+            return record
+        except (LookupError, ValueError) as exc:
+            raise PersistenceMappingError("Invalid report format in persistence record") from exc
+
+    def list_for_task(self, task_id: UUID) -> list[ReportRecord]:
+        rows = self.session.scalars(select(ReportORM).where(ReportORM.task_id == task_id).order_by(ReportORM.created_at, ReportORM.report_id)).all()
+        return [self.get(row.report_id) for row in rows]

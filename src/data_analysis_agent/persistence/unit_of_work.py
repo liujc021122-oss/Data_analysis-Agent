@@ -2,7 +2,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .errors import TransactionError
-from .repositories import DatasetRepository, TaskEventRepository, TaskRepository, UserRepository
+from .repositories import (
+    ArtifactRepository, DatasetRepository, ExecutionRepository, ReportRepository,
+    TaskEventRepository, TaskRepository, ToolCallRepository, UserRepository,
+)
 
 
 class UnitOfWork:
@@ -12,10 +15,10 @@ class UnitOfWork:
         self.datasets = DatasetRepository(self.session)
         self.tasks = TaskRepository(self.session)
         self.task_events = TaskEventRepository(self.session)
-        self.tool_calls = None
-        self.executions = None
-        self.artifacts = None
-        self.reports = None
+        self.tool_calls = ToolCallRepository(self.session)
+        self.executions = ExecutionRepository(self.session)
+        self.artifacts = ArtifactRepository(self.session)
+        self.reports = ReportRepository(self.session)
 
     def __enter__(self):
         return self
