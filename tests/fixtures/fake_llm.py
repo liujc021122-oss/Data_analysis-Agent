@@ -78,3 +78,11 @@ def session_dir_from_prompt(prompt: str) -> str:
     if not match:
         raise AssertionError("session_output_dir was not included in the fake LLM prompt")
     return match.group(1)
+
+
+def dataset_id_from_prompt(prompt: str) -> str:
+    """Extract the dataset id exposed by the Agent's initial user prompt."""
+    match = re.search(r"dataset_id=([0-9a-f-]{36})", prompt or "")
+    if not match:
+        raise AssertionError("dataset_id was not included in the fake LLM prompt")
+    return match.group(1)

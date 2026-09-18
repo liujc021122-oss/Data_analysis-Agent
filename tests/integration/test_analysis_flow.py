@@ -3,16 +3,24 @@ from pathlib import Path
 from docx import Document
 
 import data_analysis_agent as agent_module
-from tests.fixtures.fake_llm import FakeLLM, session_dir_from_prompt, yaml_response
+from tests.fixtures.fake_llm import (
+    FakeLLM,
+    dataset_id_from_prompt,
+    session_dir_from_prompt,
+    yaml_response,
+)
 
 
 SAMPLE_DATA = Path(__file__).resolve().parents[1] / "fixtures" / "sample_data.csv"
 
 
 def make_normal_flow_llm():
-    code = "\n".join(
-        [
-            f"df = pd.read_csv({str(SAMPLE_DATA)!r})",
+    def generate_code_response(fake_llm, call):
+        code = "\n".join(
+            [
+            "import os",
+            "import matplotlib.pyplot as plt",
+            f"df = load_dataset({dataset_id_from_prompt(call.prompt)!r})",
             "figure_path = os.path.abspath(os.path.join(session_output_dir, 'sales_trend.png'))",
             "plt.figure(figsize=(4, 3))",
             "plt.plot(df['date'], df['value'])",
@@ -20,8 +28,9 @@ def make_normal_flow_llm():
             "plt.savefig(figure_path)",
             "plt.close()",
             "print(figure_path)",
-        ]
-    )
+            ]
+        )
+        return yaml_response("generate_code", code=code)
 
     def collect_figures_response(fake_llm, call):
         session_dir = Path(session_dir_from_prompt(call.system_prompt))
@@ -50,7 +59,7 @@ def make_normal_flow_llm():
 
     return FakeLLM(
         [
-            yaml_response("generate_code", code=code),
+            generate_code_response,
             collect_figures_response,
             yaml_response("analysis_complete", final_report="# 分析循环完成"),
             yaml_response("analysis_complete", final_report=markdown),
@@ -78,7 +87,8 @@ def test_quick_analysis_runs_complete_offline_flow_and_generates_chart_and_repor
 
     assert result["total_rounds"] == 3
     assert len(fake_llm.calls) == 4
-    assert str(SAMPLE_DATA) in fake_llm.calls[0].prompt
+    assert dataset_id_from_prompt(fake_llm.calls[0].prompt)
+    assert str(SAMPLE_DATA) not in "\n".join(call.prompt for call in fake_llm.calls)
     assert chart_path.exists()
     assert markdown_path.exists()
     assert "离线分析报告" in markdown_path.read_text(encoding="utf-8")
@@ -89,17 +99,20 @@ def test_quick_analysis_runs_complete_offline_flow_and_generates_chart_and_repor
 
 
 def test_analysis_feeds_executor_failure_back_to_llm_and_continues(tmp_path, monkeypatch):
-    recovery_code = (
-        f"df = pd.read_csv({str(SAMPLE_DATA)!r})\n"
-        "print(df['value'].mean())"
-    )
+    def recovery_response(fake_llm, call):
+        recovery_code = (
+            f"df = load_dataset({dataset_id_from_prompt(call.prompt)!r})\n"
+            "print(df['value'].mean())"
+        )
+        return yaml_response("generate_code", code=recovery_code)
+
     fake_llm = FakeLLM(
         [
             yaml_response(
                 "generate_code",
                 code="raise ValueError('planned executor failure')",
             ),
-            yaml_response("generate_code", code=recovery_code),
+            recovery_response,
             yaml_response("analysis_complete", final_report="# 循环完成"),
             yaml_response("analysis_complete", final_report="# 恢复后的报告"),
         ]
@@ -120,4 +133,5 @@ def test_analysis_feeds_executor_failure_back_to_llm_and_continues(tmp_path, mon
     assert result["analysis_results"][1]["result"]["success"] is True
     assert "代码执行失败" in fake_llm.calls[1].prompt
     assert "planned executor failure" in fake_llm.calls[1].prompt
+    assert str(SAMPLE_DATA) not in "\n".join(call.prompt for call in fake_llm.calls)
     assert result["final_report"] == "# 恢复后的报告"

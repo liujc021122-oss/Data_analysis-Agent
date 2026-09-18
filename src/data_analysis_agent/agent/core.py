@@ -10,8 +10,10 @@
 import os
 import json
 import yaml
+import pandas
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+from uuid import UUID, uuid4
 
 from ..config.llm import LLMConfig
 from ..config.settings import Settings, load_settings
@@ -21,6 +23,16 @@ from ..services.llm import LLMHelper
 from ..services.errors import sanitize_exception
 from ..services.responses import extract_code_from_response, format_execution_result
 from ..services.session import create_session_output_dir
+from ..datasets import (
+    CsvInspector,
+    DatasetAccessDeniedError,
+    DatasetErrorCode,
+    DatasetResolver,
+    DatasetUploadService,
+    InMemoryDatasetStore,
+    LocalStorageBackend,
+)
+from ..datasets.errors import UploadValidationError
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
 
 
@@ -40,6 +52,8 @@ class DataAnalysisAgent:
         output_dir: str = "outputs",
         max_rounds: int = 20,
         generate_word_report: bool = True,
+        dataset_resolver: DatasetResolver | None = None,
+        dataset_owner_id: UUID | None = None,
     ):
         """
         初始化智能体
@@ -55,6 +69,8 @@ class DataAnalysisAgent:
         self.base_output_dir = output_dir
         self.max_rounds = max_rounds
         self.generate_word_report = generate_word_report
+        self.dataset_resolver = dataset_resolver
+        self.dataset_owner_id = dataset_owner_id
           # 对话历史和上下文
         self.conversation_history = []
         self.analysis_results = []
@@ -194,13 +210,20 @@ class DataAnalysisAgent:
                 'continue': True
             }
 
-    def analyze(self, user_input: str, files: List[str] = None) -> Dict[str, Any]:
+    def analyze(
+        self,
+        user_input: str,
+        files: Sequence[str] | None = None,
+        *,
+        dataset_ids: Sequence[UUID | str] | None = None,
+    ) -> Dict[str, Any]:
         """
         开始分析流程
 
         Args:
             user_input: 用户的自然语言需求
-            files: 数据文件路径列表
+            files: 兼容旧调用的弃用参数；文件由 quick_analysis 适配后再进入本方法
+            dataset_ids: 通过 DatasetResolver 访问的数据集 ID 列表
 
         Returns:
             分析结果字典
@@ -210,6 +233,32 @@ class DataAnalysisAgent:
         self.analysis_results = []
         self.current_round = 0
 
+        normalized_dataset_ids = tuple(
+            UUID(str(dataset_id)) for dataset_id in (dataset_ids or ())
+        )
+        dataset_context = []
+        if normalized_dataset_ids:
+            if self.dataset_resolver is None:
+                raise DatasetAccessDeniedError(
+                    DatasetErrorCode.DATASET_ACCESS_DENIED,
+                    "dataset_resolver is required for dataset_ids",
+                )
+            if self.dataset_owner_id is None:
+                raise DatasetAccessDeniedError(
+                    DatasetErrorCode.DATASET_ACCESS_DENIED,
+                    "dataset_owner_id is required for dataset_ids",
+                )
+            for dataset_id in normalized_dataset_ids:
+                profile = self.dataset_resolver.profile_for_user(
+                    dataset_id, owner_id=self.dataset_owner_id
+                )
+                dataset_context.append(
+                    {
+                        "dataset_id": str(dataset_id),
+                        "profile": profile.model_dump(mode="json"),
+                    }
+                )
+
         # 创建本次分析的专用输出目录
         self.session_output_dir = create_session_output_dir(self.base_output_dir,user_input)
 
@@ -218,16 +267,34 @@ class DataAnalysisAgent:
 
         # 设置会话目录变量到执行环境中
         self.executor.set_variable('session_output_dir', self.session_output_dir)
+        if normalized_dataset_ids:
+            def load_dataset(dataset_id: str):
+                with self.dataset_resolver.open_for_user(
+                    UUID(str(dataset_id)), owner_id=self.dataset_owner_id
+                ) as stream:
+                    return pandas.read_csv(stream)
+
+            self.executor.set_variable("load_dataset", load_dataset)
+            self.executor.set_variable(
+                "dataset_ids", tuple(str(item) for item in normalized_dataset_ids)
+            )
 
         # 构建初始prompt
         initial_prompt = f"""用户需求: {user_input}"""
-        if files:
-            initial_prompt += f"\n数据文件: {', '.join(files)}"
+        if dataset_context:
+            initial_prompt += "\n可用数据集:\n"
+            initial_prompt += "\n".join(
+                "dataset_id={dataset_id} profile={profile}".format(
+                    dataset_id=item["dataset_id"],
+                    profile=json.dumps(item["profile"], ensure_ascii=False, sort_keys=True),
+                )
+                for item in dataset_context
+            )
 
         print(f"🚀 开始数据分析任务")
         print(f"📝 用户需求: {user_input}")
-        if files:
-            print(f"📁 数据文件: {', '.join(files)}")
+        if dataset_context:
+            print(f"📊 可用数据集: {len(dataset_context)} 个")
         print(f"📂 输出目录: {self.session_output_dir}")
         print(f"🔢 最大轮数: {self.max_rounds}")
         print("=" * 60)
@@ -506,12 +573,61 @@ def quick_analysis(
     query: str,
     files: Sequence[str] | None = None,
     *,
+    dataset_ids: Sequence[UUID | str] | None = None,
     output_dir: str | Path | None = None,
     max_rounds: int | None = None,
     generate_word_report: bool | None = None,
     settings: Settings | None = None,
+    dataset_resolver: DatasetResolver | None = None,
+    dataset_owner_id: UUID | None = None,
 ) -> dict[str, Any]:
     resolved_settings = settings or load_settings()
+    if files is not None and dataset_ids is not None:
+        raise UploadValidationError(
+            DatasetErrorCode.INVALID_DATASET_REQUEST,
+            "files and dataset_ids cannot be supplied together",
+        )
+
+    selected_resolver = dataset_resolver
+    selected_owner_id = dataset_owner_id
+    selected_dataset_ids = dataset_ids
+    if dataset_ids:
+        missing = []
+        if dataset_resolver is None:
+            missing.append("dataset_resolver")
+        if dataset_owner_id is None:
+            missing.append("dataset_owner_id")
+        if missing:
+            raise DatasetAccessDeniedError(
+                DatasetErrorCode.DATASET_ACCESS_DENIED,
+                "missing dataset access dependency: " + ", ".join(missing),
+            )
+
+    if files is not None:
+        selected_owner_id = uuid4()
+        storage = LocalStorageBackend(resolved_settings.storage_local_root)
+        metadata_store = InMemoryDatasetStore()
+        upload_service = DatasetUploadService(
+            storage=storage,
+            inspector=CsvInspector(),
+            metadata_store=metadata_store,
+            max_upload_size=resolved_settings.max_upload_size,
+        )
+        uploaded_ids = []
+        for file_name in files:
+            file_path = Path(file_name)
+            with file_path.open("rb") as stream:
+                uploaded = upload_service.upload(
+                    stream,
+                    original_filename=file_path.name,
+                    owner_id=selected_owner_id,
+                )
+            uploaded_ids.append(uploaded.dataset_id)
+        selected_dataset_ids = uploaded_ids
+        selected_resolver = DatasetResolver(
+            storage=storage, metadata_store=metadata_store
+        )
+
     selected_output_dir = (
         output_dir
         if output_dir is not None and str(output_dir).strip()
@@ -526,8 +642,10 @@ def quick_analysis(
             if generate_word_report is not None
             else resolved_settings.app_env != "test"
         ),
+        dataset_resolver=selected_resolver,
+        dataset_owner_id=selected_owner_id,
     )
     return agent.analyze(
         user_input=query,
-        files=list(files) if files is not None else None,
+        dataset_ids=selected_dataset_ids,
     )

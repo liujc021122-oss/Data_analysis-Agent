@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-rounds", type=int, default=None)
     parser.add_argument("--no-word-report", action="store_true")
+    parser.add_argument("--dataset-id", action="append", default=None)
     return parser
 
 
@@ -36,6 +37,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=Path(requested_output_dir) if requested_output_dir else None,
         )
         configure_logging(settings)
+        if args.files and args.dataset_id:
+            print(
+                "Positional files cannot be combined with --dataset-id",
+                file=sys.stderr,
+            )
+            return 2
         missing = [file for file in args.files if not Path(file).is_file()]
         if missing:
             print(
@@ -45,7 +52,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         result = quick_analysis(
             query=args.query,
-            files=args.files,
+            files=args.files if not args.dataset_id else None,
+            dataset_ids=args.dataset_id,
             output_dir=requested_output_dir or settings.output_dir,
             max_rounds=args.max_rounds,
             generate_word_report=not args.no_word_report,

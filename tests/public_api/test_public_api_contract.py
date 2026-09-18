@@ -21,14 +21,33 @@ def test_quick_analysis_signature_is_stable():
     assert list(parameters) == [
         "query",
         "files",
+        "dataset_ids",
         "output_dir",
         "max_rounds",
         "generate_word_report",
         "settings",
+        "dataset_resolver",
+        "dataset_owner_id",
     ]
     assert parameters["query"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert parameters["files"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert all(
         parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
-        for name in ("output_dir", "max_rounds", "generate_word_report", "settings")
+        for name in (
+            "dataset_ids",
+            "output_dir",
+            "max_rounds",
+            "generate_word_report",
+            "settings",
+            "dataset_resolver",
+            "dataset_owner_id",
+        )
     )
+
+
+def test_quick_analysis_exposes_dataset_ids_without_removing_files():
+    parameters = inspect.signature(data_analysis_agent.quick_analysis).parameters
+
+    assert "files" in parameters
+    assert "dataset_ids" in parameters
+    assert parameters["dataset_ids"].kind is inspect.Parameter.KEYWORD_ONLY
