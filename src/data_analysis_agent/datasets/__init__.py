@@ -15,6 +15,13 @@ from .models import (
     StoredObject,
 )
 from .storage import LocalStorageBackend, StorageBackend
+from .resolver import DatasetResolver
+from .service import (
+    DatasetMetadataStore,
+    DatasetUploadService,
+    InMemoryDatasetStore,
+    UnitOfWorkDatasetStore,
+)
 
 __all__ = [
     "ColumnProfile",
@@ -31,4 +38,9 @@ __all__ = [
     "LocalStorageBackend",
     "StoredObject",
     "UploadValidationError",
+    "DatasetMetadataStore",
+    "DatasetResolver",
+    "DatasetUploadService",
+    "InMemoryDatasetStore",
+    "UnitOfWorkDatasetStore",
 ]
