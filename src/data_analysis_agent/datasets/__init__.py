@@ -13,6 +13,7 @@ from .models import (
     SensitiveField,
     StoredObject,
 )
+from .storage import LocalStorageBackend, StorageBackend
 
 __all__ = [
     "ColumnProfile",
@@ -24,6 +25,8 @@ __all__ = [
     "DatasetUploadResult",
     "SensitiveField",
     "StorageError",
+    "StorageBackend",
+    "LocalStorageBackend",
     "StoredObject",
     "UploadValidationError",
 ]
