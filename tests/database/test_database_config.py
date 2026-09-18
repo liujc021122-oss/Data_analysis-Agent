@@ -41,6 +41,8 @@ def test_database_factory_accepts_production_mysql_url_without_connecting():
             "OPENAI_API_KEY": "offline-key",
             "OPENAI_BASE_URL": "https://offline.invalid",
             "OPENAI_MODEL": "offline-model",
+            "STORAGE_ENDPOINT": "https://storage.invalid",
+            "STORAGE_BUCKET": "offline-bucket",
             "DATABASE_URL": (
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"
@@ -61,6 +63,8 @@ def test_database_factory_rejects_sqlite_url_for_production(tmp_path):
             "OPENAI_API_KEY": "offline-key",
             "OPENAI_BASE_URL": "https://offline.invalid",
             "OPENAI_MODEL": "offline-model",
+            "STORAGE_ENDPOINT": "https://storage.invalid",
+            "STORAGE_BUCKET": "offline-bucket",
             "DATABASE_URL": (
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"
