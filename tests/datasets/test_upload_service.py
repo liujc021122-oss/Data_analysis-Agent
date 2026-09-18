@@ -3,10 +3,21 @@ from uuid import uuid4
 
 import pytest
 
-from data_analysis_agent.datasets.errors import UploadValidationError
+from data_analysis_agent.datasets.errors import DatasetPersistenceError, UploadValidationError
 from data_analysis_agent.datasets.inspection import CsvInspector
 from data_analysis_agent.datasets.service import DatasetUploadService, UnitOfWorkDatasetStore
 from data_analysis_agent.datasets.storage import LocalStorageBackend
+
+
+class FailingMetadataStore:
+    def __init__(self, error):
+        self.error = error
+
+    def create(self, record):
+        raise self.error
+
+    def get_for_user(self, dataset_id, user_id):
+        return None
 
 
 def test_upload_persists_only_metadata_and_returns_opaque_dataset_id(tmp_path, uow_factory):
@@ -49,3 +60,46 @@ def test_invalid_upload_does_not_create_metadata_or_object(tmp_path, uow_factory
     with uow_factory() as uow:
         assert uow.datasets.list_for_user(owner_id) == []
     assert list((tmp_path / "objects").rglob("*")) == []
+
+
+def test_upload_rejects_actual_stream_bytes_over_max_size_before_storage(tmp_path, uow_factory):
+    owner_id = uuid4()
+    storage = LocalStorageBackend(tmp_path / "objects")
+    service = DatasetUploadService(
+        storage=storage,
+        inspector=CsvInspector(),
+        metadata_store=UnitOfWorkDatasetStore(uow_factory),
+        max_upload_size=10,
+    )
+
+    with pytest.raises(UploadValidationError):
+        service.upload(
+            BytesIO(b"name,value\nA,12345\n"),
+            original_filename="large.csv",
+            owner_id=owner_id,
+        )
+
+    with uow_factory() as uow:
+        assert uow.datasets.list_for_user(owner_id) == []
+    assert list((tmp_path / "objects").rglob("*")) == []
+
+
+def test_upload_deletes_object_and_preserves_metadata_failure_cause(tmp_path):
+    storage = LocalStorageBackend(tmp_path / "objects")
+    cause = RuntimeError("metadata store unavailable")
+    service = DatasetUploadService(
+        storage=storage,
+        inspector=CsvInspector(),
+        metadata_store=FailingMetadataStore(cause),
+        max_upload_size=1024,
+    )
+
+    with pytest.raises(DatasetPersistenceError) as exc_info:
+        service.upload(
+            BytesIO(b"name,value\nA,1\n"),
+            original_filename="sales.csv",
+            owner_id=uuid4(),
+        )
+
+    assert exc_info.value.__cause__ is cause
+    assert not any(path.is_file() for path in (tmp_path / "objects").rglob("*"))

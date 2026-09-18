@@ -11,4 +11,11 @@ def test_resolver_rejects_a_dataset_owned_by_another_user(uploaded_dataset):
     with pytest.raises(DatasetAccessDeniedError):
         resolver.open_for_user(dataset_id, owner_id=uuid4())
 
+
+def test_resolver_opens_real_object_for_owning_user(uploaded_dataset):
+    resolver, dataset_id, owner_id = uploaded_dataset
+
+    with resolver.open_for_user(dataset_id, owner_id=owner_id) as stream:
+        assert stream.read() == b"name,value\nA,1\n"
+
     assert resolver.profile_for_user(dataset_id, owner_id=owner_id).row_count == 1
