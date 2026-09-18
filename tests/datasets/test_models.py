@@ -44,6 +44,25 @@ def test_profile_serializes_to_json_with_at_most_twenty_preview_rows():
     assert "email@example.com" not in payload
 
 
+def test_profile_rejects_raw_value_for_declared_sensitive_preview_column():
+    with pytest.raises(ValidationError, match=r"must be exactly \[REDACTED\]"):
+        DatasetProfile(
+            encoding="utf-8",
+            delimiter=",",
+            row_count=1,
+            column_count=1,
+            columns=(),
+            preview_rows=({"email": "person@example.com"},),
+            sensitive_fields=(
+                SensitiveField(
+                    column_name="email",
+                    risk_type="email",
+                    detected_by=("name",),
+                ),
+            ),
+        )
+
+
 def test_profile_rejects_negative_counts_and_unknown_fields():
     with pytest.raises(ValidationError, match="missing_count"):
         ColumnProfile(

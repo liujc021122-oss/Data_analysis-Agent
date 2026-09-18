@@ -11,6 +11,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     field_validator,
+    model_validator,
 )
 
 
@@ -51,6 +52,20 @@ class DatasetProfile(DatasetModel):
         except (TypeError, ValueError) as exc:
             raise ValueError("preview_rows must contain JSON-safe values") from exc
         return value
+
+    @model_validator(mode="after")
+    def _validate_sensitive_preview_values(self):
+        sensitive_columns = {
+            field.column_name for field in self.sensitive_fields
+        }
+        for row_index, row in enumerate(self.preview_rows):
+            for column_name in sensitive_columns:
+                if column_name in row and row[column_name] != "[REDACTED]":
+                    raise ValueError(
+                        f"preview_rows[{row_index}][{column_name!r}] "
+                        "must be exactly [REDACTED]"
+                    )
+        return self
 
 
 class DatasetUploadResult(DatasetModel):
