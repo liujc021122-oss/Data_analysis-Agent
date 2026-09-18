@@ -1,5 +1,15 @@
 # M04 文件上传与数据校验实施计划
 
+## M04 Final Review Completion Ledger
+
+- Task 1: complete.
+- Task 2: complete.
+- Task 3: complete, including strict unsupported-delimiter rejection and bounded sensitivity sampling.
+- Task 4: complete.
+- Task 5: complete, including Profile-driven dataset loading and shared `files` compatibility adaptation.
+- Task 6: complete, including README, offline acceptance coverage, and final verification.
+- Final review fixes: complete after the RED/GREEN regression cycle recorded in `final-review-fix-report.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 CSV 上传转换为经过严格校验、可持久化、只能通过 `dataset_id` 访问的数据集，并让 Agent/`quick_analysis` 不再把用户文件路径放入模型上下文。

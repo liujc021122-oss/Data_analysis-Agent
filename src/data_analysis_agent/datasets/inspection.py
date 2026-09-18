@@ -20,6 +20,7 @@ _MOBILE = re.compile(r"^1[3-9]\d{9}$")
 _CHINESE_ID = re.compile(r"^(?:\d{15}|\d{17}[\dXx])$")
 _INTEGER = re.compile(r"^[+-]?\d+$")
 _NUMBER = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?$")
+_UNSUPPORTED_DELIMITER_CANDIDATES = ":^~"
 
 
 def _validation(code: DatasetErrorCode, message: str) -> UploadValidationError:
@@ -124,6 +125,17 @@ def _risk_for_name(name: str) -> str | None:
     return None
 
 
+def _has_explicit_unsupported_delimiter(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    for candidate in _UNSUPPORTED_DELIMITER_CANDIDATES:
+        counts = [line.count(candidate) for line in lines]
+        if counts[0] and all(count == counts[0] for count in counts):
+            return True
+    return False
+
+
 class CsvInspector:
     """Validate a CSV stream and return a JSON-safe structural profile."""
 
@@ -141,6 +153,11 @@ class CsvInspector:
             dialect = csv.Sniffer().sniff(text, delimiters=_SUPPORTED_DELIMITERS)
             delimiter = dialect.delimiter
         except csv.Error:
+            if _has_explicit_unsupported_delimiter(text):
+                raise _validation(
+                    DatasetErrorCode.INVALID_CSV,
+                    "CSV uses an unsupported delimiter",
+                )
             delimiter = ","
             dialect = csv.excel
         try:
@@ -163,7 +180,13 @@ class CsvInspector:
         sensitive: dict[str, tuple[str, set[str]]] = {}
         for index, name in enumerate(headers):
             name_risk = _risk_for_name(name)
-            value_risk = next((risk for row in data if (risk := _risk_for_value(row[index]))), None)
+            sampled_values = [
+                row[index] for row in data if row[index].strip()
+            ][:20]
+            value_risk = next(
+                (risk for value in sampled_values if (risk := _risk_for_value(value))),
+                None,
+            )
             risk = name_risk or value_risk
             if risk:
                 detected: set[str] = set()

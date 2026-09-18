@@ -176,11 +176,10 @@ from data_analysis_agent import DataAnalysisAgent, LLMConfig
 llm_config = LLMConfig()
 agent = DataAnalysisAgent(llm_config)
 
-# 开始分析（将 your_data.csv 替换为你的数据文件）
-files = ["your_data.csv"]
+# 直接传入已上传数据集的 ID；文件兼容入口请使用下方的 quick_analysis(files=...)
 report = agent.analyze(
     user_input="分析销售数据，生成趋势图表和关键指标",
-    files=files,
+    dataset_ids=[dataset_id],
 )
 
 # 输出结果

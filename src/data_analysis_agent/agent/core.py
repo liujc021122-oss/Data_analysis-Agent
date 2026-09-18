@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID, uuid4
 
 from ..config.llm import LLMConfig
-from ..config.settings import Settings, load_settings
+from ..config.settings import ConfigurationError, Settings, load_settings
 from ..execution.code_executor import CodeExecutor
 from ..reports.word import generate_word_report
 from ..services.llm import LLMHelper
@@ -34,6 +34,41 @@ from ..datasets import (
 )
 from ..datasets.errors import UploadValidationError
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
+
+
+def _upload_compatibility_files(
+    files: Sequence[str], *, settings: Settings
+) -> tuple[tuple[UUID, ...], DatasetResolver, UUID]:
+    if settings.app_env == "production":
+        raise ConfigurationError(
+            "production files uploads require the production upload service; "
+            "use that service or pass dataset_ids"
+        )
+
+    owner_id = uuid4()
+    storage = LocalStorageBackend(settings.storage_local_root)
+    metadata_store = InMemoryDatasetStore()
+    upload_service = DatasetUploadService(
+        storage=storage,
+        inspector=CsvInspector(),
+        metadata_store=metadata_store,
+        max_upload_size=settings.max_upload_size,
+    )
+    uploaded_ids: list[UUID] = []
+    for file_name in files:
+        file_path = Path(file_name)
+        with file_path.open("rb") as stream:
+            uploaded = upload_service.upload(
+                stream,
+                original_filename=file_path.name,
+                owner_id=owner_id,
+            )
+        uploaded_ids.append(uploaded.dataset_id)
+    return (
+        tuple(uploaded_ids),
+        DatasetResolver(storage=storage, metadata_store=metadata_store),
+        owner_id,
+    )
 
 
 class DataAnalysisAgent:
@@ -233,10 +268,24 @@ class DataAnalysisAgent:
         self.analysis_results = []
         self.current_round = 0
 
+        if files is not None and dataset_ids is not None:
+            raise UploadValidationError(
+                DatasetErrorCode.INVALID_DATASET_REQUEST,
+                "files and dataset_ids cannot be supplied together",
+            )
+        if files is not None:
+            uploaded_ids, resolver, owner_id = _upload_compatibility_files(
+                files, settings=load_settings()
+            )
+            dataset_ids = uploaded_ids
+            self.dataset_resolver = resolver
+            self.dataset_owner_id = owner_id
+
         normalized_dataset_ids = tuple(
             UUID(str(dataset_id)) for dataset_id in (dataset_ids or ())
         )
         dataset_context = []
+        profiles_by_id = {}
         if normalized_dataset_ids:
             if self.dataset_resolver is None:
                 raise DatasetAccessDeniedError(
@@ -258,6 +307,7 @@ class DataAnalysisAgent:
                         "profile": profile.model_dump(mode="json"),
                     }
                 )
+                profiles_by_id[dataset_id] = profile
 
         # 创建本次分析的专用输出目录
         self.session_output_dir = create_session_output_dir(self.base_output_dir,user_input)
@@ -269,10 +319,19 @@ class DataAnalysisAgent:
         self.executor.set_variable('session_output_dir', self.session_output_dir)
         if normalized_dataset_ids:
             def load_dataset(dataset_id: str):
+                normalized_id = UUID(str(dataset_id))
+                profile = profiles_by_id[normalized_id]
+                profile_payload = profile.model_dump(mode="json")
+                encoding = getattr(profile, "encoding", profile_payload.get("encoding", "utf-8"))
+                delimiter = getattr(profile, "delimiter", profile_payload.get("delimiter", ","))
                 with self.dataset_resolver.open_for_user(
-                    UUID(str(dataset_id)), owner_id=self.dataset_owner_id
+                    normalized_id, owner_id=self.dataset_owner_id
                 ) as stream:
-                    return pandas.read_csv(stream)
+                    return pandas.read_csv(
+                        stream,
+                        encoding=encoding,
+                        sep=delimiter,
+                    )
 
             self.executor.set_variable("load_dataset", load_dataset)
             self.executor.set_variable(
@@ -604,28 +663,12 @@ def quick_analysis(
             )
 
     if files is not None:
-        selected_owner_id = uuid4()
-        storage = LocalStorageBackend(resolved_settings.storage_local_root)
-        metadata_store = InMemoryDatasetStore()
-        upload_service = DatasetUploadService(
-            storage=storage,
-            inspector=CsvInspector(),
-            metadata_store=metadata_store,
-            max_upload_size=resolved_settings.max_upload_size,
-        )
-        uploaded_ids = []
-        for file_name in files:
-            file_path = Path(file_name)
-            with file_path.open("rb") as stream:
-                uploaded = upload_service.upload(
-                    stream,
-                    original_filename=file_path.name,
-                    owner_id=selected_owner_id,
-                )
-            uploaded_ids.append(uploaded.dataset_id)
-        selected_dataset_ids = uploaded_ids
-        selected_resolver = DatasetResolver(
-            storage=storage, metadata_store=metadata_store
+        (
+            selected_dataset_ids,
+            selected_resolver,
+            selected_owner_id,
+        ) = _upload_compatibility_files(
+            files, settings=resolved_settings
         )
 
     selected_output_dir = (

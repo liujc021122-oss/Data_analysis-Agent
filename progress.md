@@ -1,5 +1,15 @@
 # M02 Progress
 
+## M04 Final Review Fix
+
+- Task 1: complete.
+- Task 2: complete.
+- Task 3: complete.
+- Task 4: complete.
+- Task 5: complete.
+- Task 6: complete.
+- Final review regression tests were added before production changes. RED was observed for unsupported delimiters, unbounded sensitive-value scanning, Profile-ignored loader settings, direct `analyze(files=...)`, and production `quick_analysis(files=...)` fail-closed behavior.
+
 ## Task 6
 
 ## M03 Final Review Fix
