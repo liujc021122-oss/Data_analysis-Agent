@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import re
 from datetime import date, datetime
-from io import TextIOWrapper
 from typing import BinaryIO
 
 from charset_normalizer import from_bytes
@@ -28,28 +27,33 @@ def _validation(code: DatasetErrorCode, message: str) -> UploadValidationError:
 
 
 def _decode(payload: bytes) -> tuple[str, str]:
-    if payload.startswith(b"\xef\xbb\xbf"):
+    for bom, encoding in (
+        (b"\xef\xbb\xbf", "utf-8-sig"),
+        (b"\xff\xfe", "utf-16"),
+        (b"\xfe\xff", "utf-16"),
+    ):
+        if not payload.startswith(bom):
+            continue
         try:
-            return payload.decode("utf-8-sig"), "utf-8-sig"
+            return payload.decode(encoding), encoding
         except UnicodeDecodeError:
-            pass
+            break
 
     try:
         match = from_bytes(payload).best()
         if match is not None and match.encoding:
-            encoding = match.encoding.lower()
-            if encoding in {"cp949", "euc-kr", "shift_jis", "cp932"}:
-                try:
-                    return payload.decode("gb18030"), "gb18030"
-                except UnicodeDecodeError:
-                    pass
-            return str(match).replace("\r\n", "\n"), match.encoding
+            confidence = getattr(match, "confidence", getattr(match, "coherence", 0.0))
+            decoded = str(match)
+            if confidence >= 0.50 and "\ufffd" not in decoded:
+                return decoded.replace("\r\n", "\n"), match.encoding
     except (UnicodeError, LookupError):
         pass
 
     for encoding in ("gb18030", "gbk"):
         try:
-            return payload.decode(encoding), encoding
+            decoded = payload.decode(encoding)
+            if "\ufffd" not in decoded:
+                return decoded, encoding
         except UnicodeDecodeError:
             continue
     raise _validation(DatasetErrorCode.ENCODING_DETECTION_FAILED, "unable to decode CSV data")
@@ -115,7 +119,7 @@ class CsvInspector:
     """Validate a CSV stream and return a JSON-safe structural profile."""
 
     def inspect(self, stream: BinaryIO, *, filename: str) -> DatasetProfile:
-        if not filename.lower().endswith(".csv"):
+        if not filename or not filename.lower().endswith(".csv"):
             raise _validation(DatasetErrorCode.UNSUPPORTED_EXTENSION, "only CSV files are supported")
         payload = stream.read()
         if not payload:
@@ -127,6 +131,10 @@ class CsvInspector:
         try:
             dialect = csv.Sniffer().sniff(text, delimiters=_SUPPORTED_DELIMITERS)
             delimiter = dialect.delimiter
+        except csv.Error:
+            delimiter = ","
+            dialect = csv.excel
+        try:
             rows = list(csv.reader(text.splitlines(), dialect, strict=True))
         except (csv.Error, UnicodeError) as exc:
             raise _validation(DatasetErrorCode.INVALID_CSV, "invalid CSV structure") from exc
