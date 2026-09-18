@@ -208,7 +208,32 @@ report = quick_analysis(
 )
 ```
 
-### 5. 命令行使用
+### 5. 数据集上传与 ID 分析
+
+`DatasetUploadService` 是离线可验证的数据集上传边界：它校验 CSV 文件名、大小、编码、分隔符和结构，生成数据集 Profile，保存本地对象与元数据，并返回不透明的 `dataset_id`。分析流程只使用这个 ID 访问已上传的数据集。
+
+本地存储和上传大小通过环境变量配置：
+
+| 变量 | 说明 |
+| --- | --- |
+| `STORAGE_LOCAL_ROOT` | 本地数据集对象的存储根目录；未设置时使用输出目录下的默认数据集目录 |
+| `MAX_UPLOAD_SIZE` | 单个上传文件允许的最大字节数 |
+
+`files` 调用保留兼容性。适配器会在分析前校验并存储输入文件，然后把生成的 `dataset_id` 交给分析流程：
+
+```python
+report = quick_analysis(query="分析数据", files=["sales.csv"])
+```
+
+对于已上传的数据集，直接使用 `dataset_ids` 调用：
+
+```python
+report = quick_analysis(query="分析已上传数据", dataset_ids=[dataset_id])
+```
+
+发送给模型的内容只包含数据集 ID 和经过脱敏的 Profile 信息；不会把 `source_uri`、本地上传路径或用户原始文件名放入 prompt。数据集访问仍按所属用户校验。
+
+### 6. 命令行使用
 
 统一 CLI 要求显式传入输入文件；模块入口、安装后的命令和根目录兼容入口使用同一套实现：
 
@@ -221,7 +246,7 @@ python -m data_analysis_agent data1.csv data2.csv --query "分析销售数据"
 
 以上命令不会自动补充 `cpc.csv` 或 `shop.csv`；请在命令中明确列出实际存在的文件。使用 `--help` 查看完整选项。
 
-### 6. 自定义配置
+### 7. 自定义配置
 
 ```python
 agent = DataAnalysisAgent(
