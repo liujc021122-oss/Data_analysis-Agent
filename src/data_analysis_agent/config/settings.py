@@ -37,6 +37,7 @@ class Settings:
     redis_url: Optional[str]
     storage_endpoint: Optional[str]
     storage_bucket: Optional[str]
+    storage_local_root: Path
     openai_api_key: Optional[str]
     openai_base_url: str
     openai_model: str
@@ -137,6 +138,7 @@ def load_settings(
         or _nonblank(values.get("OUTPUT_DIR"))
         or defaults[environment]
     )
+    selected_output_path = Path(selected_output)
     api_key = _nonblank(values.get("OPENAI_API_KEY"))
     base_url = _nonblank(values.get("OPENAI_BASE_URL"))
     model = _nonblank(values.get("OPENAI_MODEL"))
@@ -144,8 +146,8 @@ def load_settings(
         app_env=environment,
         database_url=_nonblank(values.get("DATABASE_URL")),
         redis_url=values.get("REDIS_URL"),
-        storage_endpoint=values.get("STORAGE_ENDPOINT"),
-        storage_bucket=values.get("STORAGE_BUCKET"),
+        storage_endpoint=_nonblank(values.get("STORAGE_ENDPOINT")),
+        storage_bucket=_nonblank(values.get("STORAGE_BUCKET")),
         openai_api_key=api_key,
         openai_base_url=base_url or (DEFAULT_BASE_URL if environment != "production" else ""),
         openai_model=model or (DEFAULT_MODEL if environment != "production" else ""),
@@ -155,7 +157,11 @@ def load_settings(
         max_upload_size=_positive_int(
             values, "MAX_UPLOAD_SIZE", DEFAULT_MAX_UPLOAD_SIZE
         ),
-        output_dir=Path(selected_output),
+        output_dir=selected_output_path,
+        storage_local_root=Path(
+            _nonblank(values.get("STORAGE_LOCAL_ROOT"))
+            or selected_output_path / "datasets"
+        ),
         log_level=values.get("LOG_LEVEL", "INFO").upper(),
     )
     if settings.log_level not in VALID_LOG_LEVELS:
@@ -170,6 +176,8 @@ def load_settings(
                 ("OPENAI_BASE_URL", settings.openai_base_url),
                 ("OPENAI_MODEL", settings.openai_model),
                 ("DATABASE_URL", settings.database_url),
+                ("STORAGE_ENDPOINT", settings.storage_endpoint),
+                ("STORAGE_BUCKET", settings.storage_bucket),
             )
             if not value
         ]

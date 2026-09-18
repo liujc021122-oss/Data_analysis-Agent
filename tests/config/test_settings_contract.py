@@ -44,6 +44,29 @@ def test_test_profile_does_not_read_ordinary_or_production_dotenv(tmp_path):
     assert settings.openai_model == "deepseek-chat"
 
 
+def test_settings_derives_controlled_local_storage_root(tmp_path):
+    settings = load_settings(
+        app_env="test",
+        environ={"DATABASE_URL": "sqlite:///:memory:"},
+        dotenv_dir=tmp_path,
+    )
+
+    assert settings.storage_local_root == Path("outputs/test/datasets")
+
+
+def test_settings_accepts_explicit_storage_local_root(tmp_path):
+    settings = load_settings(
+        app_env="development",
+        environ={
+            "DATABASE_URL": "sqlite:///:memory:",
+            "STORAGE_LOCAL_ROOT": str(tmp_path / "uploads"),
+        },
+        dotenv_dir=tmp_path,
+    )
+
+    assert settings.storage_local_root == tmp_path / "uploads"
+
+
 def test_process_environment_overrides_selected_dotenv_file(tmp_path):
     (tmp_path / ".env.development").write_text(
         "OPENAI_API_KEY=file-secret\nOPENAI_MODEL=file-model\nMAX_TASK_RUNTIME=120\n",
@@ -100,6 +123,8 @@ def test_production_sqlite_database_url_is_rejected_at_settings_boundary(tmp_pat
                 "OPENAI_BASE_URL": "https://offline.invalid",
                 "OPENAI_MODEL": "offline-model",
                 "DATABASE_URL": f"sqlite:///{tmp_path / 'production.sqlite3'}",
+                "STORAGE_ENDPOINT": "https://storage.example.invalid",
+                "STORAGE_BUCKET": "data-analysis",
             },
             dotenv_dir=tmp_path,
         )
@@ -148,6 +173,8 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"
             ),
+            "STORAGE_ENDPOINT": "https://storage.example.invalid",
+            "STORAGE_BUCKET": "data-analysis",
         },
         dotenv_dir=tmp_path,
     )

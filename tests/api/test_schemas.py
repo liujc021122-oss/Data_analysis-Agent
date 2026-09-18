@@ -9,9 +9,15 @@ from data_analysis_agent.api.schemas import (
     AnalysisTaskCreateRequest,
     AnalysisTaskResponse,
     ArtifactResponse,
+    DatasetUploadResponse,
     ErrorResponse,
     ExecutionResultResponse,
     TaskEventResponse,
+)
+from data_analysis_agent.datasets.models import (
+    ColumnProfile,
+    DatasetProfile,
+    DatasetUploadResult,
 )
 from data_analysis_agent.domain.enums import ReportFormat, TaskEventType, TaskStatus
 
@@ -104,3 +110,35 @@ def test_event_execution_and_error_dtos_are_json_serializable():
 def test_api_models_forbid_unknown_fields():
     with pytest.raises(ValidationError):
         ErrorResponse(code="E", message="m", unexpected="x")
+
+
+def test_dataset_upload_response_serializes_result_without_source_uri():
+    result = DatasetUploadResult(
+        dataset_id=uuid4(),
+        original_filename="report.csv",
+        size_bytes=12,
+        checksum="sha256:abc",
+        profile=DatasetProfile(
+            encoding="utf-8",
+            delimiter=",",
+            row_count=1,
+            column_count=1,
+            columns=(
+                ColumnProfile(
+                    name="value",
+                    inferred_type="integer",
+                    non_null_count=1,
+                    missing_count=0,
+                    missing_rate=0.0,
+                ),
+            ),
+        ),
+    )
+
+    response = DatasetUploadResponse.model_validate(result)
+    payload = response.model_dump()
+
+    assert payload["dataset_id"] == result.dataset_id
+    assert response.profile == result.profile
+    assert set(payload) == {"dataset_id", "profile"}
+    assert "source_uri" not in payload

@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from ..domain.enums import ReportFormat, TaskEventType, TaskStatus
+from ..datasets.models import DatasetProfile
 
 
 def _utc_now() -> datetime:
@@ -91,3 +92,8 @@ class ExecutionResultResponse(APIModel):
     error: StrictStr | None = None
     variables: dict[str, Any] = Field(default_factory=dict)
     duration_ms: StrictInt | None = Field(default=None, ge=0)
+
+
+class DatasetUploadResponse(APIModel):
+    dataset_id: UUID
+    profile: DatasetProfile
