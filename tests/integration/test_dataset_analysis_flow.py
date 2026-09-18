@@ -1,6 +1,12 @@
-from pathlib import Path
-from uuid import UUID
+from io import BytesIO
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
+import pytest
+
+from data_analysis_agent import DataAnalysisAgent
+from data_analysis_agent.datasets.errors import DatasetAccessDeniedError, DatasetErrorCode, UploadValidationError
+from data_analysis_agent.config.llm import LLMConfig
 from tests.fixtures.fake_llm import FakeLLM, dataset_id_from_prompt, yaml_response
 
 
@@ -45,3 +51,105 @@ def test_quick_analysis_uses_dataset_id_and_loader_instead_of_input_path(
     assert "source_uri" not in prompts
     assert "original_filename" not in prompts
     assert seen["dataset_id"]
+
+
+class FakeResolver:
+    def __init__(self, dataset_id, owner_id):
+        self.dataset_id = dataset_id
+        self.owner_id = owner_id
+        self.profile_calls = []
+        self.open_calls = []
+
+    def profile_for_user(self, dataset_id, *, owner_id):
+        self.profile_calls.append((dataset_id, owner_id))
+        return SimpleNamespace(
+            model_dump=lambda mode: {
+                "encoding": "utf-8",
+                "delimiter": ",",
+                "row_count": 1,
+                "column_count": 2,
+                "columns": [],
+                "preview_rows": [],
+                "sensitive_fields": [],
+            }
+        )
+
+    def open_for_user(self, dataset_id, *, owner_id):
+        self.open_calls.append((dataset_id, owner_id))
+        return BytesIO(b"name,value\nA,1\n")
+
+
+class LoaderExecutor:
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+        self.variables = {}
+
+    def set_variable(self, name, value):
+        self.variables[name] = value
+
+    def get_environment_info(self):
+        return "offline executor"
+
+    def execute_code(self, code):
+        namespace = dict(self.variables)
+        exec(code, {}, namespace)
+        return {"success": True, "output": "", "error": "", "variables": {}}
+
+    def reset_environment(self):
+        pass
+
+
+def test_agent_explicit_dataset_ids_registers_loader_and_owner(monkeypatch, tmp_path):
+    dataset_id = uuid4()
+    owner_id = uuid4()
+    resolver = FakeResolver(dataset_id, owner_id)
+    fake_llm = FakeLLM(
+        [
+            yaml_response("generate_code", code=f"df = load_dataset('{dataset_id}')"),
+            yaml_response("analysis_complete", final_report="# done"),
+            yaml_response("analysis_complete", final_report="# done"),
+        ]
+    )
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
+    monkeypatch.setattr("data_analysis_agent.agent.core.CodeExecutor", LoaderExecutor)
+
+    agent = DataAnalysisAgent(
+        llm_config=LLMConfig(api_key="offline", base_url="https://offline.invalid", model="fake"),
+        output_dir=str(tmp_path / "outputs"),
+        max_rounds=1,
+        generate_word_report=False,
+        dataset_resolver=resolver,
+        dataset_owner_id=owner_id,
+    )
+
+    result = agent.analyze("offline", dataset_ids=[str(dataset_id)])
+
+    assert result["final_report"] == "# done"
+    assert resolver.profile_calls == [(dataset_id, owner_id)]
+    assert resolver.open_calls == [(dataset_id, owner_id)]
+
+
+@pytest.mark.parametrize(
+    "kwargs, missing",
+    [
+        ({"dataset_owner_id": uuid4()}, "dataset_resolver"),
+        ({"dataset_resolver": FakeResolver(uuid4(), uuid4())}, "dataset_owner_id"),
+    ],
+)
+def test_quick_analysis_explicit_dataset_ids_requires_access_context(kwargs, missing):
+    from data_analysis_agent import quick_analysis
+
+    with pytest.raises(DatasetAccessDeniedError, match=missing):
+        quick_analysis("offline", dataset_ids=[uuid4()], **kwargs)
+
+
+def test_quick_analysis_rejects_files_and_dataset_ids_together(tmp_path):
+    from data_analysis_agent import quick_analysis
+
+    source = tmp_path / "input.csv"
+    source.write_text("name,value\nA,1\n", encoding="utf-8")
+
+    with pytest.raises(UploadValidationError) as exc_info:
+        quick_analysis("offline", files=[str(source)], dataset_ids=[uuid4()])
+
+    assert exc_info.value.code is DatasetErrorCode.INVALID_DATASET_REQUEST

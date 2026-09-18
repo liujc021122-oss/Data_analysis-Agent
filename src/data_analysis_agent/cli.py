@@ -3,9 +3,13 @@ import logging
 import sys
 from pathlib import Path
 from typing import Sequence
+from uuid import UUID
 
 from .agent.core import quick_analysis
 from .config.settings import ConfigurationError, configure_logging, load_settings
+from .datasets import DatasetResolver, LocalStorageBackend, UnitOfWorkDatasetStore
+from .persistence.database import Database
+from .persistence.unit_of_work import UnitOfWork
 from .services.errors import sanitize_exception
 
 
@@ -23,7 +27,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-rounds", type=int, default=None)
     parser.add_argument("--no-word-report", action="store_true")
     parser.add_argument("--dataset-id", action="append", default=None)
+    parser.add_argument("--dataset-owner-id", type=UUID, default=None)
     return parser
+
+
+def build_dataset_resolver(database: Database, settings) -> DatasetResolver:
+    storage = LocalStorageBackend(settings.storage_local_root)
+    metadata_store = UnitOfWorkDatasetStore(
+        lambda: UnitOfWork(database.session_factory)
+    )
+    return DatasetResolver(storage=storage, metadata_store=metadata_store)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -43,6 +56,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        if args.dataset_id and args.dataset_owner_id is None:
+            print(
+                "Dataset mode requires --dataset-owner-id",
+                file=sys.stderr,
+            )
+            return 2
+        if args.dataset_id and not settings.database_url:
+            print(
+                "Dataset mode requires DATABASE_URL",
+                file=sys.stderr,
+            )
+            return 2
         missing = [file for file in args.files if not Path(file).is_file()]
         if missing:
             print(
@@ -50,15 +75,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        result = quick_analysis(
-            query=args.query,
-            files=args.files if not args.dataset_id else None,
-            dataset_ids=args.dataset_id,
-            output_dir=requested_output_dir or settings.output_dir,
-            max_rounds=args.max_rounds,
-            generate_word_report=not args.no_word_report,
-            settings=settings,
-        )
+        database = None
+        try:
+            dataset_resolver = None
+            if args.dataset_id:
+                database = Database.from_settings(settings)
+                dataset_resolver = build_dataset_resolver(database, settings)
+            result = quick_analysis(
+                query=args.query,
+                files=args.files if not args.dataset_id else None,
+                dataset_ids=args.dataset_id,
+                output_dir=requested_output_dir or settings.output_dir,
+                max_rounds=args.max_rounds,
+                generate_word_report=not args.no_word_report,
+                settings=settings,
+                dataset_resolver=dataset_resolver,
+                dataset_owner_id=args.dataset_owner_id,
+            )
+        finally:
+            if database is not None:
+                database.engine.dispose()
         print(result)
         return 0
     except ConfigurationError as exc:
