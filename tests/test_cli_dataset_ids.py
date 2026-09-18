@@ -74,6 +74,37 @@ def test_cli_dataset_ids_forward_owner_and_injected_resolver_without_uri(
     assert disposed == [True]
 
 
+def test_cli_dataset_id_disposes_engine_when_analysis_fails(monkeypatch):
+    owner_id = uuid4()
+    settings = make_settings("sqlite:///test.db")
+    disposed = []
+
+    class FakeDatabase:
+        engine = SimpleNamespace(dispose=lambda: disposed.append(True))
+        session_factory = object()
+
+    monkeypatch.setattr(cli, "load_settings", lambda **kwargs: settings)
+    monkeypatch.setattr(cli, "configure_logging", lambda settings: None)
+    monkeypatch.setattr(
+        cli, "Database", SimpleNamespace(from_settings=lambda value: FakeDatabase())
+    )
+    monkeypatch.setattr(cli, "build_dataset_resolver", lambda database, settings: object())
+
+    def failing_quick_analysis(**kwargs):
+        raise RuntimeError("offline analysis failure")
+
+    monkeypatch.setattr(cli, "quick_analysis", failing_quick_analysis)
+
+    assert cli.main(
+        [
+            "--dataset-id", str(uuid4()),
+            "--dataset-owner-id", str(owner_id),
+        ]
+    ) == 1
+
+    assert disposed == [True]
+
+
 def test_cli_dataset_id_rejects_positional_files(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "load_settings", lambda **kwargs: make_settings("sqlite:///test.db"))
     monkeypatch.setattr(cli, "configure_logging", lambda settings: None)
