@@ -16,3 +16,9 @@
 - `TaskRepository._to_domain` currently orders association rows by `dataset_id`; `compute_request_hash` intentionally hashes the request's tuple order.
 - `TaskPersistenceService` already iterates the request tuple in order, but `attach_dataset` has no position field and old callers rely on its two-argument signature.
 - Existing association rows from revision 0001 have no meaningful persisted order, so revision 0003 must backfill deterministically by `(task_id, dataset_id)` before making position non-null and adding per-task position uniqueness.
+
+## Task 3: encoding correctness
+
+- Before the fix, a valid non-BOM UTF-8 Chinese CSV was classified as `gb18030`; the resulting preview headers and values were mojibake.
+- The root cause was charset-normalizer running before strict UTF-8 decoding. Its best match can have low coherence on small valid samples.
+- The regression test now requires `utf-8` and intact Chinese headers/values. The decoder order is BOM, strict UTF-8, scored charset-normalizer, strict `gb18030`, then strict `gbk`.

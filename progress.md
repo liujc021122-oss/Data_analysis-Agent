@@ -26,3 +26,10 @@
 - The initial brief command using `Get-Command python` failed with exit 9009 because the host resolves `python` to `C:\Users\86136\AppData\Local\Microsoft\WindowsApps\python.exe`; this was replaced safely with the explicit shared interpreter.
 - Agent/Worker/API runtime orchestration was not changed; no real model API or network call was made.
 - Final domain hardening commits `22e2275`, `f66e235`, and `cc384f7` add canonical JSON validation, UTC time normalization, cycle/key protections, and stable set sorting.
+
+## Task 3: encoding correctness
+
+- Status: complete.
+- Reproduced the bug: non-BOM UTF-8 Chinese was detected as `gb18030` and produced mojibake.
+- Added the regression test first; it failed with `gb18030`, then passed after strict UTF-8 precedence was implemented.
+- Focused regression checks: `2 passed`.

@@ -44,3 +44,15 @@ Persist request tuple order for task datasets across creation, reload, restart, 
 | Error | Attempt | Resolution |
 |---|---:|---|
 | PowerShell smoke wrapper | 1 | Simplified to direct explicit-venv Python invocation; smoke passed |
+
+## Task 3: encoding correctness
+
+### Goal
+
+Preserve valid non-BOM UTF-8 dataset text before heuristic charset detection, while requiring a meaningful normalizer score and retaining strict Chinese-encoding fallbacks.
+
+### Phases
+
+- [x] Reproduce the UTF-8 Chinese mojibake and add a failing regression test.
+- [x] Implement ordered decoding and run focused tests.
+- [x] Run the required full verification, write the SDD report, and commit.
