@@ -51,6 +51,13 @@ def test_inspector_prioritizes_utf8_bom():
     assert profile.encoding.lower().replace("_", "-") in {"utf-8-sig", "utf-8"}
 
 
+def test_inspector_preserves_non_bom_utf8_chinese_text_and_headers():
+    profile = inspect_bytes("姓名,年龄\n张三,18\n".encode("utf-8"))
+
+    assert profile.encoding.lower().replace("_", "-") == "utf-8"
+    assert profile.preview_rows[0] == {"姓名": "张三", "年龄": "18"}
+
+
 def test_inspector_rejects_low_confidence_charset_detection(monkeypatch):
     class LowConfidenceMatch:
         encoding = "utf-8"

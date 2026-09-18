@@ -40,10 +40,19 @@ def _decode(payload: bytes) -> tuple[str, str]:
             break
 
     try:
+        return payload.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+
+    try:
         match = from_bytes(payload).best()
         if match is not None and match.encoding:
-            confidence = getattr(match, "confidence", getattr(match, "coherence", 0.0))
             decoded = str(match)
+            scores = (
+                getattr(match, "coherence", 0.0),
+                getattr(match, "confidence", 0.0),
+            )
+            confidence = max(float(score or 0.0) for score in scores)
             if confidence >= 0.50 and "\ufffd" not in decoded:
                 return decoded.replace("\r\n", "\n"), match.encoding
     except (UnicodeError, LookupError):
