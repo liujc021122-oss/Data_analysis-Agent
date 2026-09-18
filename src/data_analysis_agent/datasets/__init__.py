@@ -6,6 +6,7 @@ from .errors import (
     StorageError,
     UploadValidationError,
 )
+from .inspection import CsvInspector
 from .models import (
     ColumnProfile,
     DatasetProfile,
@@ -17,6 +18,7 @@ from .storage import LocalStorageBackend, StorageBackend
 
 __all__ = [
     "ColumnProfile",
+    "CsvInspector",
     "DatasetAccessDeniedError",
     "DatasetError",
     "DatasetErrorCode",
