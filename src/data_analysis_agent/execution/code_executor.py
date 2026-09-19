@@ -6,15 +6,17 @@
 import os
 import sys
 import ast
+import builtins
 import traceback
 import io
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Iterable, List, Optional, Tuple
 from contextlib import redirect_stdout, redirect_stderr
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.utils.capture import capture_output
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+import pandas as pd
 
 class CodeExecutor:
     """
@@ -44,7 +46,15 @@ class CodeExecutor:
         os.makedirs(self.output_dir, exist_ok=True)
 
         # 初始化 IPython shell
-        self.shell = InteractiveShell.instance()
+        self.shell = InteractiveShell()
+        self.sensitive_columns: set[str] = set()
+        for table_type in (pd.DataFrame, pd.Series):
+            self.shell.display_formatter.formatters['text/plain'].for_type(
+                table_type, self._display_table
+            )
+        self.shell.display_formatter.formatters['text/html'].for_type(
+            pd.DataFrame, lambda frame: self._redact_table(frame)._repr_html_()
+        )
 
         # 设置中文字体
         self._setup_chinese_font()
@@ -91,6 +101,7 @@ from IPython.display import display
             # 确保display函数在shell的用户命名空间中可用
             from IPython.display import display
             self.shell.user_ns['display'] = display
+            self.shell.user_ns['print'] = self._print_redacted
         except Exception as e:
             print(f"预导入库失败: {e}")
 
@@ -143,9 +154,31 @@ from IPython.display import display
 
         return figures_info
 
+    def set_sensitive_columns(self, names: Iterable[str]) -> None:
+        """Configure columns whose raw values must not appear in table feedback."""
+        self.sensitive_columns = set(names)
+
+    def _redact_table(self, obj: Any) -> Any:
+        """Mask display copies while preserving the data used for computation."""
+        if isinstance(obj, pd.DataFrame):
+            columns = obj.columns.intersection(self.sensitive_columns)
+            if len(columns):
+                obj = obj.copy()
+                obj[columns] = '[REDACTED]'
+        elif isinstance(obj, pd.Series) and obj.name in self.sensitive_columns:
+            obj = pd.Series('[REDACTED]', index=obj.index, name=obj.name)
+        return obj
+
+    def _print_redacted(self, *objects: Any, **kwargs: Any) -> None:
+        builtins.print(*(self._redact_table(obj) for obj in objects), **kwargs)
+
+    def _display_table(self, obj: Any, printer: Any, cycle: bool) -> None:
+        printer.text(repr(self._redact_table(obj)))
+
     def _format_table_output(self, obj: Any) -> str:
         """格式化表格输出，限制行数"""
-        if hasattr(obj, 'shape') and hasattr(obj, 'head'):  # pandas DataFrame
+        obj = self._redact_table(obj)
+        if isinstance(obj, pd.DataFrame):
             rows, cols = obj.shape
             print(f"\n数据表形状: {rows}行 x {cols}列")
             print(f"列名: {list(obj.columns)}")

@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pandas as pd
+import pytest
+
 from data_analysis_agent.execution.code_executor import CodeExecutor
 
 
@@ -50,3 +53,110 @@ print(figure_path)
     assert result["success"] is True
     assert chart_path.exists()
     assert str(chart_path) in result["output"]
+
+
+def test_executors_have_isolated_user_namespaces(tmp_path):
+    first = CodeExecutor(str(tmp_path / "first"))
+    second = CodeExecutor(str(tmp_path / "second"))
+    first.set_variable("secret", "executor-one-only")
+
+    result = second.execute_code("print('secret' in globals())")
+
+    assert result["success"] is True
+    assert result["output"].strip() == "False"
+
+
+def test_resetting_one_executor_does_not_clear_another(tmp_path):
+    first = CodeExecutor(str(tmp_path / "first"))
+    second = CodeExecutor(str(tmp_path / "second"))
+    first.set_variable("retained", 42)
+
+    second.reset_environment()
+
+    assert first.execute_code("print(retained)")["output"].strip() == "42"
+
+
+def _assert_sensitive_values_are_absent(output, sensitive_values):
+    if any(value in output for value in sensitive_values):
+        raise AssertionError("sensitive dataframe value leaked from executor output")
+
+
+def _sensitive_dataframe():
+    return pd.DataFrame(
+        {
+            "name": ["Alice"],
+            "email": ["alice.private@example.test"],
+            "phone": ["13900001234"],
+        }
+    )
+
+
+def test_executor_redacts_sensitive_dataframe_columns_from_print(tmp_path):
+    executor = CodeExecutor(str(tmp_path / "session"))
+    executor.set_sensitive_columns({"email", "phone"})
+    executor.set_variable("df", _sensitive_dataframe())
+
+    result = executor.execute_code("print(df)")
+
+    assert result["success"] is True
+    _assert_sensitive_values_are_absent(
+        result["output"], ("alice.private@example.test", "13900001234")
+    )
+    assert "Alice" in result["output"]
+    assert "[REDACTED]" in result["output"]
+
+
+def test_executor_redacts_sensitive_series_from_print(tmp_path):
+    executor = CodeExecutor(str(tmp_path / "session"))
+    executor.set_sensitive_columns({"email", "phone"})
+    executor.set_variable("df", _sensitive_dataframe())
+
+    result = executor.execute_code("print(df['email'])")
+
+    assert result["success"] is True
+    _assert_sensitive_values_are_absent(
+        result["output"], ("alice.private@example.test", "13900001234")
+    )
+    assert "[REDACTED]" in result["output"]
+
+
+def test_executor_redacts_sensitive_dataframe_columns_from_final_expression(tmp_path):
+    executor = CodeExecutor(str(tmp_path / "session"))
+    executor.set_sensitive_columns({"email", "phone"})
+    executor.set_variable("df", _sensitive_dataframe())
+
+    result = executor.execute_code("df")
+
+    assert result["success"] is True
+    _assert_sensitive_values_are_absent(
+        result["output"], ("alice.private@example.test", "13900001234")
+    )
+    assert "Alice" in result["output"]
+    assert "[REDACTED]" in result["output"]
+
+
+@pytest.mark.parametrize("code", ["print(df)", "print(df['private'])", "df", "df['private']"])
+def test_redaction_uses_configured_columns_without_mutating_analysis_data(tmp_path, code):
+    executor = CodeExecutor(str(tmp_path / "session"))
+    executor.set_sensitive_columns({"private"})
+    frame = pd.DataFrame({"private": [13900001234], "ordinary": ["kept"]})
+    executor.set_variable("df", frame)
+
+    result = executor.execute_code(code)
+
+    assert result["success"] is True
+    assert "13900001234" not in result["output"]
+    assert "[REDACTED]" in result["output"]
+    assert frame.iloc[0]["private"] == 13900001234
+    assert frame.iloc[0]["ordinary"] == "kept"
+
+
+def test_sensitive_configuration_does_not_affect_other_executors(tmp_path):
+    first = CodeExecutor(str(tmp_path / "first"))
+    second = CodeExecutor(str(tmp_path / "second"))
+    first.set_sensitive_columns({"name"})
+    first.set_variable("df", pd.DataFrame({"name": ["Alice"]}))
+    second.set_variable("df", pd.DataFrame({"name": ["Bob"]}))
+
+    assert "Alice" not in first.execute_code("print(df)\ndf")["output"]
+    assert "Bob" in second.execute_code("print(df)\ndf")["output"]

@@ -31,6 +31,49 @@ def test_inspector_accepts_a_genuine_name_only_single_column_csv():
     assert [row["name"] for row in profile.preview_rows] == ["Alice", "Bob"]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"a/b\n1/2\n",
+        b"left#right\nA#B\n",
+    ],
+)
+def test_inspector_rejects_repeated_unknown_delimiter_structure(payload):
+    with pytest.raises(Exception) as exc_info:
+        _inspect(payload)
+
+    assert exc_info.value.code.value == "INVALID_CSV"
+
+
+def test_inspector_does_not_treat_incidental_date_punctuation_as_delimiter():
+    profile = _inspect(b"event\n2026/09/19\nplain text\n")
+
+    assert profile.column_count == 1
+    assert profile.row_count == 2
+
+
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"])
+def test_inspector_preserves_newline_inside_quoted_field(newline):
+    profile = _inspect(b'name,notes\nAlice,"first line' + newline + b'second line"\n')
+
+    assert profile.row_count == 1
+    assert profile.preview_rows[0]["notes"] == "first line" + newline.decode() + "second line"
+
+
+@pytest.mark.parametrize("payload", [
+    b"event\n2026/09/19\n2026/09/20\n",
+    b"2026/09/19\n2026/09/20\n2026/09/21\n",
+    b"notes\nsee: documentation\nsee: help\n",
+    b'"left#right"\n"A#B"\n',
+    b"release-notes\nfirst-draft\nfinal-version\n",
+    b"Note: today\nNote: tomorrow\n",
+])
+def test_inspector_preserves_single_column_dates_and_text(payload):
+    profile = _inspect(payload)
+
+    assert profile.column_count == 1
+
+
 def test_value_sensitivity_only_scans_first_twenty_non_blank_values():
     rows = [f"{index}\n" for index in range(20)] + ["late@example.com\n"]
 
@@ -63,6 +106,9 @@ class _LoaderExecutor:
 
     def set_variable(self, name, value):
         self.variables[name] = value
+
+    def set_sensitive_columns(self, names):
+        self.sensitive_columns = set(names)
 
     def get_environment_info(self):
         return "offline executor"

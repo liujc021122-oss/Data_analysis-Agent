@@ -87,6 +87,9 @@ class LoaderExecutor:
     def set_variable(self, name, value):
         self.variables[name] = value
 
+    def set_sensitive_columns(self, names):
+        self.sensitive_columns = set(names)
+
     def get_environment_info(self):
         return "offline executor"
 
@@ -153,3 +156,57 @@ def test_quick_analysis_rejects_files_and_dataset_ids_together(tmp_path):
         quick_analysis("offline", files=[str(source)], dataset_ids=[uuid4()])
 
     assert exc_info.value.code is DatasetErrorCode.INVALID_DATASET_REQUEST
+
+
+def test_sensitive_dataset_values_never_reach_feedback_or_later_model_prompts(
+    tmp_path, monkeypatch, capsys
+):
+    source = tmp_path / "contacts.csv"
+    sensitive_values = ("alice.private@example.test", "13900001234")
+    source.write_text(
+        "name,email,phone\nAlice," + sensitive_values[0] + "," + sensitive_values[1] + "\n",
+        encoding="utf-8",
+    )
+
+    def assert_prompt_is_redacted(fake_llm, call):
+        if any(value in call.prompt for value in sensitive_values):
+            raise AssertionError("sensitive dataset value reached a later model prompt")
+        assert "Alice" in call.prompt
+        return yaml_response("analysis_complete", final_report="# done")
+
+    def assert_report_prompt_is_redacted(fake_llm, call):
+        if any(value in call.prompt for value in sensitive_values):
+            raise AssertionError("sensitive dataset value reached the report prompt")
+        return yaml_response("analysis_complete", final_report="# report")
+
+    fake_llm = FakeLLM(
+        [
+            yaml_response(
+                "generate_code",
+                code="df = load_dataset(dataset_ids[0])\nprint(df)\nprint(df['email'])\ndf",
+            ),
+            assert_prompt_is_redacted,
+            assert_report_prompt_is_redacted,
+        ]
+    )
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
+
+    from data_analysis_agent import quick_analysis
+
+    result = quick_analysis(
+        "analyze contacts",
+        files=[str(source)],
+        output_dir=tmp_path / "outputs",
+        max_rounds=2,
+        generate_word_report=False,
+    )
+
+    capsys.readouterr()
+    assert len(fake_llm.calls) == 3
+    assert result["final_report"] == "# report"
+    for call in fake_llm.calls:
+        assert not any(value in call.prompt + (call.system_prompt or "") for value in sensitive_values)
+    visible_result = repr(result)
+    if any(value in visible_result for value in sensitive_values):
+        raise AssertionError("sensitive dataset value remained in analysis results")
+    assert "Alice" in result["analysis_results"][0]["result"]["output"]

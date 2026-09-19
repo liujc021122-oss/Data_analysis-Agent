@@ -31,7 +31,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_dataset_storage(settings) -> None:
+    if settings.app_env == "production":
+        raise ConfigurationError(
+            "production dataset-id mode requires an object storage adapter; "
+            "no object storage adapter is configured"
+        )
+
+
 def build_dataset_resolver(database: Database, settings) -> DatasetResolver:
+    _validate_dataset_storage(settings)
     storage = LocalStorageBackend(settings.storage_local_root)
     metadata_store = UnitOfWorkDatasetStore(
         lambda: UnitOfWork(database.session_factory)
@@ -79,6 +88,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             dataset_resolver = None
             if args.dataset_id:
+                _validate_dataset_storage(settings)
                 database = Database.from_settings(settings)
                 dataset_resolver = build_dataset_resolver(database, settings)
             result = quick_analysis(

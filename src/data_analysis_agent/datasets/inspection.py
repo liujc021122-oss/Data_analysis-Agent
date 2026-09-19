@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import re
 from datetime import date, datetime
+from io import StringIO
+from string import punctuation
 from typing import BinaryIO
 
 from charset_normalizer import from_bytes
@@ -20,7 +22,9 @@ _MOBILE = re.compile(r"^1[3-9]\d{9}$")
 _CHINESE_ID = re.compile(r"^(?:\d{15}|\d{17}[\dXx])$")
 _INTEGER = re.compile(r"^[+-]?\d+$")
 _NUMBER = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?$")
-_UNSUPPORTED_DELIMITER_CANDIDATES = ":^~"
+_UNSUPPORTED_DELIMITER_CANDIDATES = set(punctuation) - set(
+    _SUPPORTED_DELIMITERS + "\"'._-()[]{}"
+)
 
 
 def _validation(code: DatasetErrorCode, message: str) -> UploadValidationError:
@@ -126,12 +130,20 @@ def _risk_for_name(name: str) -> str | None:
 
 
 def _has_explicit_unsupported_delimiter(text: str) -> bool:
-    lines = [line for line in text.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return False
-    for candidate in _UNSUPPORTED_DELIMITER_CANDIDATES:
-        counts = [line.count(candidate) for line in lines]
-        if counts[0] and all(count == counts[0] for count in counts):
+    # Require an identifier-like header and consistent, nonempty logical fields.
+    # Dates, prose with spaced punctuation, and quoted one-column text are
+    # ambiguous and must retain the ordinary single-column CSV interpretation.
+    candidates = _UNSUPPORTED_DELIMITER_CANDIDATES.intersection(text.partition("\n")[0])
+    for candidate in sorted(candidates):
+        try:
+            rows = list(csv.reader(StringIO(text, newline=""), delimiter=candidate, strict=True))
+        except csv.Error:
+            continue
+        if len(rows) < 2 or len(rows[0]) < 2:
+            continue
+        if not all(re.fullmatch(r"[^\W\d]\w*", field) for field in rows[0]):
+            continue
+        if all(len(row) == len(rows[0]) and all(cell.strip() for cell in row) for row in rows[1:]):
             return True
     return False
 
@@ -161,7 +173,7 @@ class CsvInspector:
             delimiter = ","
             dialect = csv.excel
         try:
-            rows = list(csv.reader(text.splitlines(), dialect, strict=True))
+            rows = list(csv.reader(StringIO(text, newline=""), dialect, strict=True))
         except (csv.Error, UnicodeError) as exc:
             raise _validation(DatasetErrorCode.INVALID_CSV, "invalid CSV structure") from exc
         if not rows or not rows[0]:

@@ -9,10 +9,12 @@
 
 import os
 import json
+import logging
 import yaml
 import pandas
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 from uuid import UUID, uuid4
 
 from ..config.llm import LLMConfig
@@ -36,9 +38,10 @@ from ..datasets.errors import UploadValidationError
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
 
 
+@contextmanager
 def _upload_compatibility_files(
     files: Sequence[str], *, settings: Settings
-) -> tuple[tuple[UUID, ...], DatasetResolver, UUID]:
+) -> Iterator[tuple[tuple[UUID, ...], DatasetResolver, UUID]]:
     if settings.app_env == "production":
         raise ConfigurationError(
             "production files uploads require the production upload service; "
@@ -55,20 +58,29 @@ def _upload_compatibility_files(
         max_upload_size=settings.max_upload_size,
     )
     uploaded_ids: list[UUID] = []
-    for file_name in files:
-        file_path = Path(file_name)
-        with file_path.open("rb") as stream:
-            uploaded = upload_service.upload(
-                stream,
-                original_filename=file_path.name,
-                owner_id=owner_id,
-            )
-        uploaded_ids.append(uploaded.dataset_id)
-    return (
-        tuple(uploaded_ids),
-        DatasetResolver(storage=storage, metadata_store=metadata_store),
-        owner_id,
-    )
+    try:
+        for file_name in files:
+            file_path = Path(file_name)
+            with file_path.open("rb") as stream:
+                uploaded = upload_service.upload(
+                    stream,
+                    original_filename=file_path.name,
+                    owner_id=owner_id,
+                )
+                uploaded_ids.append(uploaded.dataset_id)
+        yield (
+            tuple(uploaded_ids),
+            DatasetResolver(storage=storage, metadata_store=metadata_store),
+            owner_id,
+        )
+    finally:
+        for dataset_id in uploaded_ids:
+            record = metadata_store.get_for_user(dataset_id, owner_id)
+            try:
+                storage.delete(record.source_uri)
+            except Exception:
+                # Do not log storage paths, URIs, or exception messages.
+                logging.getLogger(__name__).warning("Temporary dataset cleanup failed")
 
 
 class DataAnalysisAgent:
@@ -257,7 +269,7 @@ class DataAnalysisAgent:
 
         Args:
             user_input: 用户的自然语言需求
-            files: 兼容旧调用的弃用参数；文件由 quick_analysis 适配后再进入本方法
+            files: 兼容旧调用的本地文件；仅在本次分析期间临时存储
             dataset_ids: 通过 DatasetResolver 访问的数据集 ID 列表
 
         Returns:
@@ -274,12 +286,17 @@ class DataAnalysisAgent:
                 "files and dataset_ids cannot be supplied together",
             )
         if files is not None:
-            uploaded_ids, resolver, owner_id = _upload_compatibility_files(
+            with _upload_compatibility_files(
                 files, settings=load_settings()
-            )
-            dataset_ids = uploaded_ids
-            self.dataset_resolver = resolver
-            self.dataset_owner_id = owner_id
+            ) as (uploaded_ids, resolver, owner_id):
+                previous_resolver, previous_owner = self.dataset_resolver, self.dataset_owner_id
+                try:
+                    self.dataset_resolver = resolver
+                    self.dataset_owner_id = owner_id
+                    return self.analyze(user_input, dataset_ids=uploaded_ids)
+                finally:
+                    self.dataset_resolver = previous_resolver
+                    self.dataset_owner_id = previous_owner
 
         normalized_dataset_ids = tuple(
             UUID(str(dataset_id)) for dataset_id in (dataset_ids or ())
@@ -314,6 +331,12 @@ class DataAnalysisAgent:
 
         # 初始化代码执行器，使用会话目录
         self.executor = CodeExecutor(self.session_output_dir)
+        if dataset_context:
+            self.executor.set_sensitive_columns(
+                field["column_name"]
+                for item in dataset_context
+                for field in item["profile"].get("sensitive_fields", ())
+            )
 
         # 设置会话目录变量到执行环境中
         self.executor.set_variable('session_output_dir', self.session_output_dir)
@@ -662,33 +685,34 @@ def quick_analysis(
                 "missing dataset access dependency: " + ", ".join(missing),
             )
 
-    if files is not None:
-        (
-            selected_dataset_ids,
-            selected_resolver,
-            selected_owner_id,
-        ) = _upload_compatibility_files(
-            files, settings=resolved_settings
-        )
+    with ExitStack() as uploads:
+        if files is not None:
+            (
+                selected_dataset_ids,
+                selected_resolver,
+                selected_owner_id,
+            ) = uploads.enter_context(
+                _upload_compatibility_files(files, settings=resolved_settings)
+            )
 
-    selected_output_dir = (
-        output_dir
-        if output_dir is not None and str(output_dir).strip()
-        else resolved_settings.output_dir
-    )
-    agent = DataAnalysisAgent(
-        llm_config=resolved_settings.llm_config(),
-        output_dir=str(selected_output_dir),
-        max_rounds=max_rounds if max_rounds is not None else 10,
-        generate_word_report=(
-            generate_word_report
-            if generate_word_report is not None
-            else resolved_settings.app_env != "test"
-        ),
-        dataset_resolver=selected_resolver,
-        dataset_owner_id=selected_owner_id,
-    )
-    return agent.analyze(
-        user_input=query,
-        dataset_ids=selected_dataset_ids,
-    )
+        selected_output_dir = (
+            output_dir
+            if output_dir is not None and str(output_dir).strip()
+            else resolved_settings.output_dir
+        )
+        agent = DataAnalysisAgent(
+            llm_config=resolved_settings.llm_config(),
+            output_dir=str(selected_output_dir),
+            max_rounds=max_rounds if max_rounds is not None else 10,
+            generate_word_report=(
+                generate_word_report
+                if generate_word_report is not None
+                else resolved_settings.app_env != "test"
+            ),
+            dataset_resolver=selected_resolver,
+            dataset_owner_id=selected_owner_id,
+        )
+        return agent.analyze(
+            user_input=query,
+            dataset_ids=selected_dataset_ids,
+        )
