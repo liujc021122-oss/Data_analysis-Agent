@@ -9,6 +9,7 @@
 - Task 5: complete.
 - Task 6: complete.
 - Final review regression tests were added before production changes. RED was observed for unsupported delimiters, unbounded sensitive-value scanning, Profile-ignored loader settings, direct `analyze(files=...)`, and production `quick_analysis(files=...)` fail-closed behavior.
+- Subsequent final-review fixes closed execution privacy paths, per-executor figure ownership, same-execution error redaction, and Unicode unknown delimiters; final verification: `349 passed, 2 skipped`.
 
 ## Task 6
 
