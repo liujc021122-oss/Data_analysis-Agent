@@ -6,6 +6,10 @@ from uuid import UUID
 import pytest
 
 from data_analysis_agent.datasets import StoredObject as ExportedStoredObject
+from data_analysis_agent.datasets.errors import (
+    DatasetError,
+    StorageError as DatasetStorageError,
+)
 from data_analysis_agent.datasets.models import StoredObject
 from data_analysis_agent.storage import Storage, StorageObject
 from data_analysis_agent.storage.errors import StorageError, StorageErrorCode
@@ -125,9 +129,14 @@ def test_task_file_key_uses_plural_kind_and_normalized_filename():
         r"datasets\..\escape.csv",
         "datasets/%2e%2e/escape.csv",
         "datasets/%252e%252e/escape.csv",
+        "datasets/%2525252e%2525252e/escape.csv",
         "datasets/object\x00.csv",
         "datasets/object\u0085.csv",
         "datasets/object\n.csv",
+        "datasets/object?",
+        "datasets/object#",
+        "datasets/object%3f",
+        "datasets/object%23",
         "https://example.test/object.csv",
     ],
 )
@@ -160,3 +169,13 @@ def test_storage_error_codes_are_stable_and_details_are_structured():
     assert error.code is StorageErrorCode.METADATA_MISMATCH
     assert error.message == "stored metadata does not match expected metadata"
     assert error.details == {"field": "checksum"}
+
+
+def test_storage_error_remains_catchable_as_dataset_error():
+    error = DatasetStorageError(
+        StorageErrorCode.METADATA_MISMATCH,
+        "stored metadata does not match expected metadata",
+    )
+
+    assert isinstance(error, DatasetError)
+    assert error.code is StorageErrorCode.METADATA_MISMATCH

@@ -56,7 +56,7 @@ def validate_key(key: str) -> str:
 
     normalized = unicodedata.normalize("NFKC", key)
     decoded = normalized
-    for _ in range(3):
+    while True:
         next_decoded = unquote(decoded)
         if next_decoded == decoded:
             break
@@ -68,6 +68,8 @@ def validate_key(key: str) -> str:
 
     if "\\" in normalized or "\\" in decoded:
         raise _invalid_key("backslash path separators are not permitted")
+    if any(delimiter in value for value in (normalized, decoded) for delimiter in "?#"):
+        raise _invalid_key("URI query and fragment delimiters are not permitted")
 
     path = decoded
     if (
