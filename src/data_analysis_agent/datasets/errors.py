@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import Any, Mapping
 
+from data_analysis_agent.storage.errors import StorageError, StorageErrorCode
+
 
 class DatasetErrorCode(str, Enum):
     INVALID_DATASET_REQUEST = "INVALID_DATASET_REQUEST"
@@ -34,10 +36,6 @@ class DatasetError(Exception):
 
 
 class UploadValidationError(DatasetError):
-    pass
-
-
-class StorageError(DatasetError):
     pass
 
 

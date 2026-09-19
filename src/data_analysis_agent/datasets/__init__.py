@@ -4,6 +4,7 @@ from .errors import (
     DatasetErrorCode,
     DatasetPersistenceError,
     StorageError,
+    StorageErrorCode,
     UploadValidationError,
 )
 from .inspection import CsvInspector
@@ -34,6 +35,7 @@ __all__ = [
     "DatasetUploadResult",
     "SensitiveField",
     "StorageError",
+    "StorageErrorCode",
     "StorageBackend",
     "LocalStorageBackend",
     "StoredObject",

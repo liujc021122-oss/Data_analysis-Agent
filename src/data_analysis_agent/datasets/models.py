@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 import json
 from typing import Any, Literal
 from uuid import UUID
@@ -13,6 +12,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from data_analysis_agent.storage.models import StorageObject
 
 
 class DatasetModel(BaseModel):
@@ -77,9 +78,4 @@ class DatasetUploadResult(DatasetModel):
     profile: DatasetProfile
 
 
-@dataclass(frozen=True, slots=True)
-class StoredObject:
-    uri: str
-    size_bytes: int
-    checksum: str
-    content_type: str = "text/csv"
+StoredObject = StorageObject
