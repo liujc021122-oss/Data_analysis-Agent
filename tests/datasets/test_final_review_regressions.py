@@ -23,6 +23,13 @@ def test_inspector_rejects_explicit_unsupported_delimiter_in_single_column_shape
     assert exc_info.value.code.value == "INVALID_CSV"
 
 
+def test_inspector_rejects_unicode_punctuation_as_unsupported_delimiter():
+    with pytest.raises(Exception) as exc_info:
+        _inspect("name：age\nAlice：20\n".encode())
+
+    assert exc_info.value.code.value == "INVALID_CSV"
+
+
 def test_inspector_accepts_a_genuine_name_only_single_column_csv():
     profile = _inspect(b"name\nAlice\nBob\n")
 

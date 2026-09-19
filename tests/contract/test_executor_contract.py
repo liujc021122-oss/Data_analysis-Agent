@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import matplotlib.pyplot as plt
 
 from data_analysis_agent.execution.code_executor import CodeExecutor
 
@@ -74,6 +75,21 @@ def test_resetting_one_executor_does_not_clear_another(tmp_path):
     second.reset_environment()
 
     assert first.execute_code("print(retained)")["output"].strip() == "42"
+
+
+def test_reset_only_closes_figures_created_by_that_executor(tmp_path):
+    first = CodeExecutor(str(tmp_path / "first"))
+    second = CodeExecutor(str(tmp_path / "second"))
+
+    first.execute_code("first_figure = plt.figure()\nplt.plot([1, 2], [2, 1])")
+    first_figure = first.shell.user_ns["first_figure"]
+    second.execute_code("second_figure = plt.figure()\nplt.plot([1, 2], [1, 2])")
+    second_figure = second.shell.user_ns["second_figure"]
+
+    first.reset_environment()
+
+    assert not plt.fignum_exists(first_figure.number)
+    assert plt.fignum_exists(second_figure.number)
 
 
 def _assert_sensitive_values_are_absent(output, sensitive_values):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import re
+import unicodedata
 from datetime import date, datetime
 from io import StringIO
 from string import punctuation
@@ -133,7 +134,14 @@ def _has_explicit_unsupported_delimiter(text: str) -> bool:
     # Require an identifier-like header and consistent, nonempty logical fields.
     # Dates, prose with spaced punctuation, and quoted one-column text are
     # ambiguous and must retain the ordinary single-column CSV interpretation.
-    candidates = _UNSUPPORTED_DELIMITER_CANDIDATES.intersection(text.partition("\n")[0])
+    header = text.partition("\n")[0]
+    candidates = _UNSUPPORTED_DELIMITER_CANDIDATES.intersection(header)
+    candidates.update(
+        character
+        for character in header
+        if unicodedata.category(character) == "Po"
+        and character not in _SUPPORTED_DELIMITERS + "\"'._"
+    )
     for candidate in sorted(candidates):
         try:
             rows = list(csv.reader(StringIO(text, newline=""), delimiter=candidate, strict=True))

@@ -133,6 +133,51 @@ def test_failure_exits_also_redact_known_values(private_executor, monkeypatch, f
     assert "[REDACTED]" in result["error"]
 
 
+def test_error_before_exec_refreshes_current_shell_before_final_redaction(
+    tmp_path, monkeypatch
+):
+    executor = CodeExecutor(str(tmp_path / "session"))
+    executor.set_sensitive_columns({"email"})
+    secret = "late.before@example.test"
+    frame = pd.DataFrame({"email": [secret], "name": ["Alice"]})
+
+    def run_cell(code):
+        executor.shell.user_ns["late_df"] = frame
+        builtins.print(frame.to_string())
+        return SimpleNamespace(
+            error_before_exec=SyntaxError(secret), error_in_exec=None, result=None
+        )
+
+    import builtins
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(executor.shell, "run_cell", run_cell)
+
+    result = executor.execute_code("print('ordinary')")
+
+    assert secret not in repr(result)
+    assert "[REDACTED]" in result["output"]
+    assert "[REDACTED]" in result["error"]
+
+
+def test_error_in_exec_refreshes_loaded_dataframe_before_final_redaction(tmp_path):
+    executor = CodeExecutor(str(tmp_path / "session"))
+    executor.set_sensitive_columns({"email"})
+    secret = "late.in.exec@example.test"
+
+    result = executor.execute_code(
+        "df = pd.DataFrame({'email': [" + repr(secret) + "], 'name': ['Alice']})\n"
+        "import sys\n"
+        "sys.stdout.write(df.to_string())\n"
+        "raise RuntimeError(df.at[0, 'email'])"
+    )
+
+    assert result["success"] is False
+    assert secret not in repr(result)
+    assert "[REDACTED]" in result["output"]
+    assert "[REDACTED]" in result["error"]
+
+
 def test_environment_summary_redacts_extracted_scalar(private_executor):
     executor, _, values = private_executor
     result = executor.execute_code("contact = df.at[0, 'email']\nordinary = 'Alice'")

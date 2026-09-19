@@ -49,6 +49,7 @@ class CodeExecutor:
         self.shell = InteractiveShell()
         self.sensitive_columns: set[str] = set()
         self._sensitive_values: set[str] = set()
+        self._owned_figure_numbers: set[int] = set()
         for table_type in (pd.DataFrame, pd.Series):
             self.shell.display_formatter.formatters['text/plain'].for_type(
                 table_type, self._display_table
@@ -351,6 +352,7 @@ from IPython.display import display
         # 记录执行前的变量
         self._refresh_sensitive_values()
         vars_before = set(self.shell.user_ns.keys())
+        figures_before = set(plt.get_fignums())
 
         try:
             # 使用IPython的capture_output来捕获所有输出
@@ -359,6 +361,7 @@ from IPython.display import display
 
             # 检查执行结果
             if result.error_before_exec:
+                self._refresh_sensitive_values()
                 error_msg = self._redact_text(result.error_before_exec)
                 return {
                     'success': False,
@@ -368,6 +371,7 @@ from IPython.display import display
                 }
 
             if result.error_in_exec:
+                self._refresh_sensitive_values()
                 error_msg = self._redact_text(result.error_in_exec)
                 return {
                     'success': False,
@@ -415,6 +419,10 @@ from IPython.display import display
                 'error': self._redact_text(f"执行异常: {str(e)}\n{traceback.format_exc()}"),
                 'variables': {}
             }
+        finally:
+            self._owned_figure_numbers.update(
+                set(plt.get_fignums()) - figures_before
+            )
 
     def reset_environment(self):
         """重置执行环境"""
@@ -422,7 +430,9 @@ from IPython.display import display
         self._sensitive_values.clear()
         self._setup_common_imports()
         self._setup_chinese_font()
-        plt.close('all')
+        for figure_number in list(self._owned_figure_numbers):
+            plt.close(figure_number)
+        self._owned_figure_numbers.clear()
         self.image_counter = 0
 
     def set_variable(self, name: str, value: Any):
