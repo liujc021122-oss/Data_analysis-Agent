@@ -48,6 +48,7 @@ class CodeExecutor:
         # 初始化 IPython shell
         self.shell = InteractiveShell()
         self.sensitive_columns: set[str] = set()
+        self._sensitive_values: set[str] = set()
         for table_type in (pd.DataFrame, pd.Series):
             self.shell.display_formatter.formatters['text/plain'].for_type(
                 table_type, self._display_table
@@ -99,8 +100,7 @@ from IPython.display import display
         try:
             self.shell.run_cell(common_imports)
             # 确保display函数在shell的用户命名空间中可用
-            from IPython.display import display
-            self.shell.user_ns['display'] = display
+            self.shell.user_ns['display'] = self._display_redacted
             self.shell.user_ns['print'] = self._print_redacted
         except Exception as e:
             print(f"预导入库失败: {e}")
@@ -156,28 +156,159 @@ from IPython.display import display
 
     def set_sensitive_columns(self, names: Iterable[str]) -> None:
         """Configure columns whose raw values must not appear in table feedback."""
-        self.sensitive_columns = set(names)
+        self.sensitive_columns = {str(name).strip() for name in names if str(name).strip()}
+        self._refresh_sensitive_values()
+
+    def _normalized_name(self, value: Any) -> str:
+        return str(value).strip()
+
+    def _is_sensitive_name(self, value: Any) -> bool:
+        return self._normalized_name(value) in self.sensitive_columns
+
+    def _remember_scalar(self, value: Any) -> None:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return
+        text = str(value)
+        if text and text.casefold() not in {"nan", "nat", "none"}:
+            self._sensitive_values.add(text)
+
+    def _remember_sensitive_values(self, value: Any, seen: set[int] | None = None) -> None:
+        """Collect values from configured sensitive table fields for final text masking."""
+        if seen is None:
+            seen = set()
+        value_id = id(value)
+        if value_id in seen:
+            return
+        seen.add(value_id)
+
+        if isinstance(value, pd.DataFrame):
+            for position, column in enumerate(value.columns):
+                if self._is_sensitive_name(column):
+                    for item in value.iloc[:, position].tolist():
+                        self._remember_scalar(item)
+            self._remember_sensitive_values(value.index, seen)
+            return
+        if isinstance(value, pd.Series):
+            if self._is_sensitive_name(value.index.name):
+                for item in value.index.tolist():
+                    self._remember_scalar(item)
+            if self._is_sensitive_name(value.name) and not self._is_sensitive_name(value.index.name):
+                for item in value.tolist():
+                    self._remember_scalar(item)
+            for label, item in zip(value.index.tolist(), value.tolist()):
+                if self._is_sensitive_name(label):
+                    self._remember_scalar(item)
+            return
+        if isinstance(value, pd.Index):
+            if self._is_sensitive_name(value.name):
+                for item in value.tolist():
+                    self._remember_scalar(item)
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                self._remember_sensitive_values(key, seen)
+                self._remember_sensitive_values(item, seen)
+            return
+        if isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                self._remember_sensitive_values(item, seen)
+
+    def _refresh_sensitive_values(self) -> None:
+        for value in self.shell.user_ns.values():
+            self._remember_sensitive_values(value)
+
+    def _redact_text(self, text: Any) -> str:
+        """Replace known sensitive values at the final model-feedback boundary."""
+        redacted = str(text)
+        for sensitive_value in sorted(self._sensitive_values, key=len, reverse=True):
+            redacted = redacted.replace(sensitive_value, "[REDACTED]")
+        return redacted
+
+    def _redact_index(self, index: pd.Index) -> pd.Index:
+        if isinstance(index, pd.MultiIndex):
+            names = list(index.names)
+            masked = [
+                tuple(
+                    "[REDACTED]" if self._is_sensitive_name(names[position]) else item
+                    for position, item in enumerate(values)
+                )
+                for values in index.tolist()
+            ]
+            return pd.MultiIndex.from_tuples(masked, names=names)
+        if self._is_sensitive_name(index.name):
+            return pd.Index(["[REDACTED]"] * len(index), name=index.name)
+        return index.copy()
+
+    def _redact_series(self, series: pd.Series) -> pd.Series:
+        result = series.copy()
+        result.index = self._redact_index(result.index)
+
+        labels = list(result.index)
+        for position, label in enumerate(labels):
+            if self._is_sensitive_name(label):
+                result.iloc[position] = "[REDACTED]"
+
+        if self._is_sensitive_name(series.name):
+            if self._is_sensitive_name(series.index.name):
+                # value_counts() keeps the sensitive column name on its index;
+                # preserve ordinary counts while masking the raw index values.
+                result.index = self._redact_index(series.index.set_names(series.name))
+            else:
+                result = result.astype(object)
+                result.iloc[:] = "[REDACTED]"
+        return result
 
     def _redact_table(self, obj: Any) -> Any:
         """Mask display copies while preserving the data used for computation."""
         if isinstance(obj, pd.DataFrame):
-            columns = obj.columns.intersection(self.sensitive_columns)
-            if len(columns):
-                obj = obj.copy()
-                obj[columns] = '[REDACTED]'
-        elif isinstance(obj, pd.Series) and obj.name in self.sensitive_columns:
-            obj = pd.Series('[REDACTED]', index=obj.index, name=obj.name)
+            result = obj.copy()
+            if any(self._is_sensitive_name(column) for column in result.columns):
+                result = result.astype(object)
+            for position, column in enumerate(result.columns):
+                if self._is_sensitive_name(column):
+                    result.iloc[:, position] = "[REDACTED]"
+            result.index = self._redact_index(result.index)
+            return result
+        if isinstance(obj, pd.Series):
+            return self._redact_series(obj)
+        if isinstance(obj, pd.Index):
+            return self._redact_index(obj)
+        if isinstance(obj, dict):
+            return {
+                self._redact_object(key): self._redact_object(value)
+                for key, value in obj.items()
+            }
+        if isinstance(obj, list):
+            return [self._redact_object(item) for item in obj]
+        if isinstance(obj, tuple):
+            return tuple(self._redact_object(item) for item in obj)
+        if isinstance(obj, set):
+            return {self._redact_object(item) for item in obj}
+        if isinstance(obj, frozenset):
+            return frozenset(self._redact_object(item) for item in obj)
         return obj
 
+    def _redact_object(self, obj: Any) -> Any:
+        return self._redact_table(obj)
+
+    def _safe_object_text(self, obj: Any) -> str:
+        return self._redact_text(self._redact_object(obj))
+
     def _print_redacted(self, *objects: Any, **kwargs: Any) -> None:
-        builtins.print(*(self._redact_table(obj) for obj in objects), **kwargs)
+        builtins.print(*(self._safe_object_text(obj) for obj in objects), **kwargs)
+
+    def _display_redacted(self, *objects: Any, **kwargs: Any) -> None:
+        del kwargs
+        for obj in objects:
+            builtins.print(self._safe_object_text(obj))
 
     def _display_table(self, obj: Any, printer: Any, cycle: bool) -> None:
-        printer.text(repr(self._redact_table(obj)))
+        del cycle
+        printer.text(self._safe_object_text(obj))
 
     def _format_table_output(self, obj: Any) -> str:
         """格式化表格输出，限制行数"""
-        obj = self._redact_table(obj)
+        obj = self._redact_object(obj)
         if isinstance(obj, pd.DataFrame):
             rows, cols = obj.shape
             print(f"\n数据表形状: {rows}行 x {cols}列")
@@ -190,7 +321,7 @@ from IPython.display import display
                 tail_part = obj.tail(5)
                 return f"{head_part}\n...\n(省略 {rows-10} 行)\n...\n{tail_part}"
 
-        return str(obj)
+        return self._safe_object_text(obj)
 
     def execute_code(self, code: str) -> Dict[str, Any]:
         """
@@ -213,11 +344,12 @@ from IPython.display import display
             return {
                 'success': False,
                 'output': '',
-                'error': f"代码安全检查失败: {safety_error}",
+                'error': self._redact_text(f"代码安全检查失败: {safety_error}"),
                 'variables': {}
             }
 
         # 记录执行前的变量
+        self._refresh_sensitive_values()
         vars_before = set(self.shell.user_ns.keys())
 
         try:
@@ -227,19 +359,19 @@ from IPython.display import display
 
             # 检查执行结果
             if result.error_before_exec:
-                error_msg = str(result.error_before_exec)
+                error_msg = self._redact_text(result.error_before_exec)
                 return {
                     'success': False,
-                    'output': captured.stdout,
+                    'output': self._redact_text(captured.stdout),
                     'error': f"执行前错误: {error_msg}",
                     'variables': {}
                 }
 
             if result.error_in_exec:
-                error_msg = str(result.error_in_exec)
+                error_msg = self._redact_text(result.error_in_exec)
                 return {
                     'success': False,
-                    'output': captured.stdout,
+                    'output': self._redact_text(captured.stdout),
                     'error': f"执行错误: {error_msg}",
                     'variables': {}
                 }
@@ -268,22 +400,26 @@ from IPython.display import display
                     except:
                         pass
 
+            self._refresh_sensitive_values()
             return {
                 'success': True,
-                'output': output,                'error': '',
+                'output': self._redact_text(output),
+                'error': '',
                 'variables': important_new_vars
             }
         except Exception as e:
+            self._refresh_sensitive_values()
             return {
                 'success': False,
-                'output': captured.stdout if 'captured' in locals() else '',
-                'error': f"执行异常: {str(e)}\n{traceback.format_exc()}",
+                'output': self._redact_text(captured.stdout if 'captured' in locals() else ''),
+                'error': self._redact_text(f"执行异常: {str(e)}\n{traceback.format_exc()}"),
                 'variables': {}
             }
 
     def reset_environment(self):
         """重置执行环境"""
         self.shell.reset()
+        self._sensitive_values.clear()
         self._setup_common_imports()
         self._setup_chinese_font()
         plt.close('all')
@@ -292,6 +428,7 @@ from IPython.display import display
     def set_variable(self, name: str, value: Any):
         """设置执行环境中的变量"""
         self.shell.user_ns[name] = value
+        self._remember_sensitive_values(value)
 
     def get_environment_info(self) -> str:
         """获取当前执行环境的变量信息，用于系统提示词"""
@@ -305,9 +442,11 @@ from IPython.display import display
                     if hasattr(var_value, 'shape'):  # pandas DataFrame, numpy array
                         important_vars[var_name] = f"{type(var_value).__name__} with shape {var_value.shape}"
                     elif var_name in ['session_output_dir']:  # 重要的路径变量
-                        important_vars[var_name] = str(var_value)
+                        important_vars[var_name] = self._redact_text(var_value)
                     elif isinstance(var_value, (int, float, str, bool)) and len(str(var_value)) < 100:
-                        important_vars[var_name] = f"{type(var_value).__name__}: {var_value}"
+                        important_vars[var_name] = self._redact_text(
+                            f"{type(var_value).__name__}: {var_value}"
+                        )
                     elif hasattr(var_value, '__module__') and var_value.__module__ in ['pandas', 'numpy', 'matplotlib.pyplot']:
                         important_vars[var_name] = f"导入的模块: {var_value.__module__}"
                 except:
@@ -316,12 +455,16 @@ from IPython.display import display
         if important_vars:
             info_parts.append("当前环境变量:")
             for var_name, var_info in important_vars.items():
-                info_parts.append(f"- {var_name}: {var_info}")
+                info_parts.append(self._redact_text(f"- {var_name}: {var_info}"))
         else:
             info_parts.append("当前环境已预装pandas, numpy, matplotlib等库")
 
         # 添加输出目录信息
         if 'session_output_dir' in self.shell.user_ns:
-            info_parts.append(f"图片保存目录: session_output_dir = '{self.shell.user_ns['session_output_dir']}'")
+            info_parts.append(
+                self._redact_text(
+                    f"图片保存目录: session_output_dir = '{self.shell.user_ns['session_output_dir']}'"
+                )
+            )
 
         return "\n".join(info_parts)

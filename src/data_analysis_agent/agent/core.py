@@ -350,11 +350,21 @@ class DataAnalysisAgent:
                 with self.dataset_resolver.open_for_user(
                     normalized_id, owner_id=self.dataset_owner_id
                 ) as stream:
-                    return pandas.read_csv(
+                    dataframe = pandas.read_csv(
                         stream,
                         encoding=encoding,
                         sep=delimiter,
                     )
+                profile_columns = [
+                    column["name"]
+                    for column in profile_payload.get("columns", ())
+                    if isinstance(column, dict) and "name" in column
+                ]
+                if len(profile_columns) == len(dataframe.columns):
+                    dataframe.columns = profile_columns
+                else:
+                    dataframe.columns = [str(column).strip() for column in dataframe.columns]
+                return dataframe
 
             self.executor.set_variable("load_dataset", load_dataset)
             self.executor.set_variable(

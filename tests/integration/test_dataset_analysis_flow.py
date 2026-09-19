@@ -132,6 +132,62 @@ def test_agent_explicit_dataset_ids_registers_loader_and_owner(monkeypatch, tmp_
     assert resolver.open_calls == [(dataset_id, owner_id)]
 
 
+def test_agent_loader_normalizes_profile_column_names_before_execution(monkeypatch, tmp_path):
+    dataset_id = uuid4()
+    owner_id = uuid4()
+    payload = {
+        "encoding": "utf-8",
+        "delimiter": ",",
+        "row_count": 1,
+        "column_count": 2,
+        "columns": [
+            {"name": "name", "inferred_type": "string"},
+            {"name": "email", "inferred_type": "string"},
+        ],
+        "preview_rows": [{"name": "Alice", "email": "[REDACTED]"}],
+        "sensitive_fields": [{
+            "column_name": "email",
+            "risk_type": "email",
+            "detected_by": ["name"],
+        }],
+    }
+
+    class WhitespaceResolver(FakeResolver):
+        def profile_for_user(self, dataset_id, *, owner_id):
+            return SimpleNamespace(model_dump=lambda mode: payload)
+
+        def open_for_user(self, dataset_id, *, owner_id):
+            return BytesIO(
+                b"name, email \nAlice,alice.private@example.test\n"
+            )
+
+    resolver = WhitespaceResolver(dataset_id, owner_id)
+    fake_llm = FakeLLM([
+        yaml_response(
+            "generate_code",
+            code=(
+                f"df = load_dataset('{dataset_id}')\n"
+                "assert list(df.columns) == ['name', 'email']\n"
+                "assert df.iloc[0]['email'] == 'alice.private@example.test'"
+            ),
+        ),
+        yaml_response("analysis_complete", final_report="# done"),
+    ])
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
+    monkeypatch.setattr("data_analysis_agent.agent.core.CodeExecutor", LoaderExecutor)
+
+    result = DataAnalysisAgent(
+        llm_config=LLMConfig(api_key="offline", base_url="https://offline.invalid", model="fake"),
+        output_dir=str(tmp_path / "outputs"),
+        max_rounds=1,
+        generate_word_report=False,
+        dataset_resolver=resolver,
+        dataset_owner_id=owner_id,
+    ).analyze("offline", dataset_ids=[dataset_id])
+
+    assert result["analysis_results"][0]["result"]["success"] is True
+
+
 @pytest.mark.parametrize(
     "kwargs, missing",
     [
