@@ -10,6 +10,7 @@
 import os
 import json
 import logging
+import shutil
 import yaml
 import pandas
 from contextlib import ExitStack, contextmanager
@@ -18,6 +19,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 from uuid import UUID, uuid4
 
 from ..config.llm import LLMConfig
+from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
 from ..execution.code_executor import CodeExecutor
 from ..reports.word import generate_word_report
@@ -35,7 +37,37 @@ from ..datasets import (
     LocalStorageBackend,
 )
 from ..datasets.errors import UploadValidationError
+from ..persistence.models import ArtifactRecord, ReportRecord
+from ..storage import ArtifactStorageService, Storage
+from ..storage.errors import StorageError, StorageErrorCode
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
+
+
+class _EphemeralArtifactRepository:
+    def __init__(self) -> None:
+        self.records: dict[UUID, ArtifactRecord] = {}
+
+    def add(self, record: ArtifactRecord) -> ArtifactRecord:
+        self.records[record.artifact_id] = record
+        return record
+
+    def get(self, artifact_id: UUID) -> ArtifactRecord | None:
+        return self.records.get(artifact_id)
+
+    def get_for_user(self, artifact_id: UUID, user_id: UUID) -> ArtifactRecord | None:
+        return self.records.get(artifact_id)
+
+    def list_for_task(self, task_id: UUID) -> list[ArtifactRecord]:
+        return [record for record in self.records.values() if record.task_id == task_id]
+
+
+class _EphemeralReportRepository:
+    def __init__(self) -> None:
+        self.records: dict[UUID, ReportRecord] = {}
+
+    def add(self, record: ReportRecord) -> ReportRecord:
+        self.records[record.report_id] = record
+        return record
 
 
 @contextmanager
@@ -101,6 +133,9 @@ class DataAnalysisAgent:
         generate_word_report: bool = True,
         dataset_resolver: DatasetResolver | None = None,
         dataset_owner_id: UUID | None = None,
+        storage: Storage | None = None,
+        artifact_storage: ArtifactStorageService | None = None,
+        task_id: UUID | None = None,
     ):
         """
         初始化智能体
@@ -118,10 +153,23 @@ class DataAnalysisAgent:
         self.generate_word_report = generate_word_report
         self.dataset_resolver = dataset_resolver
         self.dataset_owner_id = dataset_owner_id
-          # 对话历史和上下文
+        self.storage = storage
+        self.artifact_storage = artifact_storage
+        self._provided_task_id = task_id
+        self.task_id = task_id
+        if self.storage is not None and self.artifact_storage is None:
+            self.artifact_storage = ArtifactStorageService(
+                storage=self.storage,
+                artifact_repository=_EphemeralArtifactRepository(),
+                report_repository=_EphemeralReportRepository(),
+            )
+        # 对话历史和上下文
         self.conversation_history = []
         self.analysis_results = []
         self.current_round = 0
+        self.task_id = self._provided_task_id or uuid4()
+        self.artifact_records: list[ArtifactRecord] = []
+        self.storage_error = None
         self.session_output_dir = None
         self.executor = None
 
@@ -190,17 +238,16 @@ class DataAnalysisAgent:
             file_path = figure_info.get('file_path', '')  # 获取具体的文件路径
             description = figure_info.get('description', '')
             analysis = figure_info.get('analysis', '')
-
             print(f"📈 收集图片 {figure_number}: {filename}")
-            print(f"   📂 路径: {file_path}")
+            print(f"   📂 路径: {self._display_text(file_path)}")
             print(f"   📝 描述: {description}")
             print(f"   🔍 分析: {analysis}")
 
             # 验证文件是否存在
             if file_path and os.path.exists(file_path):
-                print(f"   ✅ 文件存在: {file_path}")
+                print(f"   ✅ 文件存在: {self._display_text(file_path)}")
             elif file_path:
-                print(f"   ⚠️ 文件不存在: {file_path}")
+                print(f"   ⚠️ 文件不存在: {self._display_text(file_path)}")
             else:
                 print(f"   ⚠️ 未提供文件路径")
 
@@ -229,15 +276,21 @@ class DataAnalysisAgent:
             code = extract_code_from_response(response)
 
         if code:
+            original_code = code
+            code = self._display_text(code)
             print(f"🔧 执行代码:\n{code}")
             print("-" * 40)
+            code = original_code
 
             # 执行代码
             result = self.executor.execute_code(code)
 
             # 格式化执行结果
             feedback = format_execution_result(result)
+            original_feedback = feedback
+            feedback = self._display_text(feedback)
             print(f"📋 执行反馈:\n{feedback}")
+            feedback = original_feedback
 
             return {
                 'action': 'generate_code',
@@ -279,6 +332,9 @@ class DataAnalysisAgent:
         self.conversation_history = []
         self.analysis_results = []
         self.current_round = 0
+        self.task_id = self._provided_task_id or uuid4()
+        self.artifact_records = []
+        self.storage_error = None
 
         if files is not None and dataset_ids is not None:
             raise UploadValidationError(
@@ -327,10 +383,20 @@ class DataAnalysisAgent:
                 profiles_by_id[dataset_id] = profile
 
         # 创建本次分析的专用输出目录
-        self.session_output_dir = create_session_output_dir(self.base_output_dir,user_input)
+        try:
+            self.session_output_dir = create_session_output_dir(
+                self.base_output_dir, user_input
+            )
+        except Exception:
+            self.cleanup_storage_outputs()
+            raise
 
         # 初始化代码执行器，使用会话目录
-        self.executor = CodeExecutor(self.session_output_dir)
+        try:
+            self.executor = CodeExecutor(self.session_output_dir)
+        except Exception:
+            self.cleanup_storage_outputs()
+            raise
         if dataset_context:
             self.executor.set_sensitive_columns(
                 field["column_name"]
@@ -387,10 +453,10 @@ class DataAnalysisAgent:
         print(f"📝 用户需求: {user_input}")
         if dataset_context:
             print(f"📊 可用数据集: {len(dataset_context)} 个")
-        print(f"📂 输出目录: {self.session_output_dir}")
+        print(f"📂 输出目录: {self._display_text(self.session_output_dir)}")
         print(f"🔢 最大轮数: {self.max_rounds}")
         print("=" * 60)
-          # 添加到对话历史
+        # 添加到对话历史
         self.conversation_history.append({
             'role': 'user',
             'content': initial_prompt
@@ -412,10 +478,18 @@ class DataAnalysisAgent:
                     prompt=self._build_conversation_prompt(),
                     system_prompt=formatted_system_prompt
                 )
+                original_response = response
+                response = self._display_text(response)
 
-                print(f"🤖 助手响应:\n{response}")
+                display_response = (
+                    response
+                    if getattr(self, "storage", None) is None
+                    else "[model response redacted in storage mode]"
+                )
+                print(f"🤖 助手响应:\n{display_response}")
 
                 # 使用统一的响应处理方法
+                response = original_response
                 process_result = self._process_response(response)
 
                 # 根据处理结果决定是否继续
@@ -479,7 +553,155 @@ class DataAnalysisAgent:
         if self.current_round >= self.max_rounds:
             print(f"\n⚠️ 已达到最大轮数 ({self.max_rounds})，分析结束")
 
-        return self._generate_final_report()
+        try:
+            return self._generate_final_report()
+        except Exception:
+            self.cleanup_storage_outputs()
+            raise
+
+    def cleanup_storage_outputs(self) -> None:
+        """Remove storage-backed artifacts and the private staging directory."""
+        artifact_storage = getattr(self, "artifact_storage", None)
+        artifact_records = getattr(self, "artifact_records", [])
+        task_id = getattr(self, "task_id", None)
+        if artifact_storage is not None and artifact_records and task_id:
+            try:
+                artifact_storage.delete_task_files(
+                    task_id=task_id,
+                    records=tuple(artifact_records),
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Storage-backed artifact cleanup failed"
+                )
+
+        if not self.session_output_dir:
+            return
+        try:
+            output_root = Path(self.base_output_dir).resolve(strict=False)
+            staging_dir = Path(self.session_output_dir).resolve(strict=False)
+            if staging_dir == output_root:
+                return
+            staging_dir.relative_to(output_root)
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir)
+        except (OSError, RuntimeError, ValueError):
+            logging.getLogger(__name__).warning(
+                "Analysis staging cleanup failed"
+            )
+
+    def _staged_file(self, file_path: object) -> Path:
+        if not self.session_output_dir:
+            raise StorageError(
+                StorageErrorCode.INVALID_URI,
+                "analysis staging directory is unavailable",
+            )
+        candidate = Path(str(file_path))
+        if not candidate.is_absolute():
+            candidate = Path(self.session_output_dir) / candidate
+        try:
+            resolved = candidate.resolve(strict=False)
+            root = Path(self.session_output_dir).resolve(strict=False)
+            resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise StorageError(
+                StorageErrorCode.INVALID_URI,
+                "artifact source is outside the analysis staging directory",
+            ) from exc
+        if not resolved.is_file():
+            raise StorageError(
+                StorageErrorCode.OBJECT_NOT_FOUND,
+                "artifact source is not available",
+            )
+        return resolved
+
+    def _store_figure_artifacts(self, figures: list[dict[str, Any]]) -> None:
+        artifact_storage = getattr(self, "artifact_storage", None)
+        task_id = getattr(self, "task_id", None)
+        if artifact_storage is None or task_id is None:
+            return
+        mime_types = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".svg": "image/svg+xml",
+            ".webp": "image/webp",
+        }
+        for figure in figures:
+            source_path = self._staged_file(figure.get("file_path", ""))
+            filename = figure.get("filename") or source_path.name
+            record = artifact_storage.store_file(
+                task_id=task_id,
+                source_path=source_path,
+                artifact_type="CHART",
+                filename=str(filename),
+                mime_type=mime_types.get(source_path.suffix.lower(), "image/png"),
+                description=figure.get("description") or None,
+            )
+            self.artifact_records.append(record)
+
+    def _store_report_artifact(
+        self,
+        source_path: str,
+        *,
+        filename: str,
+        mime_type: str,
+        format: str,
+    ) -> str | None:
+        artifact_storage = getattr(self, "artifact_storage", None)
+        task_id = getattr(self, "task_id", None)
+        storage = getattr(self, "storage", None)
+        if artifact_storage is None or task_id is None or storage is None:
+            return None
+        artifact, _report = artifact_storage.store_report(
+            task_id=task_id,
+            source_path=self._staged_file(source_path),
+            filename=filename,
+            mime_type=mime_type,
+            format=format,
+        )
+        self.artifact_records.append(artifact)
+        if not artifact.file_path:
+            return None
+        return storage.create_download_url(artifact.file_path)
+
+    def _record_storage_error(self, exc: BaseException) -> None:
+        error = sanitize_exception(
+            exc,
+            secrets=(
+                getattr(self.config, "api_key", None),
+                getattr(self.config, "base_url", None),
+            ),
+        )
+        self.storage_error = self._display_text(error)
+        print(f"❌ 文件存储失败: {self.storage_error}")
+
+    def _display_text(self, value: object) -> str:
+        """Redact private staging paths from storage-mode console output."""
+        text = str(value)
+        if getattr(self, "storage", None) is None:
+            return text
+        staging_dir = getattr(self, "session_output_dir", None)
+        if not staging_dir:
+            return text
+        candidates = {str(staging_dir)}
+        try:
+            candidates.add(str(Path(staging_dir).resolve(strict=False)))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            pass
+        for candidate in sorted(candidates, key=len, reverse=True):
+            if candidate:
+                text = text.replace(candidate, "[private staging path]")
+        if text == str(value):
+            candidate_path = None
+            try:
+                candidate_path = Path(text)
+                candidate_path.resolve(strict=False).relative_to(
+                    Path(staging_dir).resolve(strict=False)
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                if candidate_path is not None and candidate_path.is_absolute():
+                    return "[external path redacted]"
+        return text
 
     def _build_conversation_prompt(self) -> str:
         """构建对话提示词"""
@@ -504,7 +726,7 @@ class DataAnalysisAgent:
                 all_figures.extend(result.get('collected_figures', []))
 
         print(f"\n📊 开始生成最终分析报告...")
-        print(f"📂 输出目录: {self.session_output_dir}")
+        print(f"📂 输出目录: {self._display_text(self.session_output_dir)}")
         print(f"🔢 总轮数: {self.current_round}")
         print(f"📈 收集图片: {len(all_figures)} 个")
 
@@ -540,24 +762,44 @@ class DataAnalysisAgent:
                 ),
                 include_message=False,
             )
-            print(f"❌ 生成最终报告时出错: {safe_error}")
+            print(f"❌ 生成最终报告时出错: {self._display_text(safe_error)}")
             final_report_content = f"报告生成失败: {safe_error}"
+
+        report_download_url = None
+        word_report_download_url = None
 
         # 保存最终报告到文件
         report_file_path = os.path.join(self.session_output_dir, "最终分析报告.md")
         try:
             with open(report_file_path, 'w', encoding='utf-8') as f:
                 f.write(final_report_content)
-            print(f"📄 最终报告已保存至: {report_file_path}")
+            print(f"📄 最终报告已保存至: {self._display_text(report_file_path)}")
+
+            if getattr(self, "artifact_storage", None) is not None:
+                try:
+                    self._store_figure_artifacts(all_figures)
+                except Exception as e:
+                    self._record_storage_error(e)
+                try:
+                    report_download_url = self._store_report_artifact(
+                        report_file_path,
+                        filename="最终分析报告.md",
+                        mime_type="text/markdown; charset=utf-8",
+                        format="MARKDOWN",
+                    )
+                except Exception as e:
+                    self._record_storage_error(e)
         except Exception as e:
             print(
                 "❌ 保存报告文件失败: "
-                + sanitize_exception(
-                    e,
-                    secrets=(
-                        getattr(self.config, "api_key", None),
-                        getattr(self.config, "base_url", None),
-                    ),
+                + self._display_text(
+                    sanitize_exception(
+                        e,
+                        secrets=(
+                            getattr(self.config, "api_key", None),
+                            getattr(self.config, "base_url", None),
+                        ),
+                    )
                 )
             )
 
@@ -574,16 +816,28 @@ class DataAnalysisAgent:
                     figures=all_figures,
                 )
                 word_report_generated = True
-                print(f"📄 Word报告已保存至: {word_report_file_path}")
+                print(f"📄 Word报告已保存至: {self._display_text(word_report_file_path)}")
+                if getattr(self, "artifact_storage", None) is not None:
+                    try:
+                        word_report_download_url = self._store_report_artifact(
+                            word_report_file_path,
+                            filename="最终分析报告.docx",
+                            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            format="DOCX",
+                        )
+                    except Exception as e:
+                        self._record_storage_error(e)
             except Exception as e:
                 word_report_error = (
                     "Word报告生成失败: "
-                    + sanitize_exception(
-                        e,
-                        secrets=(
-                            getattr(self.config, "api_key", None),
-                            getattr(self.config, "base_url", None),
-                        ),
+                    + self._display_text(
+                        sanitize_exception(
+                            e,
+                            secrets=(
+                                getattr(self.config, "api_key", None),
+                                getattr(self.config, "base_url", None),
+                            ),
+                        )
                     )
                 )
                 print(f"❌ {word_report_error}")
@@ -600,6 +854,11 @@ class DataAnalysisAgent:
             'word_report_file_path': word_report_file_path,
             'word_report_generated': word_report_generated,
             'word_report_error': word_report_error,
+            'task_id': getattr(self, "task_id", None),
+            'artifact_records': list(getattr(self, "artifact_records", [])),
+            'report_download_url': report_download_url,
+            'word_report_download_url': word_report_download_url,
+            'storage_error': getattr(self, "storage_error", None),
         }
 
     def _build_final_report_prompt(self, all_figures: List[Dict[str, Any]]) -> str:
@@ -672,6 +931,7 @@ def quick_analysis(
     settings: Settings | None = None,
     dataset_resolver: DatasetResolver | None = None,
     dataset_owner_id: UUID | None = None,
+    storage: Storage | None = None,
 ) -> dict[str, Any]:
     resolved_settings = settings or load_settings()
     if files is not None and dataset_ids is not None:
@@ -710,6 +970,11 @@ def quick_analysis(
             if output_dir is not None and str(output_dir).strip()
             else resolved_settings.output_dir
         )
+        selected_storage = storage
+        if selected_storage is None and getattr(
+            resolved_settings, "storage_local_root", None
+        ) is not None:
+            selected_storage = build_storage(resolved_settings)
         agent = DataAnalysisAgent(
             llm_config=resolved_settings.llm_config(),
             output_dir=str(selected_output_dir),
@@ -721,8 +986,15 @@ def quick_analysis(
             ),
             dataset_resolver=selected_resolver,
             dataset_owner_id=selected_owner_id,
+            storage=selected_storage,
         )
-        return agent.analyze(
-            user_input=query,
-            dataset_ids=selected_dataset_ids,
-        )
+        try:
+            return agent.analyze(
+                user_input=query,
+                dataset_ids=selected_dataset_ids,
+            )
+        except Exception:
+            cleanup = getattr(agent, "cleanup_storage_outputs", None)
+            if cleanup is not None:
+                cleanup()
+            raise

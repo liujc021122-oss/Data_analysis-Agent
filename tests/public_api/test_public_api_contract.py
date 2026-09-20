@@ -28,6 +28,7 @@ def test_quick_analysis_signature_is_stable():
         "settings",
         "dataset_resolver",
         "dataset_owner_id",
+        "storage",
     ]
     assert parameters["query"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert parameters["files"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
@@ -41,6 +42,7 @@ def test_quick_analysis_signature_is_stable():
             "settings",
             "dataset_resolver",
             "dataset_owner_id",
+            "storage",
         )
     )
 
