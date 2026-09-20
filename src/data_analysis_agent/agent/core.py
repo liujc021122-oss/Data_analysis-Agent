@@ -10,6 +10,7 @@
 import os
 import json
 import logging
+import re
 import shutil
 import yaml
 import pandas
@@ -38,7 +39,7 @@ from ..datasets import (
 )
 from ..datasets.errors import UploadValidationError
 from ..persistence.models import ArtifactRecord, ReportRecord
-from ..storage import ArtifactStorageService, Storage
+from ..storage import ArtifactStorageService, Storage, StorageLifecycleService
 from ..storage.errors import StorageError, StorageErrorCode
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
 
@@ -157,11 +158,18 @@ class DataAnalysisAgent:
         self.artifact_storage = artifact_storage
         self._provided_task_id = task_id
         self.task_id = task_id
+        self.storage_lifecycle = None
         if self.storage is not None and self.artifact_storage is None:
             self.artifact_storage = ArtifactStorageService(
                 storage=self.storage,
                 artifact_repository=_EphemeralArtifactRepository(),
                 report_repository=_EphemeralReportRepository(),
+            )
+        if self.storage is not None:
+            self.storage_lifecycle = StorageLifecycleService(
+                storage=self.storage,
+                artifact_storage=self.artifact_storage,
+                output_root=self.base_output_dir,
             )
         # 对话历史和上下文
         self.conversation_history = []
@@ -564,6 +572,23 @@ class DataAnalysisAgent:
         artifact_storage = getattr(self, "artifact_storage", None)
         artifact_records = getattr(self, "artifact_records", [])
         task_id = getattr(self, "task_id", None)
+        lifecycle = getattr(self, "storage_lifecycle", None)
+        if lifecycle is not None:
+            try:
+                lifecycle.cleanup_failed_task(
+                    task_id=task_id,
+                    staging_dir=(
+                        Path(self.session_output_dir)
+                        if getattr(self, "session_output_dir", None)
+                        else None
+                    ),
+                    records=tuple(artifact_records),
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Storage-backed artifact cleanup failed"
+                )
+            return
         if artifact_storage is not None and artifact_records and task_id:
             try:
                 artifact_storage.delete_task_files(
@@ -701,6 +726,16 @@ class DataAnalysisAgent:
             except (OSError, RuntimeError, TypeError, ValueError):
                 if candidate_path is not None and candidate_path.is_absolute():
                     return "[external path redacted]"
+        text = re.sub(
+            r"(?<![\w])(?:[A-Za-z]:[\\/]+)(?:[^\\/\s'\"<>()\[\]{},;]+[\\/]+)*[^\\/\s'\"<>()\[\]{},;]+",
+            "[external path redacted]",
+            text,
+        )
+        text = re.sub(
+            r"(?<![\w:])/(?!/)(?:[^/\s'\"<>()\[\]{},;]+/)*[^/\s'\"<>()\[\]{},;]+",
+            "[external path redacted]",
+            text,
+        )
         return text
 
     def _build_conversation_prompt(self) -> str:

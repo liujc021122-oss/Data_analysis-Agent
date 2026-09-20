@@ -5,6 +5,7 @@ import pytest
 
 from data_analysis_agent import DataAnalysisAgent, quick_analysis
 from data_analysis_agent.config.settings import load_settings
+from data_analysis_agent.storage.lifecycle import StorageLifecycleService
 from data_analysis_agent.storage.models import StorageObject
 from tests.fixtures.fake_llm import FakeLLM, session_dir_from_prompt, yaml_response
 
@@ -282,3 +283,46 @@ def test_chart_path_outside_staging_is_rejected_without_suppressing_markdown(
     assert result["storage_error"] is not None
     assert str(outside_chart) not in result["storage_error"]
     assert str(outside_chart) not in capsys.readouterr().out
+
+
+def test_storage_mode_redacts_embedded_external_absolute_paths(tmp_path):
+    agent = object.__new__(DataAnalysisAgent)
+    agent.storage = object()
+    agent.session_output_dir = str(tmp_path / "outputs" / "session")
+    external_path = str(tmp_path / "private" / "secret.csv")
+
+    displayed = agent._display_text(f"open({external_path!r})")
+
+    assert external_path not in displayed
+    assert "[external path redacted]" in displayed
+
+
+def test_agent_failure_cleanup_delegates_to_storage_lifecycle_service(
+    tmp_path, monkeypatch
+):
+    storage = RecordingStorage()
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: FakeLLM([]))
+    agent = DataAnalysisAgent(
+        output_dir=str(tmp_path / "outputs"),
+        generate_word_report=False,
+        storage=storage,
+    )
+    session_dir = tmp_path / "outputs" / "session_failed"
+    session_dir.mkdir(parents=True)
+    agent.session_output_dir = str(session_dir)
+    calls = []
+
+    def record_cleanup(self, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(StorageLifecycleService, "cleanup_failed_task", record_cleanup)
+
+    agent.cleanup_storage_outputs()
+
+    assert calls == [
+        {
+            "task_id": agent.task_id,
+            "staging_dir": session_dir,
+            "records": (),
+        }
+    ]

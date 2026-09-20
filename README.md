@@ -218,6 +218,27 @@ report = quick_analysis(
 | `STORAGE_LOCAL_ROOT` | 本地数据集对象的存储根目录；未设置时使用输出目录下的默认数据集目录 |
 | `MAX_UPLOAD_SIZE` | 单个上传文件允许的最大字节数 |
 
+### 文件存储抽象
+
+数据集、图表和报告通过统一的 `Storage` 接口保存。开发和测试环境默认使用
+`LocalFileStorage`；生产环境使用 S3 兼容存储（包括 MinIO）。数据库只保存对象
+URI、大小、哈希和内容类型等元数据，不保存 CSV、图片或报告本体。
+
+```text
+APP_ENV=test
+STORAGE_LOCAL_ROOT=outputs/test/datasets
+STORAGE_URL_EXPIRY=300
+STORAGE_RETENTION_DAYS=30
+```
+
+生产环境还必须配置 `STORAGE_ENDPOINT` 和 `STORAGE_BUCKET`。前端或调用方应使用
+结果中的 `report_download_url`、`word_report_download_url` 或授权下载服务返回的
+临时 URL；不要把 `session_output_dir`、`report_file_path` 或其他本地绝对路径作为
+下载地址暴露给用户。旧的本地路径字段仍保留用于兼容已有脚本。
+
+失败任务的 staging 目录只会在配置的输出根目录内清理，且只删除当前任务的对象；
+存储对象缺失或元数据哈希/大小不一致时，会返回不包含本地路径的结构化一致性问题。
+
 `files` 调用保留兼容性。适配器会在分析前校验并存储输入文件，然后把生成的 `dataset_id` 交给分析流程：
 
 ```python
