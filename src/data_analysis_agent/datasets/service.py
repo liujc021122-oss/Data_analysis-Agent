@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from typing import BinaryIO, Callable, Protocol
 from uuid import UUID, uuid4
@@ -9,10 +8,17 @@ from ..domain.models import utc_now
 from ..persistence.errors import TransactionError
 from ..persistence.models import DatasetRecord, UserRecord
 from ..persistence.unit_of_work import UnitOfWork
-from .errors import DatasetErrorCode, DatasetPersistenceError, UploadValidationError
+from ..storage import Storage, dataset_key, normalize_filename
+from ..storage.errors import StorageError as CanonicalStorageError
+from ..storage.errors import StorageErrorCode as CanonicalStorageErrorCode
+from .errors import (
+    DatasetErrorCode,
+    DatasetPersistenceError,
+    StorageError,
+    UploadValidationError,
+)
 from .inspection import CsvInspector
 from .models import DatasetUploadResult
-from .storage import StorageBackend
 
 
 class DatasetMetadataStore(Protocol):
@@ -61,7 +67,7 @@ class InMemoryDatasetStore:
 
 
 class DatasetUploadService:
-    def __init__(self, *, storage: StorageBackend, inspector: CsvInspector,
+    def __init__(self, *, storage: Storage, inspector: CsvInspector,
                  metadata_store: DatasetMetadataStore, max_upload_size: int):
         self._storage = storage
         self._inspector = inspector
@@ -70,7 +76,13 @@ class DatasetUploadService:
 
     def upload(self, stream: BinaryIO, *, original_filename: str,
                owner_id: UUID) -> DatasetUploadResult:
-        safe_name = Path(original_filename.replace("\\", "/")).name
+        try:
+            safe_name = normalize_filename(original_filename)
+        except (TypeError, ValueError) as exc:
+            raise UploadValidationError(
+                DatasetErrorCode.INVALID_DATASET_REQUEST,
+                "filename is invalid",
+            ) from exc
         with SpooledTemporaryFile(max_size=self._max_upload_size, mode="w+b") as buffered:
             size = 0
             while chunk := stream.read(64 * 1024):
@@ -86,18 +98,30 @@ class DatasetUploadService:
             profile = self._inspector.inspect(buffered, filename=safe_name)
             dataset_id = uuid4()
             buffered.seek(0)
-            stored = self._storage.put_stream(
-                buffered,
-                key=f"datasets/{dataset_id}.csv",
-                max_bytes=self._max_upload_size,
-            )
+            try:
+                stored = self._storage.put(
+                    buffered,
+                    key=dataset_key(dataset_id),
+                    content_type="text/csv",
+                    max_bytes=self._max_upload_size,
+                )
+            except CanonicalStorageError as exc:
+                if exc.code is CanonicalStorageErrorCode.FILE_TOO_LARGE:
+                    raise UploadValidationError(
+                        DatasetErrorCode.FILE_TOO_LARGE,
+                        "upload exceeds the configured size limit",
+                    ) from exc
+                raise StorageError(
+                    DatasetErrorCode.STORAGE_FAILURE,
+                    "unable to store dataset",
+                ) from exc
             record = DatasetRecord(
                 dataset_id=dataset_id,
                 user_id=owner_id,
                 name=safe_name,
                 source_uri=stored.uri,
-                content_type="text/csv",
-                size_bytes=size,
+                content_type=stored.content_type,
+                size_bytes=stored.size_bytes,
                 checksum=stored.checksum,
                 created_at=utc_now(),
                 metadata_json={

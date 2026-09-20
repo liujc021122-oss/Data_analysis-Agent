@@ -6,6 +6,7 @@ from typing import Sequence
 from uuid import UUID
 
 from .agent.core import quick_analysis
+from .config import build_storage
 from .config.settings import ConfigurationError, configure_logging, load_settings
 from .datasets import DatasetResolver, LocalStorageBackend, UnitOfWorkDatasetStore
 from .persistence.database import Database
@@ -33,15 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _validate_dataset_storage(settings) -> None:
     if settings.app_env == "production":
-        raise ConfigurationError(
-            "production dataset-id mode requires an object storage adapter; "
-            "no object storage adapter is configured"
-        )
+        build_storage(settings)
 
 
 def build_dataset_resolver(database: Database, settings) -> DatasetResolver:
     _validate_dataset_storage(settings)
-    storage = LocalStorageBackend(settings.storage_local_root)
+    storage = build_storage(settings)
     metadata_store = UnitOfWorkDatasetStore(
         lambda: UnitOfWork(database.session_factory)
     )

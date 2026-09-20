@@ -133,6 +133,21 @@ def test_build_dataset_resolver_rejects_production_local_storage(monkeypatch):
         cli.build_dataset_resolver(object(), settings)
 
 
+def test_build_dataset_resolver_uses_environment_selected_storage(monkeypatch):
+    settings = make_settings("sqlite:///test.db")
+    sentinel_storage = object()
+    monkeypatch.setattr(cli, "build_storage", lambda value: sentinel_storage)
+    monkeypatch.setattr(
+        cli,
+        "LocalStorageBackend",
+        lambda root: pytest.fail("dataset resolver must use canonical storage factory"),
+    )
+
+    resolver = cli.build_dataset_resolver(object(), settings)
+
+    assert resolver._storage is sentinel_storage
+
+
 def test_production_cli_dataset_id_fails_closed_before_database_creation(
     monkeypatch, capsys
 ):

@@ -203,7 +203,7 @@ def test_cleanup_failure_warns_safely_and_continues_without_replacing_outcome(
 
     assert len(attempts) == 2
     assert sentinel.read_text(encoding="utf-8") == "must remain"
-    assert len(list(sentinel.parent.glob("*.csv"))) == 2  # failed delete plus sentinel
+    assert len(list(settings.storage_local_root.rglob("*.csv"))) == 2  # failed delete plus sentinel
     warnings = [record for record in caplog.records if record.levelname == "WARNING"]
     assert len(warnings) == 1
     assert "cleanup" in warnings[0].message.lower()

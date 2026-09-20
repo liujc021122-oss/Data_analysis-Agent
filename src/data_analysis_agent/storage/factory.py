@@ -21,8 +21,8 @@ def build_storage(settings: Settings) -> Storage:
         raise ConfigurationError("APP_ENV does not select a storage backend")
 
     required = {
-        "STORAGE_ENDPOINT": settings.storage_endpoint,
-        "STORAGE_BUCKET": settings.storage_bucket,
+        "STORAGE_ENDPOINT": getattr(settings, "storage_endpoint", None),
+        "STORAGE_BUCKET": getattr(settings, "storage_bucket", None),
     }
     missing = [name for name, value in required.items() if not _has_value(value)]
     if missing:
@@ -36,11 +36,11 @@ def build_storage(settings: Settings) -> Storage:
     from .s3 import S3Storage
 
     return S3Storage(
-        bucket=settings.storage_bucket,
-        endpoint=settings.storage_endpoint,
-        region=settings.storage_region,
-        access_key_id=settings.storage_access_key_id,
-        secret_access_key=settings.storage_secret_access_key,
+        bucket=getattr(settings, "storage_bucket", None),
+        endpoint=getattr(settings, "storage_endpoint", None),
+        region=getattr(settings, "storage_region", None),
+        access_key_id=getattr(settings, "storage_access_key_id", None),
+        secret_access_key=getattr(settings, "storage_secret_access_key", None),
     )
 
 
