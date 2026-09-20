@@ -397,6 +397,27 @@ class ArtifactRepository:
             return None
         return self._to_record(row)
 
+    def get_for_user(self, artifact_id: UUID, user_id: UUID) -> ArtifactRecord | None:
+        try:
+            row = self.session.scalar(
+                select(ArtifactORM)
+                .join(
+                    AnalysisTaskORM,
+                    ArtifactORM.task_id == AnalysisTaskORM.task_id,
+                )
+                .where(
+                    ArtifactORM.artifact_id == artifact_id,
+                    AnalysisTaskORM.user_id == user_id,
+                )
+            )
+        except (LookupError, StatementError) as exc:
+            raise PersistenceMappingError(
+                "Invalid artifact format in persistence record"
+            ) from exc
+        if not row:
+            return None
+        return self._to_record(row)
+
     def list_for_task(self, task_id: UUID) -> list[ArtifactRecord]:
         rows = self.session.scalars(select(ArtifactORM).where(ArtifactORM.task_id == task_id).order_by(ArtifactORM.created_at, ArtifactORM.artifact_id)).all()
         return [self._to_record(row) for row in rows]

@@ -66,6 +66,7 @@ def test_response_uses_the_domain_task_status_enum_and_is_not_a_domain_model():
                 artifact_type="chart",
                 name="trend.png",
                 file_path="outputs/trend.png",
+                download_url="local-download://opaque-token",
                 mime_type="image/png",
             ),
         ),
@@ -74,6 +75,7 @@ def test_response_uses_the_domain_task_status_enum_and_is_not_a_domain_model():
     assert isinstance(response.status, TaskStatus)
     assert response.status is TaskStatus.REPORTING
     assert json.loads(response.model_dump_json())["status"] == "REPORTING"
+    assert response.artifacts[0].download_url == "local-download://opaque-token"
     assert response.__class__.__name__ == "AnalysisTaskResponse"
 
 

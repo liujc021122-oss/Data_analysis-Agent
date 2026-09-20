@@ -236,6 +236,33 @@ def test_report_rejects_artifact_belonging_to_another_task_without_leaking_exist
         assert uow.session.scalars(select(ReportORM)).all() == []
         uow.rollback()
 
+
+def test_artifact_get_for_user_filters_by_task_owner(uow_factory):
+    now = datetime.now(timezone.utc)
+    owner_id, other_owner_id, task_id, artifact_id = [uuid4() for _ in range(4)]
+    with uow_factory() as uow:
+        uow.users.ensure(UserRecord(user_id=owner_id, created_at=now))
+        uow.users.ensure(UserRecord(user_id=other_owner_id, created_at=now))
+        uow.tasks.add(
+            user_id=owner_id,
+            task=AnalysisTask(task_id=task_id, query="q"),
+            idempotency_key="owner-task",
+            request_hash="owner-hash",
+        )
+        record = uow.artifacts.add(
+            ArtifactRecord(
+                artifact_id=artifact_id,
+                task_id=task_id,
+                artifact_type="CHART",
+                name="chart.png",
+                file_path="s3://bucket/chart.png",
+                created_at=now,
+            )
+        )
+        assert uow.artifacts.get_for_user(artifact_id, owner_id) == record
+        assert uow.artifacts.get_for_user(artifact_id, other_owner_id) is None
+        assert uow.artifacts.get_for_user(uuid4(), owner_id) is None
+
 def test_invalid_enum_rows_raise_mapping_error(uow_factory):
     with uow_factory() as uow:
         user_id, task_id = uuid4(), uuid4()

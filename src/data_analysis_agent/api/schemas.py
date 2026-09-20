@@ -53,6 +53,7 @@ class ArtifactResponse(APIModel):
     artifact_type: StrictStr
     name: StrictStr
     file_path: StrictStr | None = None
+    download_url: StrictStr | None = None
     format: ReportFormat | None = None
     mime_type: StrictStr | None = None
     description: StrictStr | None = None
