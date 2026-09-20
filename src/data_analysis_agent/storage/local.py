@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -21,13 +22,16 @@ class LocalFileStorage:
     """Secure local implementation of the provider-neutral storage port."""
 
     _CHUNK_SIZE = 64 * 1024
+    _METADATA_FILENAME = ".storage-metadata.json"
+    _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
     def __init__(self, root: str | Path, *, signing_secret: bytes | None = None):
         self._root = Path(root).resolve(strict=False)
         self._signing_secret = (
             signing_secret if signing_secret is not None else secrets.token_bytes(32)
         )
-        self._content_types: dict[str, str] = {}
+        self._metadata_path = self._root / self._METADATA_FILENAME
+        self._content_types = self._load_content_types()
 
     def put(
         self,
@@ -88,7 +92,16 @@ class LocalFileStorage:
                     pass
 
         checksum = f"sha256:{digest.hexdigest()}"
+        previous_content_type = self._content_types.get(key)
         self._content_types[key] = content_type
+        try:
+            self._persist_content_types()
+        except StorageError:
+            if previous_content_type is None:
+                self._content_types.pop(key, None)
+            else:
+                self._content_types[key] = previous_content_type
+            raise
         return StorageObject(
             uri=f"local://{key}",
             key=key,
@@ -132,7 +145,7 @@ class LocalFileStorage:
             key=key,
             size_bytes=size,
             checksum=f"sha256:{digest}",
-            content_type=self._content_types.get(key, "application/octet-stream"),
+            content_type=self._content_types.get(key, self._DEFAULT_CONTENT_TYPE),
         )
 
     def exists(self, uri: str) -> bool:
@@ -154,7 +167,9 @@ class LocalFileStorage:
                 StorageErrorCode.BACKEND_UNAVAILABLE,
                 "unable to delete stored object",
             ) from exc
-        self._content_types.pop(key, None)
+        if key in self._content_types:
+            self._content_types.pop(key, None)
+            self._persist_content_types()
 
     def create_download_url(self, uri: str, *, expires_in: int = 300) -> str:
         if not isinstance(expires_in, int) or isinstance(expires_in, bool) or expires_in <= 0:
@@ -189,6 +204,77 @@ class LocalFileStorage:
                 size += len(chunk)
                 digest.update(chunk)
         return size, digest.hexdigest()
+
+    def _load_content_types(self) -> dict[str, str]:
+        if not self._metadata_path.is_file():
+            return {}
+
+        try:
+            payload = json.loads(self._metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("storage metadata must be an object")
+            content_types: dict[str, str] = {}
+            for key, content_type in payload.items():
+                if not isinstance(key, str) or not isinstance(content_type, str):
+                    raise ValueError("storage metadata values must be strings")
+                validate_key(key)
+                if key == self._METADATA_FILENAME or key.startswith(
+                    f"{self._METADATA_FILENAME}/"
+                ):
+                    raise ValueError("storage metadata contains a reserved key")
+                content_types[key] = content_type
+            return content_types
+        except (OSError, TypeError, ValueError, json.JSONDecodeError, StorageError) as exc:
+            raise StorageError(
+                StorageErrorCode.BACKEND_UNAVAILABLE,
+                "unable to load storage metadata",
+            ) from exc
+
+    def _persist_content_types(self) -> None:
+        if not self._content_types:
+            try:
+                self._metadata_path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise StorageError(
+                    StorageErrorCode.BACKEND_UNAVAILABLE,
+                    "unable to persist storage metadata",
+                ) from exc
+            return
+
+        temporary: Path | None = None
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix=".storage-metadata-",
+                suffix=".tmp",
+                dir=self._root,
+                delete=False,
+            ) as output:
+                temporary = Path(output.name)
+                json.dump(
+                    self._content_types,
+                    output,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, self._metadata_path)
+            temporary = None
+        except (OSError, TypeError, ValueError) as exc:
+            raise StorageError(
+                StorageErrorCode.BACKEND_UNAVAILABLE,
+                "unable to persist storage metadata",
+            ) from exc
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _path_for_reference(self, uri: str) -> tuple[str, Path]:
         if not isinstance(uri, str):
@@ -231,6 +317,13 @@ class LocalFileStorage:
 
     def _path_for_key(self, key: str) -> Path:
         validate_key(key)
+        if key == self._METADATA_FILENAME or key.startswith(
+            f"{self._METADATA_FILENAME}/"
+        ):
+            raise StorageError(
+                StorageErrorCode.INVALID_KEY,
+                "object key is reserved by local storage",
+            )
         try:
             candidate = (self._root / Path(key)).resolve(strict=False)
             candidate.relative_to(self._root)
@@ -306,7 +399,10 @@ class LocalFileStorage:
         ):
             raise ValueError("invalid token encoding")
         padded = value + "=" * (-len(value) % 4)
-        decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+        try:
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("invalid token encoding") from exc
         if LocalFileStorage._encode_token_part(decoded) != value:
             raise ValueError("invalid token encoding")
         return decoded

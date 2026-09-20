@@ -6,11 +6,11 @@ from ..storage.errors import StorageError as CanonicalStorageError
 from ..storage.errors import StorageErrorCode
 from ..storage.local import LocalFileStorage
 from .errors import DatasetErrorCode, StorageError
-from .models import StoredObject
+from .models import StorageObject
 
 
 class StorageBackend(Protocol):
-    def put_stream(self, stream: BinaryIO, *, key: str, max_bytes: int) -> StoredObject:
+    def put_stream(self, stream: BinaryIO, *, key: str, max_bytes: int) -> StorageObject:
         ...
 
     def open(self, uri: str) -> BinaryIO:
@@ -23,7 +23,7 @@ class StorageBackend(Protocol):
 class LocalStorageBackend(LocalFileStorage):
     """M04 compatibility facade over the canonical local storage adapter."""
 
-    def put_stream(self, stream: BinaryIO, *, key: str, max_bytes: int) -> StoredObject:
+    def put_stream(self, stream: BinaryIO, *, key: str, max_bytes: int) -> StorageObject:
         if max_bytes <= 0:
             raise StorageError(
                 DatasetErrorCode.STORAGE_FAILURE,

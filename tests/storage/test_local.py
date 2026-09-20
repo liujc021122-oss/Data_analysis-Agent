@@ -86,6 +86,21 @@ def test_stat_recomputes_current_size_and_checksum(tmp_path):
     assert current.content_type == "application/octet-stream"
 
 
+def test_content_type_survives_storage_reconstruction(tmp_path):
+    signing_secret = b"test-secret"
+    storage = _local_storage(tmp_path, signing_secret=signing_secret)
+    stored = storage.put(
+        BytesIO(b'{"name": "Ada"}'),
+        key="datasets/current.json",
+        content_type="application/json",
+        max_bytes=100,
+    )
+
+    reconstructed = _local_storage(tmp_path, signing_secret=signing_secret)
+
+    assert reconstructed.stat(stored.uri).content_type == "application/json"
+
+
 @pytest.mark.parametrize(
     "key",
     [
@@ -269,6 +284,15 @@ def test_signed_download_rejects_malformed_and_tampered_values(tmp_path):
         with pytest.raises(StorageError) as exc_info:
             storage.get(invalid_url)
         assert exc_info.value.code is StorageErrorCode.DOWNLOAD_URL_INVALID
+
+
+def test_signed_download_rejects_invalid_base64_values(tmp_path):
+    storage = _local_storage(tmp_path, signing_secret=b"test-secret")
+
+    with pytest.raises(StorageError) as exc_info:
+        storage.get("local-download://A.A")
+
+    assert exc_info.value.code is StorageErrorCode.DOWNLOAD_URL_INVALID
 
 
 def test_signed_download_rejects_expired_values(tmp_path, monkeypatch):
