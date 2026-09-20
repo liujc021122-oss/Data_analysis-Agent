@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 import logging
 import os
 from pathlib import Path
@@ -33,18 +33,24 @@ def _nonblank(value):
 @dataclass(frozen=True)
 class Settings:
     app_env: EnvironmentName
-    database_url: Optional[str]
-    redis_url: Optional[str]
+    database_url: Optional[str] = field(repr=False)
+    redis_url: Optional[str] = field(repr=False)
     storage_endpoint: Optional[str]
     storage_bucket: Optional[str]
     storage_local_root: Path
-    openai_api_key: Optional[str]
+    openai_api_key: Optional[str] = field(repr=False)
     openai_base_url: str
     openai_model: str
     max_task_runtime: int
     max_upload_size: int
     output_dir: Path
     log_level: str
+    storage_region: Optional[str] = None
+    storage_access_key_id: Optional[str] = field(default=None, repr=False)
+    storage_secret_access_key: Optional[str] = field(default=None, repr=False)
+    storage_signing_secret: Optional[str] = field(default=None, repr=False)
+    storage_url_expiry: int = 300
+    storage_retention_days: int = 30
 
     def llm_config(self) -> LLMConfig:
         return LLMConfig(
@@ -53,6 +59,25 @@ class Settings:
             base_url=self.openai_base_url,
             model=self.openai_model,
         )
+
+    def to_dict(self) -> dict[str, object]:
+        secret_fields = {
+            "database_url",
+            "redis_url",
+            "openai_api_key",
+            "storage_access_key_id",
+            "storage_secret_access_key",
+            "storage_signing_secret",
+        }
+        serialized: dict[str, object] = {}
+        for setting in fields(self):
+            value = getattr(self, setting.name)
+            if setting.name in secret_fields and value is not None:
+                value = "<redacted>"
+            elif isinstance(value, Path):
+                value = str(value)
+            serialized[setting.name] = value
+        return serialized
 
 
 def _get_environment(raw: str) -> EnvironmentName:
@@ -148,6 +173,18 @@ def load_settings(
         redis_url=values.get("REDIS_URL"),
         storage_endpoint=_nonblank(values.get("STORAGE_ENDPOINT")),
         storage_bucket=_nonblank(values.get("STORAGE_BUCKET")),
+        storage_region=_nonblank(values.get("STORAGE_REGION")),
+        storage_access_key_id=_nonblank(values.get("STORAGE_ACCESS_KEY_ID")),
+        storage_secret_access_key=_nonblank(
+            values.get("STORAGE_SECRET_ACCESS_KEY")
+        ),
+        storage_signing_secret=_nonblank(values.get("STORAGE_SIGNING_SECRET")),
+        storage_url_expiry=_positive_int(
+            values, "STORAGE_URL_EXPIRY", 300
+        ),
+        storage_retention_days=_positive_int(
+            values, "STORAGE_RETENTION_DAYS", 30
+        ),
         openai_api_key=api_key,
         openai_base_url=base_url or (DEFAULT_BASE_URL if environment != "production" else ""),
         openai_model=model or (DEFAULT_MODEL if environment != "production" else ""),

@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import os
 
 import pytest
 
@@ -10,6 +11,7 @@ from data_analysis_agent.config.settings import (
     load_settings,
 )
 from data_analysis_agent.config.llm import LLMConfig
+from data_analysis_agent.storage.factory import build_storage
 
 
 def test_development_defaults_allow_offline_construction(tmp_path):
@@ -26,6 +28,55 @@ def test_development_defaults_allow_offline_construction(tmp_path):
     assert settings.max_upload_size == 104857600
     assert settings.output_dir == Path("outputs")
     assert settings.log_level == "INFO"
+    assert settings.storage_region is None
+    assert settings.storage_access_key_id is None
+    assert settings.storage_secret_access_key is None
+    assert settings.storage_signing_secret is None
+    assert settings.storage_url_expiry == 300
+    assert settings.storage_retention_days == 30
+
+
+def test_storage_settings_parse_typed_values_without_mutating_process_environment(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("STORAGE_REGION", "process-region")
+    settings = load_settings(
+        app_env="test",
+        environ={
+            "STORAGE_REGION": "env-region",
+            "STORAGE_ACCESS_KEY_ID": "access-key",
+            "STORAGE_SECRET_ACCESS_KEY": "secret-key",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
+            "STORAGE_URL_EXPIRY": "600",
+            "STORAGE_RETENTION_DAYS": "45",
+        },
+        dotenv_dir=tmp_path,
+    )
+
+    assert settings.storage_region == "env-region"
+    assert settings.storage_access_key_id == "access-key"
+    assert settings.storage_secret_access_key == "secret-key"
+    assert settings.storage_signing_secret == "signing-secret"
+    assert settings.storage_url_expiry == 600
+    assert settings.storage_retention_days == 45
+    assert os.environ["STORAGE_REGION"] == "process-region"
+
+    serialized = settings.to_dict()
+    assert serialized["storage_access_key_id"] == "<redacted>"
+    assert serialized["storage_secret_access_key"] == "<redacted>"
+    assert serialized["storage_signing_secret"] == "<redacted>"
+    assert "secret-key" not in repr(settings)
+    assert "signing-secret" not in repr(settings)
+
+
+@pytest.mark.parametrize("key", ["STORAGE_URL_EXPIRY", "STORAGE_RETENTION_DAYS"])
+def test_storage_positive_integer_settings_reject_invalid_values(tmp_path, key):
+    with pytest.raises(ConfigurationError, match=key):
+        load_settings(
+            app_env="test",
+            environ={key: "0"},
+            dotenv_dir=tmp_path,
+        )
 
 
 def test_test_profile_does_not_read_ordinary_or_production_dotenv(tmp_path):
@@ -98,6 +149,31 @@ def test_production_missing_fields_are_named_without_values(tmp_path):
     assert "OPENAI_MODEL" in message
     assert "DATABASE_URL" in message
     assert "secret-value" not in message
+
+
+def test_production_factory_accepts_provider_default_credentials(tmp_path, monkeypatch):
+    settings = load_settings(
+        app_env="production",
+        environ={
+            "OPENAI_API_KEY": "offline-key",
+            "OPENAI_BASE_URL": "https://offline.invalid",
+            "OPENAI_MODEL": "offline-model",
+            "DATABASE_URL": (
+                "mysql+pymysql://user:password@db.example.invalid:3306/"
+                "data_analysis"
+            ),
+            "STORAGE_ENDPOINT": "https://storage.example.invalid",
+            "STORAGE_BUCKET": "data-analysis",
+        },
+        dotenv_dir=tmp_path,
+    )
+
+    fake_boto3 = type("FakeBoto3", (), {})()
+    fake_boto3.client = lambda service_name, **kwargs: object()
+    monkeypatch.setitem(__import__("sys").modules, "boto3", fake_boto3)
+
+    storage = build_storage(settings)
+    assert storage.__class__.__name__ == "S3Storage"
 
 
 def test_production_whitespace_database_url_is_missing(tmp_path):

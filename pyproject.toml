@@ -30,6 +30,7 @@ dependencies = [
     "alembic>=1.13,<2.0",
     "PyMySQL>=1.1,<2.0",
     "charset-normalizer>=3.0,<4.0",
+    "boto3>=1.28.0,<2.0",
 ]
 
 [project.optional-dependencies]
