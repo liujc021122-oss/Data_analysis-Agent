@@ -15,7 +15,7 @@ from .models import (
     SensitiveField,
     StoredObject,
 )
-from .storage import LocalStorageBackend, StorageBackend
+from .storage import LocalFileStorage, LocalStorageBackend, StorageBackend
 from .resolver import DatasetResolver
 from .service import (
     DatasetMetadataStore,
@@ -37,6 +37,7 @@ __all__ = [
     "StorageError",
     "StorageErrorCode",
     "StorageBackend",
+    "LocalFileStorage",
     "LocalStorageBackend",
     "StoredObject",
     "UploadValidationError",

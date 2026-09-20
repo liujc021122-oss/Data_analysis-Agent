@@ -2,6 +2,7 @@ from typing import BinaryIO, Protocol
 
 from .errors import StorageError, StorageErrorCode
 from .keys import dataset_key, normalize_filename, task_file_key, validate_key
+from .local import LocalFileStorage
 from .models import StorageObject
 
 
@@ -33,6 +34,7 @@ class Storage(Protocol):
 
 __all__ = [
     "Storage",
+    "LocalFileStorage",
     "StorageError",
     "StorageErrorCode",
     "StorageObject",
