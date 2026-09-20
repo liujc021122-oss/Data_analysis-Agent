@@ -3,14 +3,17 @@ from __future__ import annotations
 from typing import BinaryIO
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from ..storage import Storage
 from ..storage.errors import StorageError as CanonicalStorageError
 from ..storage.errors import StorageErrorCode as CanonicalStorageErrorCode
-from pydantic import ValidationError
 
 from .errors import DatasetAccessDeniedError, DatasetErrorCode, DatasetPersistenceError
 from .models import DatasetProfile
 from .service import DatasetMetadataStore
+
+
 class DatasetResolver:
     def __init__(self, *, storage: Storage, metadata_store: DatasetMetadataStore):
         self._storage = storage
