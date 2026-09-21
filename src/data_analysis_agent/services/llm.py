@@ -4,6 +4,7 @@ LLM调用辅助模块
 """
 
 import asyncio
+import inspect
 import yaml
 from ..config.llm import LLMConfig
 from ..llm import ChatMessage, ChatRequest, LLMClient, StructuredOutputRequest
@@ -15,8 +16,9 @@ class LLMHelper:
 
     def __init__(self, config: LLMConfig = None, gateway: LLMClient = None):
         self.config = config or LLMConfig()
-        self.gateway = gateway or LLMClient(self.config)
+        self.gateway = gateway if gateway is not None else LLMClient(self.config)
         self.client = None
+        self._closed = False
 
     def _is_reasoning_model(self) -> bool:
         """Return whether the configured model is a reasoning model."""
@@ -122,8 +124,24 @@ class LLMHelper:
             return {}
 
     async def close(self):
-        """关闭客户端"""
-        if getattr(self, "gateway", None) is not None:
-            await self.gateway.aclose()
+        """关闭客户端；重复调用不会再次关闭底层资源。"""
+        if getattr(self, "_closed", False):
             return
-        await self.client.close()
+        self._closed = True
+        gateway = getattr(self, "gateway", None)
+        if gateway is not None:
+            close = getattr(gateway, "aclose", None)
+            if close is None:
+                close = getattr(gateway, "close", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            return
+
+        client = getattr(self, "client", None)
+        close = getattr(client, "close", None) if client is not None else None
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result

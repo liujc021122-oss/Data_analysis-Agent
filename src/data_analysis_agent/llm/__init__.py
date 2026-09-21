@@ -1,3 +1,4 @@
+from ..config.llm import LLMConfig
 from .errors import (
     LLMAuthenticationError,
     LLMClosedError,
@@ -30,6 +31,7 @@ from .client import CallRecorder, LLMClient
 __all__ = [
     "ChatMessage",
     "ChatRequest",
+    "LLMConfig",
     "LLMCallMetrics",
     "LLMResponse",
     "LLMStreamEvent",

@@ -14,6 +14,8 @@ import re
 import shutil
 import yaml
 import pandas
+import asyncio
+import inspect
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
@@ -142,6 +144,7 @@ class DataAnalysisAgent:
         storage: Storage | None = None,
         artifact_storage: ArtifactStorageService | None = None,
         task_id: UUID | None = None,
+        llm: Any | None = None,
     ):
         """
         初始化智能体
@@ -153,7 +156,9 @@ class DataAnalysisAgent:
             generate_word_report: 是否同时生成Word报告
         """
         self.config = llm_config or LLMConfig()
-        self.llm = LLMHelper(self.config)
+        self._owns_llm = llm is None
+        self._llm_closed = False
+        self.llm = llm if llm is not None else LLMHelper(self.config)
         self.llm_port = AgentLLMPort(self.llm, self.config)
         self.base_output_dir = output_dir
         self.max_rounds = max_rounds
@@ -186,6 +191,21 @@ class DataAnalysisAgent:
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
+
+    def _close_owned_llm(self) -> None:
+        """Close only the LLM created by this Agent instance."""
+        if not getattr(self, "_owns_llm", False) or getattr(self, "_llm_closed", False):
+            return
+        self._llm_closed = True
+        close = getattr(getattr(self, "llm", None), "close", None)
+        if not callable(close):
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                asyncio.run(result)
+        except Exception:
+            logging.getLogger(__name__).warning("Owned LLM cleanup failed")
 
     def _get_llm_port(self) -> AgentLLMPort:
         port = getattr(self, "llm_port", None)
@@ -351,6 +371,26 @@ class DataAnalysisAgent:
             }
 
     def analyze(
+        self,
+        user_input: str,
+        files: Sequence[str] | None = None,
+        *,
+        dataset_ids: Sequence[UUID | str] | None = None,
+    ) -> Dict[str, Any]:
+        depth = getattr(self, "_analysis_depth", 0)
+        self._analysis_depth = depth + 1
+        try:
+            return self._analyze_impl(
+                user_input,
+                files,
+                dataset_ids=dataset_ids,
+            )
+        finally:
+            self._analysis_depth = depth
+            if depth == 0:
+                self._close_owned_llm()
+
+    def _analyze_impl(
         self,
         user_input: str,
         files: Sequence[str] | None = None,

@@ -218,6 +218,39 @@ report = quick_analysis(
 | `STORAGE_LOCAL_ROOT` | 本地数据集对象的存储根目录；未设置时使用输出目录下的默认数据集目录 |
 | `MAX_UPLOAD_SIZE` | 单个上传文件允许的最大字节数 |
 
+### LLM 网关与离线测试
+
+模型调用统一通过 `data_analysis_agent.llm.LLMClient`。它支持 OpenAI 兼容接口（包括 DeepSeek），并负责超时、有限重试、稳定错误分类、结构化 JSON/Pydantic 校验、流式输出和调用指标。API Key 只从环境变量或配置对象读取，不要写入代码或提交到仓库。
+
+```python
+import os
+
+from data_analysis_agent import LLMClient, LLMConfig
+
+client = LLMClient(
+    LLMConfig(
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url="https://api.deepseek.com",
+        model="deepseek-chat",
+    )
+)
+```
+
+`LLMConfigurationError`、`LLMAuthenticationError`、`LLMTimeoutError`、`LLMRateLimitError` 和 `LLMStructuredOutputError` 等错误可用于区分配置、传输、供应商和输出协议问题。结构化输出必须先通过 JSON Schema 或 Pydantic 模型校验，未校验的模型文本不会进入代码执行阶段；旧 YAML 解析器仅保留给兼容测试替身使用。
+
+没有 API Key 也可以运行测试。测试使用注入的 Fake Provider/FakeLLM，不会调用真实模型或对象存储 API：
+
+```bash
+pip install -e ".[dev]"
+py -3 -m pytest -q
+```
+
+模块入口同样不需要 API Key 即可查看帮助：
+
+```bash
+python -m data_analysis_agent --help
+```
+
 ### 文件存储抽象
 
 数据集、图表和报告通过统一的 `Storage` 接口保存。开发和测试环境默认使用
