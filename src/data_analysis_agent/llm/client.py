@@ -1,5 +1,7 @@
 import asyncio
 import inspect
+import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
@@ -8,6 +10,9 @@ from uuid import uuid4
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from openai import AuthenticationError, BadRequestError, RateLimitError
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from pydantic import ValidationError
 
 from ..config.llm import LLMConfig
 from .errors import (
@@ -20,9 +25,19 @@ from .errors import (
     LLMProviderError,
     LLMRateLimitError,
     LLMRequestError,
+    LLMStructuredOutputError,
     LLMTimeoutError,
 )
-from .models import ChatRequest, LLMCallMetrics, LLMResponse, ProviderResponse, ProviderUsage
+from .models import (
+    ChatMessage,
+    ChatRequest,
+    LLMCallMetrics,
+    LLMResponse,
+    ProviderResponse,
+    ProviderUsage,
+    StructuredOutputRequest,
+    StructuredOutputResponse,
+)
 from .openai_compatible import OpenAICompatibleProvider
 from .provider import LLMProvider
 
@@ -135,6 +150,85 @@ class LLMClient:
 
     def chat(self, request: ChatRequest) -> LLMResponse:
         return asyncio.run(self.achat(request))
+
+    async def astructured_output(
+        self, request: StructuredOutputRequest
+    ) -> StructuredOutputResponse:
+        """Return a validated value, allowing one safe correction request."""
+        response = await self.achat(request)
+        schema = self._structured_schema(request)
+        try:
+            value = self._validate_structured_text(response.text, request, schema)
+            return StructuredOutputResponse(value=value, metrics=response.metrics)
+        except (ValueError, TypeError, ValidationError, JsonSchemaValidationError) as error:
+            summary = self._structured_failure_summary(error)
+
+        correction = ChatMessage(
+            role="user",
+            content=(
+                "structured output validation failed: "
+                f"{summary}\nJSON Schema:\n"
+                f"{json.dumps(schema, sort_keys=True, separators=(',', ':'))}"
+            ),
+        )
+        correction_request = request.model_copy(
+            update={"messages": request.messages + (correction,)}
+        )
+        try:
+            corrected = await self.achat(correction_request)
+            value = self._validate_structured_text(corrected.text, request, schema)
+        except Exception:
+            raise LLMStructuredOutputError(
+                "structured output validation failed after correction",
+                provider=response.provider,
+                model=response.model,
+                attempts=2,
+            ) from None
+        return StructuredOutputResponse(value=value, metrics=corrected.metrics)
+
+    def structured_output(self, request: StructuredOutputRequest) -> StructuredOutputResponse:
+        return asyncio.run(self.astructured_output(request))
+
+    @staticmethod
+    def _structured_schema(request: StructuredOutputRequest) -> Mapping[str, Any]:
+        if request.response_model is not None:
+            return request.response_model.model_json_schema()
+        return dict(request.json_schema or {})
+
+    @classmethod
+    def _validate_structured_text(
+        cls,
+        text: str,
+        request: StructuredOutputRequest,
+        schema: Mapping[str, Any],
+    ) -> Any:
+        value = json.loads(cls._extract_json_text(text))
+        if request.response_model is not None:
+            return request.response_model.model_validate(value)
+        Draft202012Validator(schema).validate(value)
+        return value
+
+    @staticmethod
+    def _extract_json_text(text: str) -> str:
+        candidate = text.strip()
+        if "```" not in candidate:
+            return candidate
+        if candidate.count("```") != 2:
+            raise ValueError("multiple fenced code blocks are not allowed")
+        match = re.fullmatch(
+            r"```(?:json)?[ \t]*(?:\r?\n)?(.*?)(?:\r?\n)?```",
+            candidate,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match is None:
+            raise ValueError("invalid fenced JSON response")
+        return match.group(1).strip()
+
+    @staticmethod
+    def _structured_failure_summary(error: Exception) -> str:
+        if isinstance(error, json.JSONDecodeError):
+            return "invalid JSON"
+        return "response does not match the requested schema"
 
     async def aclose(self) -> None:
         if not self._closed:

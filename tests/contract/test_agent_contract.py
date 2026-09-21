@@ -2,7 +2,10 @@ from pathlib import Path
 from types import SimpleNamespace
 import re
 
+import pytest
+
 from data_analysis_agent import DataAnalysisAgent, LLMConfig
+from data_analysis_agent.llm import LLMError
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
 from data_analysis_agent.services.session import create_session_output_dir
 from data_analysis_agent.services.llm import LLMHelper
@@ -129,10 +132,10 @@ def test_llm_yaml_parser_returns_none_for_empty_and_mapping_for_invalid_yaml():
     assert helper.parse_yaml_response("action: [unterminated") == {}
 
 
-def test_model_call_failure_is_normalized_to_empty_response(capsys):
-    class FailingClient:
-        async def chat_completions_create(self, **kwargs):
-            raise RuntimeError("fake model outage")
+def test_model_call_failure_propagates_gateway_error():
+    class FailingGateway:
+        def chat(self, request):
+            raise LLMError("fake model outage")
 
     helper = object.__new__(LLMHelper)
     helper.config = LLMConfig(
@@ -140,10 +143,10 @@ def test_model_call_failure_is_normalized_to_empty_response(capsys):
         base_url="https://offline.invalid",
         model="fake-model",
     )
-    helper.client = FailingClient()
+    helper.gateway = FailingGateway()
 
-    assert helper.call("offline prompt") == ""
-    assert "LLM调用失败" in capsys.readouterr().out
+    with pytest.raises(LLMError, match="fake model outage"):
+        helper.call("offline prompt")
 
 
 def test_analysis_stops_at_max_rounds_and_still_generates_final_report(tmp_path, monkeypatch):
