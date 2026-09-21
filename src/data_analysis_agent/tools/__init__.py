@@ -17,6 +17,7 @@ from .models import (
     ToolDefinition,
     ToolRiskLevel,
 )
+from .registry import RegisteredTool, ToolHandler, ToolRegistry
 
 __all__ = [
     "ToolCallRequest",
@@ -24,6 +25,9 @@ __all__ = [
     "ToolContext",
     "ToolDefinition",
     "ToolRiskLevel",
+    "ToolHandler",
+    "RegisteredTool",
+    "ToolRegistry",
     "ToolError",
     "UnknownToolError",
     "ToolInputValidationError",

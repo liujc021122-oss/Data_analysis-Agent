@@ -16,7 +16,7 @@ class ToolError(Exception):
         "TOOL_EXECUTION_FAILED": "Tool execution failed",
     }
 
-    def __init__(self, tool_name: str, task_id: UUID, detail: object = "") -> None:
+    def __init__(self, tool_name: str, task_id: UUID | None = None, detail: object = "") -> None:
         self.tool_name = tool_name
         self.task_id = task_id
         self.detail = self._safe_details.get(self.code, self._safe_details["TOOL_ERROR"])
