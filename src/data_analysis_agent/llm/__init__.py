@@ -25,6 +25,7 @@ from .models import (
 )
 from .openai_compatible import OpenAICompatibleProvider
 from .provider import LLMProvider
+from .client import CallRecorder, LLMClient
 
 __all__ = [
     "ChatMessage",
@@ -37,6 +38,8 @@ __all__ = [
     "ProviderUsage",
     "LLMProvider",
     "OpenAICompatibleProvider",
+    "CallRecorder",
+    "LLMClient",
     "StructuredOutputRequest",
     "StructuredOutputResponse",
     "LLMAuthenticationError",
