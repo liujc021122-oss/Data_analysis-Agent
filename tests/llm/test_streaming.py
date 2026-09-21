@@ -44,6 +44,38 @@ class Recorder:
         self.items.append(metrics)
 
 
+class TrackingStream:
+    def __init__(self):
+        self.closed = False
+        self.sent = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.sent:
+            raise StopAsyncIteration
+        self.sent = True
+        return chunk("a")
+
+    async def aclose(self):
+        self.closed = True
+
+
+class TrackingStreamProvider:
+    def __init__(self):
+        self.stream_instance = TrackingStream()
+
+    async def chat(self, request):  # pragma: no cover - stream-only double
+        raise AssertionError("chat must not be used for streaming")
+
+    def stream(self, request):
+        return self.stream_instance
+
+    async def close(self):
+        return None
+
+
 def request():
     return ChatRequest(
         messages=(ChatMessage(role="user", content="stream the result"),),
@@ -175,6 +207,20 @@ def test_sync_stream_yields_chunks_before_a_later_failure():
     assert next(events).text == "a"
     with pytest.raises(LLMTimeoutError):
         next(events)
+
+
+def test_astream_closes_underlying_provider_stream_when_consumer_stops():
+    provider = TrackingStreamProvider()
+    client = LLMClient(LLMConfig(api_key="key"), provider=provider)
+
+    async def consume_one():
+        events = client.astream(request())
+        first = await events.__anext__()
+        await events.aclose()
+        return first
+
+    assert run(consume_one()).text == "a"
+    assert provider.stream_instance.closed is True
 
 
 async def collect(events):

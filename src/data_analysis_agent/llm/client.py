@@ -211,13 +211,6 @@ class LLMClient:
                 yield LLMStreamEvent(kind="completed", metrics=metrics)
                 return
             except Exception as error:
-                if stream is not None:
-                    close_stream = getattr(stream, "aclose", None)
-                    if close_stream is not None:
-                        try:
-                            await close_stream()
-                        except Exception:
-                            pass
                 mapped = self._map_error(error, response_model, attempts, provider_name)
                 if delivered or not self._is_retryable(error, mapped) or attempts >= self.config.max_attempts:
                     metrics = self._metrics(
@@ -246,6 +239,14 @@ class LLMClient:
                 provider_name = self.config.provider
                 response_model = model
                 request_id = None
+            finally:
+                if stream is not None:
+                    close_stream = getattr(stream, "aclose", None)
+                    if close_stream is not None:
+                        try:
+                            await close_stream()
+                        except Exception:
+                            pass
 
     def stream(self, request: ChatRequest) -> Iterator[LLMStreamEvent]:
         loop = asyncio.new_event_loop()
