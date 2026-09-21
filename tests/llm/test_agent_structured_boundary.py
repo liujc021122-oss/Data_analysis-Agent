@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -133,3 +134,25 @@ def test_legacy_fake_llm_uses_explicit_yaml_compatibility_branch():
     assert action.action == "generate_code"
     assert action.code == "x = 1"
     assert len(helper.calls) == 1
+
+
+def test_structured_report_error_propagates_after_markdown_fallback(tmp_path):
+    class FailingStructuredHelper:
+        def structured_output(self, request):
+            raise LLMStructuredOutputError("invalid report action")
+
+    agent = object.__new__(DataAnalysisAgent)
+    agent.session_output_dir = str(tmp_path)
+    agent.analysis_results = []
+    agent.current_round = 1
+    agent.conversation_history = []
+    agent.config = LLMConfig(api_key="offline-key")
+    agent.llm = FailingStructuredHelper()
+    agent.generate_word_report = False
+
+    with pytest.raises(LLMStructuredOutputError):
+        agent._generate_final_report()
+
+    report_path = Path(agent.session_output_dir) / "最终分析报告.md"
+    assert report_path.exists()
+    assert "报告生成失败" in report_path.read_text(encoding="utf-8")

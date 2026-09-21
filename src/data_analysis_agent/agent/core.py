@@ -803,6 +803,7 @@ class DataAnalysisAgent:
 
         # 构建用于生成最终报告的提示词
         final_report_prompt = self._build_final_report_prompt(all_figures)
+        structured_report_error: Exception | None = None
 
         try:            # 调用LLM生成最终报告
             final_report_content = self._get_llm_port().request_report(
@@ -812,6 +813,18 @@ class DataAnalysisAgent:
 
             print("✅ 最终报告生成完成")
 
+        except (LLMStructuredOutputError, ValidationError) as e:
+            structured_report_error = e
+            safe_error = sanitize_exception(
+                e,
+                secrets=(
+                    getattr(self.config, "api_key", None),
+                    getattr(self.config, "base_url", None),
+                ),
+                include_message=False,
+            )
+            print(f"❌ 生成最终报告时出错: {self._display_text(safe_error)}")
+            final_report_content = f"报告生成失败: {safe_error}"
         except Exception as e:
             safe_error = sanitize_exception(
                 e,
@@ -900,6 +913,9 @@ class DataAnalysisAgent:
                     )
                 )
                 print(f"❌ {word_report_error}")
+
+        if structured_report_error is not None:
+            raise structured_report_error
 
         # 返回完整的分析结果
         return {
