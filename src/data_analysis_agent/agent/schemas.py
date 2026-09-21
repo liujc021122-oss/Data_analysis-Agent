@@ -8,7 +8,7 @@ class FigureRequest(BaseModel):
 
     figure_number: StrictInt = Field(ge=1)
     filename: StrictStr = Field(min_length=1)
-    file_path: StrictStr = ""
+    file_path: StrictStr = Field(min_length=1)
     description: StrictStr = ""
     analysis: StrictStr = ""
 
@@ -20,6 +20,8 @@ class AgentAction(BaseModel):
     code: StrictStr | None = None
     figures_to_collect: list[FigureRequest] = Field(default_factory=list)
     final_report: StrictStr | None = None
+    reasoning: StrictStr | None = None
+    next_steps: list[StrictStr] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_action_fields(self) -> "AgentAction":

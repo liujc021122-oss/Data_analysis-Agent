@@ -50,8 +50,31 @@ def run(coro):
 def test_agent_action_rejects_unknown_action_before_executor_access():
     from data_analysis_agent.agent.schemas import AgentAction
 
+    action = AgentAction(
+        action="generate_code",
+        code="x=1",
+        reasoning="compute the value",
+        next_steps=["review"],
+    )
+    assert action.reasoning == "compute the value"
+    assert action.next_steps == ["review"]
+
     with pytest.raises(ValidationError):
         AgentAction(action="future_action", code="x=1")
+    with pytest.raises(ValidationError):
+        AgentAction(action="generate_code", code="x=1", unexpected="reject")
+
+
+def test_collect_figures_requires_a_nonblank_file_path():
+    from data_analysis_agent.agent.schemas import AgentAction
+
+    with pytest.raises(ValidationError, match="file_path"):
+        AgentAction(
+            action="collect_figures",
+            figures_to_collect=[
+                {"figure_number": 1, "filename": "chart.png", "file_path": ""}
+            ],
+        )
 
 
 def test_gateway_structured_failure_propagates_without_executor_call():

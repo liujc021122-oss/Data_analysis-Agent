@@ -18,6 +18,8 @@ class AgentLLMPort:
         "code",
         "figures_to_collect",
         "final_report",
+        "reasoning",
+        "next_steps",
     }
 
     def __init__(self, helper: Any, config: LLMConfig | Any) -> None:

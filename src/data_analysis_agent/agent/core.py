@@ -19,10 +19,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
+
 from ..config.llm import LLMConfig
 from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
 from ..execution.code_executor import CodeExecutor
+from ..llm import LLMStructuredOutputError
 from ..reports.word import generate_word_report
 from ..services.llm import LLMHelper
 from ..services.errors import sanitize_exception
@@ -573,6 +576,9 @@ class DataAnalysisAgent:
                         'response': response
                     })
 
+            except (LLMStructuredOutputError, ValidationError):
+                self.cleanup_storage_outputs()
+                raise
             except Exception as e:
                 error_msg = (
                     "LLM调用错误: "
