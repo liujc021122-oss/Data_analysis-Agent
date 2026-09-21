@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+import math
 from uuid import uuid4
 
 import pytest
@@ -60,3 +62,57 @@ def test_context_requires_task_id_and_rejects_unknown_fields():
         ToolContext.model_validate({"permissions": [], "network_allowed": False})
     with pytest.raises(ValidationError):
         ToolContext(task_id=uuid4(), unexpected=True)
+
+
+def test_result_requires_completed_timing_fields():
+    with pytest.raises(ValidationError):
+        ToolCallResult(
+            call_id=uuid4(), task_id=uuid4(), tool_name="double_value",
+            status=ToolCallStatus.FAILED, output=None,
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [object(), datetime.now(timezone.utc), uuid4(), math.nan, math.inf, (1, 2), {1: "not-json"}],
+)
+def test_result_rejects_non_json_output_values(value):
+    with pytest.raises(ValidationError):
+        ToolCallResult(
+            call_id=uuid4(), task_id=uuid4(), tool_name="double_value",
+            status=ToolCallStatus.SUCCEEDED, output=value,
+            started_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 9, 21, 12, 0, 0, 1_000, tzinfo=timezone.utc),
+            duration_ms=1,
+        )
+
+
+def test_result_requires_aware_ordered_timestamps_and_nonnegative_duration():
+    common = {
+        "call_id": uuid4(), "task_id": uuid4(), "tool_name": "double_value",
+        "status": ToolCallStatus.SUCCEEDED, "output": {"doubled": 4},
+    }
+    with pytest.raises(ValidationError):
+        ToolCallResult(**common, started_at=datetime(2026, 9, 21, 12),
+                       finished_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc), duration_ms=0)
+    with pytest.raises(ValidationError):
+        ToolCallResult(**common, started_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc),
+                       finished_at=datetime(2026, 9, 21, 11, 59, tzinfo=timezone.utc), duration_ms=0)
+    with pytest.raises(ValidationError):
+        ToolCallResult(**common, started_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc),
+                       finished_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc), duration_ms=-1)
+    with pytest.raises(ValidationError):
+        ToolCallResult(**common, started_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc),
+                       finished_at=datetime(2026, 9, 21, 12, tzinfo=timezone.utc), duration_ms=math.inf)
+
+
+def test_context_metadata_is_deeply_immutable_and_detached_from_input():
+    metadata = {"audit": {"tags": ["private"], "attributes": {"path": "secret"}}}
+    context = ToolContext(task_id=uuid4(), metadata=metadata)
+
+    metadata["audit"]["tags"].append("changed")
+    assert context.metadata["audit"]["tags"] == ("private",)
+    with pytest.raises(TypeError):
+        context.metadata["audit"]["attributes"]["path"] = "changed"
+    with pytest.raises(AttributeError):
+        context.metadata["audit"]["tags"].append("changed")

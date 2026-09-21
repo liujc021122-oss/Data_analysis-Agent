@@ -1,12 +1,13 @@
 from dataclasses import dataclass
+import copy
 from datetime import datetime
 from enum import Enum
 import math
 import re
-from typing import Any
+from typing import Any, Mapping
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from data_analysis_agent.domain.enums import ToolCallStatus
 
@@ -27,12 +28,52 @@ class ToolModel(BaseModel):
         return value
 
 
+class _FrozenDict(dict[str, Any]):
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("metadata is immutable")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _immutable
+
+
+def _freeze_metadata(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _FrozenDict({key: _freeze_metadata(item) for key, item in copy.deepcopy(value).items()})
+    if isinstance(value, list):
+        return tuple(_freeze_metadata(item) for item in copy.deepcopy(value))
+    if isinstance(value, tuple):
+        return tuple(_freeze_metadata(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_metadata(item) for item in copy.deepcopy(value))
+    return copy.deepcopy(value)
+
+
+def _validate_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        raise ValueError("output must contain only finite JSON numbers")
+    if isinstance(value, list):
+        return [_validate_json_value(item) for item in value]
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise ValueError("output object keys must be strings")
+        return {key: _validate_json_value(item) for key, item in value.items()}
+    raise ValueError("output must be JSON-safe")
+
+
 class ToolContext(ToolModel):
     task_id: UUID
     user_id: UUID | None = None
     permissions: frozenset[str] = frozenset()
     network_allowed: bool = False
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _freeze_metadata(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return _freeze_metadata(value)
 
 
 @dataclass(frozen=True)
@@ -82,12 +123,30 @@ class ToolCallResult(ToolModel):
     task_id: UUID
     tool_name: str
     status: ToolCallStatus
-    output: Any = None
+    output: JsonValue | None = None
     error_code: str | None = None
     error_message: str | None = None
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    duration_ms: int | float | None = Field(default=None, ge=0)
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: int | float = Field(ge=0)
+
+    @field_validator("output", mode="before")
+    @classmethod
+    def _require_json_output(cls, value: Any) -> Any:
+        return _validate_json_value(value)
+
+    @field_validator("duration_ms")
+    @classmethod
+    def _require_finite_duration(cls, value: int | float) -> int | float:
+        if not math.isfinite(value):
+            raise ValueError("duration_ms must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def _finished_after_started(self) -> "ToolCallResult":
+        if self.finished_at < self.started_at:
+            raise ValueError("finished_at must be greater than or equal to started_at")
+        return self
 
     def to_agent_payload(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json")
