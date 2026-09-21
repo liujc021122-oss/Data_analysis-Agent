@@ -41,7 +41,9 @@ from ..datasets.errors import UploadValidationError
 from ..persistence.models import ArtifactRecord, ReportRecord
 from ..storage import ArtifactStorageService, Storage, StorageLifecycleService
 from ..storage.errors import StorageError, StorageErrorCode
+from .llm_port import AgentLLMPort
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
+from .schemas import AgentAction
 
 
 class _EphemeralArtifactRepository:
@@ -149,6 +151,7 @@ class DataAnalysisAgent:
         """
         self.config = llm_config or LLMConfig()
         self.llm = LLMHelper(self.config)
+        self.llm_port = AgentLLMPort(self.llm, self.config)
         self.base_output_dir = output_dir
         self.max_rounds = max_rounds
         self.generate_word_report = generate_word_report
@@ -180,6 +183,32 @@ class DataAnalysisAgent:
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
+
+    def _get_llm_port(self) -> AgentLLMPort:
+        port = getattr(self, "llm_port", None)
+        if port is None:
+            port = AgentLLMPort(self.llm, self.config)
+            self.llm_port = port
+        return port
+
+    def _request_structured_action(
+        self, prompt: str, system_prompt: str | None = None
+    ) -> AgentAction:
+        return self._get_llm_port().request_action(prompt, system_prompt)
+
+    @staticmethod
+    def _action_payload(action: AgentAction) -> Dict[str, Any]:
+        return action.model_dump(mode="python")
+
+    def _process_action(
+        self, action: AgentAction, response: str = ""
+    ) -> Dict[str, Any]:
+        payload = self._action_payload(action)
+        if action.action == "analysis_complete":
+            return self._handle_analysis_complete(response, payload)
+        if action.action == "collect_figures":
+            return self._handle_collect_figures(response, payload)
+        return self._handle_generate_code(response, payload)
 
     def _process_response(self, response: str) -> Dict[str, Any]:
         """
@@ -482,10 +511,11 @@ class DataAnalysisAgent:
                     notebook_variables=notebook_variables
                 )
 
-                response = self.llm.call(
+                action = self._request_structured_action(
                     prompt=self._build_conversation_prompt(),
-                    system_prompt=formatted_system_prompt
+                    system_prompt=formatted_system_prompt,
                 )
+                response = action.model_dump_json()
                 original_response = response
                 response = self._display_text(response)
 
@@ -496,9 +526,9 @@ class DataAnalysisAgent:
                 )
                 print(f"🤖 助手响应:\n{display_response}")
 
-                # 使用统一的响应处理方法
+                # Only the typed action reaches the execution handlers.
                 response = original_response
-                process_result = self._process_response(response)
+                process_result = self._process_action(action, response)
 
                 # 根据处理结果决定是否继续
                 if not process_result.get('continue', True):
@@ -769,22 +799,10 @@ class DataAnalysisAgent:
         final_report_prompt = self._build_final_report_prompt(all_figures)
 
         try:            # 调用LLM生成最终报告
-            response = self.llm.call(
+            final_report_content = self._get_llm_port().request_report(
                 prompt=final_report_prompt,
                 system_prompt="你将会接收到一个数据分析任务的最终报告请求，请根据提供的分析结果和图片信息生成完整的分析报告。",
-                max_tokens=self.config.max_tokens
             )
-
-            # 解析响应，提取最终报告
-            try:
-                yaml_data = self.llm.parse_yaml_response(response)
-                if yaml_data.get('action') == 'analysis_complete':
-                    final_report_content = yaml_data.get('final_report', '报告生成失败')
-                else:
-                    final_report_content = "LLM未返回analysis_complete动作，报告生成失败"
-            except:
-                # 如果解析失败，直接使用响应内容
-                final_report_content = response
 
             print("✅ 最终报告生成完成")
 
