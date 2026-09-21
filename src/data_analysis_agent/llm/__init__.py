@@ -23,6 +23,8 @@ from .models import (
     StructuredOutputRequest,
     StructuredOutputResponse,
 )
+from .openai_compatible import OpenAICompatibleProvider
+from .provider import LLMProvider
 
 __all__ = [
     "ChatMessage",
@@ -33,6 +35,8 @@ __all__ = [
     "ProviderChunk",
     "ProviderResponse",
     "ProviderUsage",
+    "LLMProvider",
+    "OpenAICompatibleProvider",
     "StructuredOutputRequest",
     "StructuredOutputResponse",
     "LLMAuthenticationError",
