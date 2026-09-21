@@ -154,12 +154,12 @@ Expected: PASS, with no warning containing an API key or model secret.
 
 **Interfaces:**
 - Produces LLMProvider Protocol with async chat(request), async stream(request), and async close().
-- Produces OpenAICompatibleProvider(config, client_factory: Callable[[str, str, float], Any] | None = None) with no fallback client and no retry loop; the factory receives api_key, base_url, and timeout_seconds.
+- Produces OpenAICompatibleProvider(config, client_factory: Callable[..., Any] | None = None) with no fallback client and no retry loop; the factory receives keyword arguments api_key, base_url, and timeout.
 - Provider methods return normalized ProviderResponse/ProviderChunk and never expose OpenAI SDK response types.
 
 - [ ] Step 1: Write failing provider mapping tests
 
-Create a FakeClient whose chat.completions.create records keyword arguments and returns a normalized-looking object with id, model, choices, and usage. Instantiate OpenAICompatibleProvider with an offline LLMConfig and client_factory=lambda **kwargs: fake_client. Assert that chat maps model, messages, temperature, max_tokens, text, finish_reason, and the three usage counts. Assert that calling close twice closes the client once and does not raise.
+Create a FakeClient whose chat.completions.create records keyword arguments and returns a normalized-looking object with id, model, choices, and usage. Instantiate OpenAICompatibleProvider with an offline LLMConfig and client_factory=lambda **kwargs: fake_client. Assert that the factory receives api_key, base_url, and timeout keyword arguments; chat maps model, messages, temperature, max_tokens, text, finish_reason, and the three usage counts. Assert that calling close twice closes the client once and does not raise.
 
 - [ ] Step 2: Run provider tests and verify RED
 
@@ -265,7 +265,7 @@ Expected: PASS.
 
 - [ ] Step 1: Write failing structured-output tests
 
-Define a Pydantic Action model with extra="forbid", action: str, and optional code. Use a FakeProvider returning first invalid JSON and then valid JSON. Assert a valid JSON response returns an Action instance. Assert the second provider request contains a schema correction message. Assert two invalid outputs raise LLMStructuredOutputError and no typed executable value is returned.
+Define a Pydantic Action model with extra="forbid", action: str, and optional code. Use a FakeProvider returning first JSON with a non-string action value and then valid JSON. Assert a valid JSON response returns an Action instance. Assert the second provider request contains a schema correction message. Assert two invalid outputs (first malformed JSON, then malformed JSON again) raise LLMStructuredOutputError and no typed executable value is returned.
 
 - [ ] Step 2: Run structured tests and verify RED
 
@@ -407,7 +407,7 @@ Expected: PASS. Existing FakeLLM YAML tests exercise only the explicit compatibi
 
 - [ ] Step 1: Write failing public API and cleanup tests
 
-Create tests/llm/test_public_api.py and assert data_analysis_agent.LLMClient is the canonical llm.LLMClient and data_analysis_agent.LLMConfigurationError is the canonical error. Add a helper close test that calls close twice on an injected close spy without raising.
+Create tests/llm/test_public_api.py and assert data_analysis_agent.LLMClient is the canonical llm.LLMClient and data_analysis_agent.LLMConfigurationError is the canonical error. Add an async helper close test that awaits close twice on an injected async close spy without raising.
 
 - [ ] Step 2: Run public API tests and verify RED
 
