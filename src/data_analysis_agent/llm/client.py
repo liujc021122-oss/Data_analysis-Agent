@@ -269,7 +269,10 @@ class LLMClient:
             attempt_count=attempts,
             started_at=started_at,
             finished_at=finished,
-            duration_ms=max(0.0, (self._clock() - started) * 1000),
+            # A started provider call must remain observably measurable even
+            # on platforms whose monotonic clock has coarse millisecond
+            # resolution.  The floor is still below one real millisecond.
+            duration_ms=max(0.001, (self._clock() - started) * 1000),
             usage=final_usage,
             estimated_cost_usd=cost,
             request_id=request_id,
