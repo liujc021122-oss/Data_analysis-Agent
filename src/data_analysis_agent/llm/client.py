@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
@@ -46,7 +46,7 @@ class LLMClient:
         jitter: Callable[[], float] | None = None,
     ) -> None:
         self.config = config
-        self.provider = provider or OpenAICompatibleProvider(config)
+        self.provider = provider
         self.recorder = recorder
         self._sleep = sleep or asyncio.sleep
         self._clock = clock or time.monotonic
@@ -55,6 +55,8 @@ class LLMClient:
 
     async def achat(self, request: ChatRequest) -> LLMResponse:
         self._ensure_ready()
+        if self.provider is None:
+            self.provider = OpenAICompatibleProvider(self.config)
         model = request.model.strip() if request.model and request.model.strip() else self.config.model
         effective_request = request.model_copy(update={"model": model})
         call_id = uuid4()
@@ -62,7 +64,7 @@ class LLMClient:
         started_at = datetime.now(timezone.utc)
         attempts = 0
         last_response: ProviderResponse | None = None
-        last_error: BaseException | None = None
+        last_error: Exception | None = None
 
         for attempt in range(1, self.config.max_attempts + 1):
             attempts = attempt
@@ -100,15 +102,15 @@ class LLMClient:
                 )
                 self._record(metrics)
                 return result
-            except BaseException as error:
-                if isinstance(error, (LLMEmptyResponseError, asyncio.CancelledError)):
+            except Exception as error:
+                if isinstance(error, LLMEmptyResponseError):
                     raise
                 last_error = error
-                mapped = self._map_error(error, model, attempts)
+                mapped = self._map_error(error, model, attempts, self.config.provider)
                 if not self._is_retryable(error, mapped) or attempt >= self.config.max_attempts:
                     metrics = self._metrics(
                         call_id, started, started_at, attempts,
-                        self._error_provider(error), model,
+                        mapped.provider or self.config.provider, model,
                         getattr(last_response, "usage", None),
                         getattr(last_response, "request_id", None),
                         effective_request, None,
@@ -124,7 +126,12 @@ class LLMClient:
                 if inspect.isawaitable(result):
                     await result
 
-        raise self._map_error(last_error or RuntimeError("provider call failed"), model, attempts)
+        raise self._map_error(
+            last_error or RuntimeError("provider call failed"),
+            model,
+            attempts,
+            self.config.provider,
+        )
 
     def chat(self, request: ChatRequest) -> LLMResponse:
         return asyncio.run(self.achat(request))
@@ -132,7 +139,8 @@ class LLMClient:
     async def aclose(self) -> None:
         if not self._closed:
             self._closed = True
-            await self.provider.close()
+            if self.provider is not None:
+                await self.provider.close()
 
     def close(self) -> None:
         asyncio.run(self.aclose())
@@ -188,7 +196,7 @@ class LLMClient:
         price = self.config.model_prices.get(model)
         if price is None or usage is None:
             return None
-        if isinstance(price, dict):
+        if isinstance(price, Mapping):
             input_price = price.get("input", price.get("input_tokens", 0))
             output_price = price.get("output", price.get("output_tokens", 0))
         else:
@@ -196,25 +204,42 @@ class LLMClient:
         return ((usage.input_tokens or 0) * input_price + (usage.output_tokens or 0) * output_price) / 1_000_000
 
     @staticmethod
-    def _error_provider(error: BaseException) -> str:
+    def _error_provider(error: Exception) -> str:
         return getattr(error, "provider", None) or "unknown"
 
     @staticmethod
-    def _is_retryable(original: BaseException, mapped: LLMError) -> bool:
+    def _is_retryable(original: Exception, mapped: LLMError) -> bool:
+        status = getattr(original, "status_code", None) or getattr(
+            getattr(original, "response", None), "status_code", None
+        )
         return (
             isinstance(original, (asyncio.TimeoutError, TimeoutError, APIConnectionError, APITimeoutError, RateLimitError))
-            or (isinstance(original, APIStatusError) and 500 <= getattr(original, "status_code", 0) < 600)
+            or (isinstance(original, APIStatusError) and status is not None and 500 <= status < 600)
             or mapped.retryable
         )
 
     @staticmethod
-    def _map_error(error: BaseException, model: str, attempts: int) -> LLMError:
+    def _map_error(
+        error: Exception, model: str, attempts: int, provider: str
+    ) -> LLMError:
         if isinstance(error, LLMError):
-            error.attempts = attempts
-            if not error.model:
-                error.model = model
-            return error
-        kwargs = {"model": model, "attempts": attempts}
+            error_type = type(error)
+            return error_type(
+                f"LLM {error.code.replace('_', ' ')}",
+                provider=error.provider or provider,
+                model=error.model or model,
+                status_code=error.status_code,
+                attempts=attempts,
+                retryable=error.retryable,
+            )
+        response = getattr(error, "response", None)
+        status_code = getattr(error, "status_code", None) or getattr(response, "status_code", None)
+        kwargs = {
+            "provider": provider,
+            "model": model,
+            "status_code": status_code,
+            "attempts": attempts,
+        }
         if isinstance(error, (asyncio.TimeoutError, TimeoutError, APITimeoutError)):
             return LLMTimeoutError("LLM request timed out", **kwargs)
         if isinstance(error, (APIConnectionError,)):
@@ -226,9 +251,8 @@ class LLMClient:
         if isinstance(error, BadRequestError):
             return LLMRequestError("LLM request was rejected", **kwargs)
         if isinstance(error, APIStatusError):
-            status = getattr(error, "status_code", None)
-            cls = LLMProviderError if status and status >= 500 else LLMRequestError
-            return cls("LLM provider error", status_code=status, **kwargs)
+            cls = LLMProviderError if status_code and status_code >= 500 else LLMRequestError
+            return cls("LLM provider error", **kwargs)
         return LLMProviderError("LLM provider error", **kwargs)
 
 

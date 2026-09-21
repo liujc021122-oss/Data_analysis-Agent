@@ -1,6 +1,8 @@
 import asyncio
 from dataclasses import dataclass
+from collections.abc import Mapping
 
+import httpx
 import pytest
 
 from data_analysis_agent.config.llm import LLMConfig
@@ -9,8 +11,10 @@ from data_analysis_agent.llm.errors import (
     LLMAuthenticationError,
     LLMClosedError,
     LLMConfigurationError,
+    LLMEmptyResponseError,
     LLMRateLimitError,
     LLMRequestError,
+    LLMTimeoutError,
 )
 from data_analysis_agent.llm.models import (
     ChatMessage,
@@ -18,6 +22,7 @@ from data_analysis_agent.llm.models import (
     ProviderResponse,
     ProviderUsage,
 )
+from openai import AuthenticationError, BadRequestError, RateLimitError
 
 
 @dataclass
@@ -107,6 +112,13 @@ def test_missing_key_does_not_call_provider_or_recorder():
     assert recorder.items == []
 
 
+def test_missing_key_without_injected_provider_is_configuration_error():
+    client = LLMClient(LLMConfig(api_key=None))
+
+    with pytest.raises(LLMConfigurationError, match="OPENAI_API_KEY"):
+        run(client.achat(request()))
+
+
 def test_rate_limit_retries_and_override_model_reaches_provider():
     provider = FakeProvider(
         [
@@ -167,13 +179,111 @@ def test_usage_and_estimated_cost_are_recorded():
         ]
     )
     client = LLMClient(
-        LLMConfig(api_key="key", model_prices={"chat": {"input": 2, "output": 4}}),
+        LLMConfig(
+            api_key="key",
+            model_prices=MappingProxyPrices({"chat": {"input": 2, "output": 4}}),
+        ),
         provider=provider,
         recorder=recorder,
     )
     response = run(client.achat(request()))
     assert response.metrics.usage.estimated is False
     assert response.metrics.estimated_cost_usd == pytest.approx(0.00004)
+
+
+class MappingProxyPrices(Mapping):
+    def __init__(self, values):
+        self.values = values
+
+    def __getitem__(self, key):
+        return self.values[key]
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def __len__(self):
+        return len(self.values)
+
+
+@pytest.mark.parametrize(
+    "error_type,expected_type,status",
+    [
+        (AuthenticationError, LLMAuthenticationError, 401),
+        (RateLimitError, LLMRateLimitError, 429),
+        (BadRequestError, LLMRequestError, 400),
+    ],
+)
+def test_openai_error_mapping_preserves_metadata_and_redacts_message(
+    error_type, expected_type, status
+):
+    secret = "super-secret"
+    prompt = "private prompt"
+    response = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://example.invalid"),
+    )
+    provider_error = error_type(f"raw {secret} {prompt}", response=response, body={"error": "raw"})
+    client = LLMClient(
+        LLMConfig(api_key=secret, max_attempts=1), provider=FakeProvider([provider_error])
+    )
+
+    with pytest.raises(expected_type) as raised:
+        run(client.achat(ChatRequest(messages=(ChatMessage(role="user", content=prompt),))))
+
+    assert secret not in str(raised.value)
+    assert prompt not in str(raised.value)
+    assert raised.value.status_code == status
+    assert raised.value.provider == "deepseek"
+
+
+def test_provider_supplied_llm_error_is_redacted_and_metadata_preserved():
+    secret = "super-secret"
+    prompt = "private prompt"
+    provider_error = LLMRequestError(
+        f"raw {secret} {prompt}", provider="fake-provider", status_code=422, retryable=False
+    )
+    client = LLMClient(LLMConfig(api_key=secret), provider=FakeProvider([provider_error]))
+
+    with pytest.raises(LLMRequestError) as raised:
+        run(client.achat(ChatRequest(messages=(ChatMessage(role="user", content=prompt),))))
+
+    assert secret not in str(raised.value)
+    assert prompt not in str(raised.value)
+    assert raised.value.provider == "fake-provider"
+    assert raised.value.status_code == 422
+
+
+def test_real_wait_for_timeout_records_final_failure_metrics():
+    async def never_returns(_request):
+        await asyncio.sleep(0.05)
+
+    provider = FakeProvider([])
+    provider.chat = never_returns
+    recorder = Recorder()
+    client = LLMClient(
+        LLMConfig(api_key="key", timeout_seconds=0.001, max_attempts=1),
+        provider=provider,
+        recorder=recorder,
+    )
+
+    with pytest.raises(LLMTimeoutError):
+        run(client.achat(request()))
+
+    assert len(recorder.items) == 1
+    assert recorder.items[0].attempt_count == 1
+    assert recorder.items[0].duration_ms > 0
+
+
+def test_empty_response_records_metrics_before_raising():
+    recorder = Recorder()
+    provider = FakeProvider([ProviderResponse(text="", provider="fake", model="chat")])
+    client = LLMClient(LLMConfig(api_key="key"), provider=provider, recorder=recorder)
+
+    with pytest.raises(LLMEmptyResponseError):
+        run(client.achat(request()))
+
+    assert len(recorder.items) == 1
+    assert recorder.items[0].attempt_count == 1
 
 
 def test_missing_usage_is_estimated_from_request_and_response_text():
