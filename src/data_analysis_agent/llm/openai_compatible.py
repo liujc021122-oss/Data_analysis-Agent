@@ -44,12 +44,13 @@ class OpenAICompatibleProvider:
             **self._request_payload(request, model, stream=True)
         )
         async for chunk in response:
-            choice = chunk.choices[0]
+            choices = getattr(chunk, "choices", ()) or ()
+            choice = choices[0] if choices else None
             yield ProviderChunk(
-                text=getattr(choice.delta, "content", None),
+                text=(getattr(choice.delta, "content", None) if choice else None),
                 provider=self.config.provider,
                 model=getattr(chunk, "model", None) or model,
-                finish_reason=getattr(choice, "finish_reason", None),
+                finish_reason=(getattr(choice, "finish_reason", None) if choice else None),
                 request_id=getattr(chunk, "id", None),
                 usage=self._map_usage(getattr(chunk, "usage", None)),
             )

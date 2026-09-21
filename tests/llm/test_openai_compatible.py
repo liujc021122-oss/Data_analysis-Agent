@@ -188,3 +188,29 @@ async def _test_stream_maps_chunks_in_order_without_network_calls():
     assert result[1].model == "stream-model"
     assert result[1].usage.total_tokens == 4
     assert client.chat.completions.calls[0]["stream"] is True
+
+
+def test_stream_maps_usage_only_final_chunk_without_choices():
+    asyncio.run(_test_stream_maps_usage_only_final_chunk_without_choices())
+
+
+async def _test_stream_maps_usage_only_final_chunk_without_choices():
+    usage = SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5)
+    chunks = [
+        SimpleNamespace(
+            id="stream-2",
+            model="stream-model",
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"), finish_reason=None)],
+            usage=None,
+        ),
+        SimpleNamespace(id="stream-2", model="stream-model", choices=[], usage=usage),
+    ]
+    client = FakeClient(chunks=chunks)
+    provider = OpenAICompatibleProvider(
+        LLMConfig(api_key="secret", model="stream-model"), client_factory=lambda **_: client
+    )
+
+    result = [chunk async for chunk in provider.stream(ChatRequest(messages=(message("user", "hi"),)))]
+
+    assert result[-1].text is None
+    assert result[-1].usage.total_tokens == 5

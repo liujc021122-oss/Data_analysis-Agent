@@ -3,7 +3,7 @@ import inspect
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
@@ -33,6 +33,7 @@ from .models import (
     ChatRequest,
     LLMCallMetrics,
     LLMResponse,
+    LLMStreamEvent,
     ProviderResponse,
     ProviderUsage,
     StructuredOutputRequest,
@@ -150,6 +151,115 @@ class LLMClient:
 
     def chat(self, request: ChatRequest) -> LLMResponse:
         return asyncio.run(self.achat(request))
+
+    async def astream(self, request: ChatRequest) -> AsyncIterator[LLMStreamEvent]:
+        self._ensure_ready()
+        if self.provider is None:
+            self.provider = OpenAICompatibleProvider(self.config)
+        model = request.model.strip() if request.model and request.model.strip() else self.config.model
+        effective_request = request.model_copy(update={"model": model})
+        call_id = uuid4()
+        started = self._clock()
+        started_at = datetime.now(timezone.utc)
+        attempts = 0
+        delivered = False
+        text_parts: list[str] = []
+        usage: ProviderUsage | None = None
+        provider_name = self.config.provider
+        response_model = model
+        request_id: str | None = None
+
+        while attempts < self.config.max_attempts:
+            attempts += 1
+            stream = None
+            try:
+                stream = self.provider.stream(effective_request)
+                if inspect.isawaitable(stream):
+                    stream = await asyncio.wait_for(
+                        stream, timeout=self.config.timeout_seconds
+                    )
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            stream.__anext__(), timeout=self.config.timeout_seconds
+                        )
+                    except StopAsyncIteration:
+                        break
+                    provider_name = chunk.provider or provider_name
+                    response_model = chunk.model or response_model
+                    request_id = chunk.request_id or request_id
+                    if chunk.usage is not None:
+                        usage = chunk.usage
+                    if chunk.text and chunk.text.strip():
+                        text_parts.append(chunk.text)
+                        delivered = True
+                        yield LLMStreamEvent(kind="chunk", text=chunk.text)
+
+                metrics = self._metrics(
+                    call_id,
+                    started,
+                    started_at,
+                    attempts,
+                    provider_name,
+                    response_model,
+                    usage,
+                    request_id,
+                    effective_request,
+                    "".join(text_parts) or None,
+                )
+                self._record(metrics)
+                yield LLMStreamEvent(kind="completed", metrics=metrics)
+                return
+            except Exception as error:
+                if stream is not None:
+                    close_stream = getattr(stream, "aclose", None)
+                    if close_stream is not None:
+                        try:
+                            await close_stream()
+                        except Exception:
+                            pass
+                mapped = self._map_error(error, response_model, attempts, provider_name)
+                if delivered or not self._is_retryable(error, mapped) or attempts >= self.config.max_attempts:
+                    metrics = self._metrics(
+                        call_id,
+                        started,
+                        started_at,
+                        attempts,
+                        mapped.provider or provider_name,
+                        mapped.model or response_model,
+                        usage,
+                        request_id,
+                        effective_request,
+                        "".join(text_parts) or None,
+                    )
+                    self._record(metrics)
+                    raise mapped from None
+                delay = min(
+                    self.config.backoff_max_seconds,
+                    self.config.backoff_base_seconds * (2 ** (attempts - 1)),
+                )
+                delay = min(self.config.backoff_max_seconds, delay + max(0.0, self._jitter()))
+                result = self._sleep(delay)
+                if inspect.isawaitable(result):
+                    await result
+                usage = None
+                provider_name = self.config.provider
+                response_model = model
+                request_id = None
+
+    def stream(self, request: ChatRequest) -> Iterator[LLMStreamEvent]:
+        loop = asyncio.new_event_loop()
+        events = self.astream(request)
+        try:
+            while True:
+                try:
+                    yield loop.run_until_complete(events.__anext__())
+                except StopAsyncIteration:
+                    return
+        finally:
+            loop.run_until_complete(events.aclose())
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
 
     async def astructured_output(
         self, request: StructuredOutputRequest
