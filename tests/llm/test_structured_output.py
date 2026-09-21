@@ -8,6 +8,7 @@ from data_analysis_agent.config.llm import LLMConfig
 from data_analysis_agent.llm import (
     ChatMessage,
     LLMClient,
+    LLMAuthenticationError,
     LLMError,
     LLMStructuredOutputError,
     ProviderResponse,
@@ -29,7 +30,10 @@ class FakeProvider:
 
     async def chat(self, request):
         self.calls.append(request)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
     async def close(self):
         return None
@@ -106,6 +110,18 @@ def test_second_invalid_response_raises_without_returning_typed_value():
 
     assert exc_info.value.attempts == 2
     assert len(provider.calls) == 2
+
+
+def test_correction_gateway_error_preserves_original_error_class():
+    provider = FakeProvider(
+        [
+            ProviderResponse(text="not json", provider="fake", model="chat"),
+            LLMAuthenticationError("authentication failed"),
+        ]
+    )
+
+    with pytest.raises(LLMAuthenticationError):
+        run(make_client(provider).astructured_output(make_request()))
 
 
 def test_raw_json_schema_validation_returns_json_value():

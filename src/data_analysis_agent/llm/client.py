@@ -176,8 +176,11 @@ class LLMClient:
         )
         try:
             corrected = await self.achat(correction_request)
+        except LLMError:
+            raise
+        try:
             value = self._validate_structured_text(corrected.text, request, schema)
-        except Exception:
+        except (ValueError, TypeError, ValidationError, JsonSchemaValidationError):
             raise LLMStructuredOutputError(
                 "structured output validation failed after correction",
                 provider=response.provider,
