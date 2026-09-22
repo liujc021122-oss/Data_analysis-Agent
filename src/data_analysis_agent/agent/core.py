@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from ..config.llm import LLMConfig
 from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
+from ..domain.enums import TaskStatus
 from ..execution.code_executor import CodeExecutor
 from ..llm import LLMStructuredOutputError
 from ..reports.word import generate_word_report
@@ -46,10 +47,13 @@ from ..datasets.errors import UploadValidationError
 from ..persistence.models import ArtifactRecord, ReportRecord
 from ..storage import ArtifactStorageService, Storage, StorageLifecycleService
 from ..storage.errors import StorageError, StorageErrorCode
-from .llm_port import AgentLLMPort
-from .prompts import data_analysis_system_prompt, final_report_system_prompt
-from .schemas import AgentAction
 from ..tools import ToolCallRequest, ToolCallResult, ToolContext, ToolExecutor, ToolRegistry
+from .llm_port import AgentLLMPort
+from .legacy_adapter import LegacyAnalysisAdapter
+from .orchestration_errors import AgentOrchestrationError
+from .orchestrator import AgentOrchestrator
+from .prompts import final_report_system_prompt
+from .schemas import AgentAction
 
 
 class _EphemeralArtifactRepository:
@@ -205,6 +209,7 @@ class DataAnalysisAgent:
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
+        self.orchestrator = None
 
     def execute_tool(
         self,
@@ -585,106 +590,30 @@ class DataAnalysisAgent:
             'content': initial_prompt
         })
 
-        while self.current_round < self.max_rounds:
-            self.current_round += 1
-            print(f"\n🔄 第 {self.current_round} 轮分析")
-              # 调用LLM生成响应
-            try:                # 获取当前执行环境的变量信息
-                notebook_variables = self.executor.get_environment_info()
-
-                # 格式化系统提示词，填入动态的notebook变量信息
-                formatted_system_prompt = data_analysis_system_prompt.format(
-                    notebook_variables=notebook_variables
-                )
-
-                action = self._request_structured_action(
-                    prompt=self._build_conversation_prompt(),
-                    system_prompt=formatted_system_prompt,
-                )
-                response = action.model_dump_json()
-                original_response = response
-                response = self._display_text(response)
-
-                display_response = (
-                    response
-                    if getattr(self, "storage", None) is None
-                    else "[model response redacted in storage mode]"
-                )
-                print(f"🤖 助手响应:\n{display_response}")
-
-                # Only the typed action reaches the execution handlers.
-                response = original_response
-                process_result = self._process_action(action, response)
-
-                # 根据处理结果决定是否继续
-                if not process_result.get('continue', True):
-                    print(f"\n✅ 分析完成！")
-                    break
-
-                # 添加到对话历史
-                self.conversation_history.append({
-                    'role': 'assistant',
-                    'content': response
-                })
-
-                # 根据动作类型添加不同的反馈
-                if process_result['action'] == 'generate_code':
-                    feedback = process_result.get('feedback', '')
-                    self.conversation_history.append({
-                        'role': 'user',
-                        'content': f"代码执行反馈:\n{feedback}"
-                    })
-
-                    # 记录分析结果
-                    self.analysis_results.append({
-                        'round': self.current_round,
-                        'code': process_result.get('code', ''),
-                        'result': process_result.get('result', {}),
-                        'response': response
-                    })
-                elif process_result['action'] == 'collect_figures':
-                    # 记录图片收集结果
-                    collected_figures = process_result.get('collected_figures', [])
-                    feedback = f"已收集 {len(collected_figures)} 个图片及其分析"
-                    self.conversation_history.append({
-                        'role': 'user',
-                        'content': f"图片收集反馈:\n{feedback}\n请继续下一步分析。"
-                    })
-
-                    # 记录到分析结果中
-                    self.analysis_results.append({
-                        'round': self.current_round,
-                        'action': 'collect_figures',
-                        'collected_figures': collected_figures,
-                        'response': response
-                    })
-
-            except (LLMStructuredOutputError, ValidationError):
-                self.cleanup_storage_outputs()
-                raise
-            except Exception as e:
-                error_msg = (
-                    "LLM调用错误: "
-                    + sanitize_exception(
-                        e,
-                        secrets=(self.config.api_key, self.config.base_url),
-                        include_message=False,
-                    )
-                )
-                print(f"❌ {error_msg}")
-                self.conversation_history.append({
-                    'role': 'user',
-                    'content': f"发生错误: {error_msg}，请重新生成代码。"
-                })
-        # 生成最终总结
-        if self.current_round >= self.max_rounds:
-            print(f"\n⚠️ 已达到最大轮数 ({self.max_rounds})，分析结束")
-
-        try:
-            return self._generate_final_report()
-        except Exception:
+        adapter = LegacyAnalysisAdapter(
+            agent=self,
+            user_input=user_input,
+            dataset_context=dataset_context,
+            max_rounds=self.max_rounds,
+        )
+        self.orchestrator = AgentOrchestrator(
+            task=adapter.task,
+            handlers=adapter.handlers(),
+            limits=adapter.limits,
+            tool_executor=self.tool_executor,
+            tool_context_factory=lambda task_id: ToolContext(
+                task_id=task_id,
+                user_id=self.dataset_owner_id,
+            ),
+        )
+        orchestration_result = self.orchestrator.run()
+        if orchestration_result.status is not TaskStatus.COMPLETED:
             self.cleanup_storage_outputs()
-            raise
+            raise AgentOrchestrationError(
+                orchestration_result.error_message or "analysis orchestration failed",
+                cause_code=orchestration_result.error_code or "ORCHESTRATOR_FAILED",
+            )
+        return adapter.to_legacy_result(orchestration_result)
 
     def cleanup_storage_outputs(self) -> None:
         """Remove storage-backed artifacts and the private staging directory."""
