@@ -11,6 +11,7 @@ from .errors import (
     UnknownToolError,
 )
 from .audit import InMemoryToolCallRecorder, ToolAuditRecord, ToolCallRecorder
+from .executor import ToolExecutor
 from .models import (
     ToolCallRequest,
     ToolCallResult,
@@ -42,4 +43,5 @@ __all__ = [
     "ToolAuditRecord",
     "ToolCallRecorder",
     "InMemoryToolCallRecorder",
+    "ToolExecutor",
 ]
