@@ -211,6 +211,13 @@ def test_rejected_model_call_count_does_not_spend_budget():
     assert result.status is TaskStatus.FAILED
     assert result.error_code == "ORCHESTRATOR_MAX_MODEL_CALLS"
     assert result.checkpoint.task.model_call_count == 0
+    error_event = next(event for event in result.state.events if event.event_type is TaskEventType.ERROR)
+    assert dict(error_event.metadata) == {
+        "stage": "RUNNING",
+        "step_number": 0,
+        "attempt": 0,
+        "cause_code": "ORCHESTRATOR_MAX_MODEL_CALLS",
+    }
 
 
 def test_checkpoint_records_elapsed_handler_runtime(monkeypatch):

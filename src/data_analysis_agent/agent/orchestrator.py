@@ -150,6 +150,12 @@ class AgentOrchestrator:
                 )
             self._refresh_runtime()
             if result.model_calls > remaining_model_calls:
+                self._append_error_event(
+                    stage,
+                    step_number=self._step_number,
+                    attempt=attempt,
+                    cause_code="ORCHESTRATOR_MAX_MODEL_CALLS",
+                )
                 self._step_number += 1
                 return self._terminal_failure(
                     "ORCHESTRATOR_MAX_MODEL_CALLS",
