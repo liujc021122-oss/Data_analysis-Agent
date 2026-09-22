@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-pytest_plugins = ("tests.database.conftest",)
+from tests.database.conftest import uow_factory
 
 from data_analysis_agent.domain.enums import ToolCallStatus
 from data_analysis_agent.domain.models import AnalysisTask
