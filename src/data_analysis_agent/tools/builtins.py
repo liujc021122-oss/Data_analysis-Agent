@@ -4,7 +4,7 @@ import math
 from typing import Any, Mapping
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, field_validator, model_validator
 
 from data_analysis_agent.datasets.models import DatasetProfile
 from data_analysis_agent.domain.models import ExecutionResult
@@ -90,6 +90,32 @@ class ValidateMetricOutput(BaseModel):
     value: StrictFloat
     unit: StrictStr | None = None
     reason: StrictStr | None = None
+
+
+class ChartArtifactOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: UUID
+    filename: StrictStr = Field(min_length=1)
+    file_path: StrictStr = Field(min_length=1)
+    mime_type: StrictStr = Field(min_length=1)
+    size_bytes: StrictInt = Field(ge=0)
+    content_hash: StrictStr | None = None
+    title: StrictStr | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportArtifactOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: UUID
+    filename: StrictStr = Field(min_length=1)
+    file_path: StrictStr = Field(min_length=1)
+    format: StrictStr = Field(min_length=1)
+    size_bytes: StrictInt = Field(ge=0)
+    content_hash: StrictStr | None = None
+    title: StrictStr | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class _MappingOutput(BaseModel):
@@ -230,7 +256,7 @@ def build_builtin_registry(
 ) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
-        _definition("generate_report", "Generate a report artifact.", GenerateReportInput, _MappingOutput, side_effect=True),
+        _definition("generate_report", "Generate a report artifact.", GenerateReportInput, ReportArtifactOutput, side_effect=True),
         lambda value, context: _report_handler(report_generator, value, context),
     )
     registry.register(
@@ -258,7 +284,7 @@ def build_builtin_registry(
         lambda value, context: _sql_handler(sql_runner, value, context),
     )
     registry.register(
-        _definition("save_chart", "Save a chart artifact.", SaveChartInput, _MappingOutput, side_effect=True),
+        _definition("save_chart", "Save a chart artifact.", SaveChartInput, ChartArtifactOutput, side_effect=True),
         lambda value, context: _chart_handler(chart_saver, value, context),
     )
     registry.register(
@@ -276,6 +302,8 @@ __all__ = [
     "RunPythonAnalysisInput",
     "SaveChartInput",
     "GenerateReportInput",
+    "ChartArtifactOutput",
+    "ReportArtifactOutput",
     "ValidateMetricInput",
     "ValidateMetricOutput",
     "build_builtin_registry",

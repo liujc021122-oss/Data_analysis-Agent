@@ -150,6 +150,96 @@ def test_missing_dependencies_fail_only_when_the_affected_handler_is_called():
         )
 
 
+def test_chart_and_report_outputs_are_typed_and_strict():
+    registry = build_builtin_registry(
+        chart_saver=lambda task_id, filename, content, mime_type, title: {
+            "artifact_id": uuid4(),
+            "filename": filename,
+            "file_path": f"artifacts/{filename}",
+            "mime_type": mime_type,
+            "size_bytes": len(content),
+            "content_hash": "sha256:chart",
+            "title": title,
+            "metadata": {"task_id": str(task_id)},
+        },
+        report_generator=lambda task_id, filename, content, report_format, title: {
+            "artifact_id": uuid4(),
+            "filename": filename,
+            "file_path": f"artifacts/{filename}",
+            "format": report_format,
+            "size_bytes": len(content),
+            "content_hash": "sha256:report",
+            "title": title,
+            "metadata": {"task_id": str(task_id)},
+        },
+    )
+    chart_definition = registry.get("save_chart").definition
+    report_definition = registry.get("generate_report").definition
+
+    assert chart_definition.output_model.model_config["extra"] == "forbid"
+    assert report_definition.output_model.model_config["extra"] == "forbid"
+    assert {"artifact_id", "filename", "file_path", "mime_type", "size_bytes"}.issubset(
+        chart_definition.output_model.model_fields
+    )
+    assert {"artifact_id", "filename", "file_path", "format", "size_bytes"}.issubset(
+        report_definition.output_model.model_fields
+    )
+
+    task_id = uuid4()
+    context = ToolContext(task_id=task_id)
+    chart = registry.get("save_chart").handler(
+        SaveChartInput(filename="chart.png", content="encoded", mime_type="image/png"),
+        context,
+    )
+    report = registry.get("generate_report").handler(
+        GenerateReportInput(
+            filename="report.md",
+            content="# Report",
+            mime_type="text/markdown",
+            format="MARKDOWN",
+        ),
+        context,
+    )
+
+    assert chart_definition.output_model.model_validate(chart).size_bytes == len("encoded")
+    assert report_definition.output_model.model_validate(report).format == "MARKDOWN"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "callback"),
+    [
+        (
+            "save_chart",
+            {"filename": "chart.png", "content": "encoded", "mime_type": "image/png"},
+            lambda *_: {"artifact_id": uuid4()},
+        ),
+        (
+            "generate_report",
+            {
+                "filename": "report.md",
+                "content": "# Report",
+                "mime_type": "text/markdown",
+                "format": "MARKDOWN",
+            },
+            lambda *_: {"artifact_id": uuid4(), "filename": "report.md", "unexpected": True},
+        ),
+    ],
+)
+def test_executor_rejects_invalid_artifact_outputs(tool_name, arguments, callback):
+    registry = build_builtin_registry(
+        chart_saver=callback if tool_name == "save_chart" else None,
+        report_generator=callback if tool_name == "generate_report" else None,
+    )
+    task_id = uuid4()
+    result = ToolExecutor(registry).execute(
+        ToolCallRequest(task_id=task_id, tool_name=tool_name, arguments=arguments),
+        ToolContext(task_id=task_id),
+    )
+
+    assert result.status is ToolCallStatus.FAILED
+    assert result.error_code == "TOOL_OUTPUT_INVALID"
+
+
 def test_executor_rejects_model_provided_source_path_before_handler_call():
     seen = []
     registry = build_builtin_registry()
