@@ -8,9 +8,15 @@ from .errors import (
     ToolOutputValidationError,
     ToolPermissionError,
     ToolTimeoutError,
+    ToolAuditError,
     UnknownToolError,
 )
-from .audit import InMemoryToolCallRecorder, ToolAuditRecord, ToolCallRecorder
+from .audit import (
+    InMemoryToolCallRecorder,
+    RepositoryToolCallRecorder,
+    ToolAuditRecord,
+    ToolCallRecorder,
+)
 from .executor import ToolExecutor
 from .models import (
     ToolCallRequest,
@@ -40,8 +46,10 @@ __all__ = [
     "ToolTimeoutError",
     "ToolDependencyError",
     "ToolExecutionError",
+    "ToolAuditError",
     "ToolAuditRecord",
     "ToolCallRecorder",
     "InMemoryToolCallRecorder",
+    "RepositoryToolCallRecorder",
     "ToolExecutor",
 ]

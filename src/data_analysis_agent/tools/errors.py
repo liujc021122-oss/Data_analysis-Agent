@@ -14,6 +14,7 @@ class ToolError(Exception):
         "TOOL_TIMEOUT": "Tool execution timed out",
         "TOOL_DEPENDENCY_FAILED": "Tool dependency failed",
         "TOOL_EXECUTION_FAILED": "Tool execution failed",
+        "TOOL_AUDIT_PERSISTENCE_FAILED": "Tool audit persistence failed",
     }
 
     def __init__(self, tool_name: str, task_id: UUID | None = None, detail: object = "") -> None:
@@ -57,3 +58,7 @@ class ToolDependencyError(ToolError):
 
 class ToolExecutionError(ToolError):
     code = "TOOL_EXECUTION_FAILED"
+
+
+class ToolAuditError(ToolError):
+    code = "TOOL_AUDIT_PERSISTENCE_FAILED"

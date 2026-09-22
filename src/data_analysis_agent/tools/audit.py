@@ -1,6 +1,7 @@
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import Enum
+import json
 import math
 from typing import Any, Protocol
 from uuid import UUID
@@ -8,6 +9,8 @@ from uuid import UUID
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from data_analysis_agent.domain.enums import ToolCallStatus
+from data_analysis_agent.domain.models import ExecutionResult, ToolCall
+from data_analysis_agent.tools.errors import ToolAuditError
 from data_analysis_agent.tools.models import ToolModel
 
 
@@ -83,6 +86,57 @@ class InMemoryToolCallRecorder:
 
     def record(self, record: ToolAuditRecord) -> None:
         self._records.append(ToolAuditRecord.model_validate(record.model_dump()))
+
+
+class RepositoryToolCallRecorder:
+    """Persist tool-call audit snapshots through the existing repositories."""
+
+    def __init__(self, uow_factory: Any) -> None:
+        self._uow_factory = uow_factory
+
+    def record(self, record: ToolAuditRecord) -> None:
+        output_text = _output_text(record.output)
+        try:
+            with self._uow_factory() as uow:
+                uow.tool_calls.add(
+                    ToolCall(
+                        tool_call_id=record.call_id,
+                        task_id=record.task_id,
+                        tool_name=record.tool_name,
+                        arguments=dict(record.arguments),
+                        result=_tool_call_result(record.output, output_text),
+                        status=record.status,
+                        started_at=record.started_at,
+                        finished_at=record.finished_at,
+                        error_message=record.error_message,
+                    )
+                )
+                uow.executions.add(
+                    ExecutionResult(
+                        success=record.status is ToolCallStatus.SUCCEEDED,
+                        output=output_text,
+                        error=record.error_message,
+                        variables=record.output if isinstance(record.output, Mapping) else {},
+                        duration_ms=int(record.duration_ms),
+                    ),
+                    tool_call_id=record.call_id,
+                )
+        except Exception:
+            raise ToolAuditError(record.tool_name, record.task_id) from None
+
+
+def _output_text(output: Any) -> str:
+    if isinstance(output, str):
+        return output
+    return json.dumps(output, ensure_ascii=True, separators=(",", ":"))
+
+
+def _tool_call_result(output: Any, output_text: str) -> dict[str, Any] | str | None:
+    if output is None or isinstance(output, str):
+        return output
+    if isinstance(output, Mapping):
+        return dict(output)
+    return output_text
 
 
 def _snapshot(value: Any, *, _seen: set[int] | None = None) -> Any:
