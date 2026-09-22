@@ -26,6 +26,18 @@ from .models import (
     ToolRiskLevel,
 )
 from .registry import RegisteredTool, ToolHandler, ToolRegistry
+from .builtins import (
+    DatasetIdInput,
+    GenerateReportInput,
+    InspectDatasetInput,
+    RunPythonAnalysisInput,
+    RunSqlInput,
+    RunSqlOutput,
+    SaveChartInput,
+    ValidateMetricInput,
+    ValidateMetricOutput,
+    build_builtin_registry,
+)
 
 __all__ = [
     "ToolCallRequest",
@@ -52,4 +64,14 @@ __all__ = [
     "InMemoryToolCallRecorder",
     "RepositoryToolCallRecorder",
     "ToolExecutor",
+    "DatasetIdInput",
+    "InspectDatasetInput",
+    "RunSqlInput",
+    "RunSqlOutput",
+    "RunPythonAnalysisInput",
+    "SaveChartInput",
+    "GenerateReportInput",
+    "ValidateMetricInput",
+    "ValidateMetricOutput",
+    "build_builtin_registry",
 ]
