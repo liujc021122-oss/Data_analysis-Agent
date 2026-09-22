@@ -72,6 +72,12 @@ class AgentCheckpoint(OrchestrationModel):
     context: dict[str, JsonValue] = Field(default_factory=dict)
     output: dict[str, JsonValue] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def validate_stage_attempts(self) -> "AgentCheckpoint":
+        if any(attempt < 0 for attempt in self.stage_attempts.values()):
+            raise ValueError("stage attempts must be non-negative")
+        return self
+
 
 class OrchestrationResult(OrchestrationModel):
     task_id: UUID
@@ -81,6 +87,16 @@ class OrchestrationResult(OrchestrationModel):
     error_code: StrictStr | None = None
     error_message: StrictStr | None = None
     checkpoint: AgentCheckpoint
+
+    @model_validator(mode="after")
+    def validate_terminal_error(self) -> "OrchestrationResult":
+        terminal_failure = self.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}
+        has_error = self.error_code is not None or self.error_message is not None
+        if terminal_failure and (self.error_code is None or self.error_message is None):
+            raise ValueError("failed or cancelled result requires an error code and message")
+        if self.status is TaskStatus.COMPLETED and has_error:
+            raise ValueError("completed result cannot carry an error")
+        return self
 
 
 class StageToolCaller(Protocol):

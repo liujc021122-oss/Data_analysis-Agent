@@ -9,6 +9,7 @@ from data_analysis_agent.agent.orchestration_models import (
     StageFailure,
     StageInput,
     StageResult,
+    OrchestrationResult,
 )
 from data_analysis_agent.domain.enums import TaskStatus
 from data_analysis_agent.domain.models import AgentState, AnalysisTask
@@ -82,3 +83,66 @@ def test_stage_input_rejects_negative_step_and_model_budget():
 def test_extra_orchestration_fields_are_rejected():
     with pytest.raises(ValidationError, match="extra_field"):
         OrchestratorLimits(extra_field=1)
+
+
+def test_checkpoint_rejects_negative_stage_attempts():
+    task = AnalysisTask(query="inspect sales")
+    state = AgentState(task_id=task.task_id)
+
+    with pytest.raises(ValidationError):
+        AgentCheckpoint(task=task, state=state, step_number=0, stage_attempts={"RUNNING": -1})
+
+
+def test_models_dump_nested_data_in_json_mode_and_reject_non_json_payload():
+    task = AnalysisTask(query="inspect sales")
+    state = AgentState(task_id=task.task_id)
+    checkpoint = AgentCheckpoint(task=task, state=state, step_number=0)
+
+    dumped = checkpoint.model_dump(mode="json")
+
+    assert dumped["task"]["task_id"] == str(task.task_id)
+    with pytest.raises(ValidationError):
+        AgentCheckpoint(task=task, state=state, step_number=0, context={"bad": {1, 2}})
+
+
+def test_orchestration_result_requires_errors_only_for_failed_or_cancelled():
+    task = AnalysisTask(query="inspect sales")
+    state = AgentState(task_id=task.task_id)
+    checkpoint = AgentCheckpoint(task=task, state=state, step_number=0)
+
+    with pytest.raises(ValidationError):
+        OrchestrationResult(task_id=task.task_id, status=TaskStatus.FAILED, state=state, checkpoint=checkpoint)
+    with pytest.raises(ValidationError):
+        OrchestrationResult(
+            task_id=task.task_id, status=TaskStatus.CANCELLED, state=state,
+            error_code="CANCELLED", checkpoint=checkpoint,
+        )
+    with pytest.raises(ValidationError):
+        OrchestrationResult(
+            task_id=task.task_id, status=TaskStatus.COMPLETED, state=state,
+            error_code="ERROR", error_message="bad", checkpoint=checkpoint,
+        )
+
+
+@pytest.mark.parametrize("status", [TaskStatus.FAILED, TaskStatus.CANCELLED])
+def test_orchestration_result_accepts_valid_terminal_error(status):
+    task = AnalysisTask(query="inspect sales")
+    state = AgentState(task_id=task.task_id)
+    checkpoint = AgentCheckpoint(task=task, state=state, step_number=0)
+
+    result = OrchestrationResult(
+        task_id=task.task_id, status=status, state=state,
+        error_code="SAFE_ERROR", error_message="safe message", checkpoint=checkpoint,
+    )
+
+    assert result.status is status
+
+
+def test_orchestration_result_accepts_valid_completed_result():
+    task = AnalysisTask(query="inspect sales")
+    state = AgentState(task_id=task.task_id)
+    checkpoint = AgentCheckpoint(task=task, state=state, step_number=0)
+
+    result = OrchestrationResult(task_id=task.task_id, status=TaskStatus.COMPLETED, state=state, checkpoint=checkpoint)
+
+    assert result.error_code is None
