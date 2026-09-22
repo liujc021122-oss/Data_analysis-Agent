@@ -1,8 +1,10 @@
 from collections.abc import Callable, Mapping
+from threading import Event
+from time import monotonic
 from typing import Any
 
-from ..domain.enums import TaskStatus
-from ..domain.models import AgentState, AnalysisTask, utc_now
+from ..domain.enums import TaskEventType, TaskStatus
+from ..domain.models import AgentState, AnalysisTask, TaskEvent, utc_now
 from ..domain.state import transition_task
 from .orchestration_errors import ToolUnavailableError
 from .orchestration_models import (
@@ -89,14 +91,37 @@ class AgentOrchestrator:
         self._context = dict(state.context)
         self._output: dict[str, Any] = {}
         self._report_generated = False
+        self._cancel_event = Event()
+        self._model_calls = task.model_call_count
+        self._elapsed_runtime = 0.0
+        self._runtime_last_reading: float | None = None
 
     def run(self) -> OrchestrationResult:
+        self._runtime_last_reading = monotonic()
         if self._task.status is TaskStatus.PENDING:
             self._transition(TaskStatus.QUEUED)
         if self._task.status is TaskStatus.QUEUED:
             self._transition(TaskStatus.RUNNING)
 
         while self._task.status in ACTIVE_STAGES:
+            if self._cancel_event.is_set():
+                return self._cancelled_result()
+            if self._step_number >= self._limits.max_steps:
+                return self._terminal_failure(
+                    "ORCHESTRATOR_MAX_STEPS", "maximum orchestration steps exceeded"
+                )
+            if self._step_number:
+                self._refresh_runtime()
+            if self._elapsed_runtime > self._limits.max_runtime_seconds:
+                return self._terminal_failure(
+                    "ORCHESTRATOR_TIMEOUT", "orchestration runtime limit exceeded"
+                )
+            remaining_model_calls = self._limits.max_model_calls - self._model_calls
+            if remaining_model_calls <= 0:
+                return self._terminal_failure(
+                    "ORCHESTRATOR_MAX_MODEL_CALLS",
+                    "maximum model calls exceeded",
+                )
             stage = self._task.status
             attempt = self._stage_attempts.get(stage.value, 0)
             stage_input = StageInput(
@@ -106,12 +131,35 @@ class AgentOrchestrator:
                 step_number=self._step_number,
                 attempt=attempt,
                 allowed_tools=STAGE_ALLOWED_TOOLS[stage],
-                remaining_model_calls=self._limits.max_model_calls,
+                remaining_model_calls=remaining_model_calls,
                 context=dict(self._context),
             )
-            result = self._handlers[stage](stage_input, self.call_tool)
-            self._stage_attempts[stage.value] = attempt + 1
-            self._step_number += 1
+            try:
+                result = self._handlers[stage](stage_input, self.call_tool)
+            except Exception:
+                self._refresh_runtime()
+                self._append_error_event(
+                    stage,
+                    step_number=self._step_number,
+                    attempt=attempt,
+                    cause_code="STAGE_EXECUTION_ERROR",
+                )
+                self._step_number += 1
+                return self._terminal_failure(
+                    "ORCHESTRATOR_STAGE_FAILED", "stage execution failed"
+                )
+            self._refresh_runtime()
+            if result.model_calls > remaining_model_calls:
+                self._step_number += 1
+                return self._terminal_failure(
+                    "ORCHESTRATOR_MAX_MODEL_CALLS",
+                    "maximum model calls exceeded",
+                )
+            if result.model_calls:
+                self._model_calls += result.model_calls
+                self._task = self._task.model_copy(
+                    update={"model_call_count": self._model_calls}
+                )
             self._context.update(result.context_updates)
             if result.context_updates:
                 self._state = self._state.model_copy(
@@ -119,6 +167,21 @@ class AgentOrchestrator:
                 )
             if result.output is not None:
                 self._output[stage.value] = result.output
+            if result.failure is not None:
+                self._append_error_event(
+                    stage,
+                    step_number=self._step_number,
+                    attempt=attempt,
+                    cause_code=result.failure.code,
+                )
+                self._step_number += 1
+                if result.failure.retryable and attempt < self._limits.max_stage_retries:
+                    self._stage_attempts[stage.value] = attempt + 1
+                    continue
+                return self._terminal_failure(
+                    "ORCHESTRATOR_STAGE_FAILED", "stage execution failed"
+                )
+            self._step_number += 1
             if not result.completed:
                 continue
             if stage is TaskStatus.REPORTING:
@@ -135,7 +198,7 @@ class AgentOrchestrator:
         )
 
     def cancel(self) -> None:
-        raise NotImplementedError("cancellation is implemented in Task 3")
+        self._cancel_event.set()
 
     def checkpoint(self) -> AgentCheckpoint:
         return AgentCheckpoint(
@@ -144,6 +207,7 @@ class AgentOrchestrator:
             step_number=self._step_number,
             stage_attempts=dict(self._stage_attempts),
             report_generated=self._report_generated,
+            elapsed_runtime_seconds=self._elapsed_runtime,
             context=dict(self._context),
             output=dict(self._output),
         )
@@ -151,8 +215,16 @@ class AgentOrchestrator:
     def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
         raise ToolUnavailableError("tool execution is implemented in Task 4")
 
-    def _transition(self, target: TaskStatus) -> None:
-        updated_task, event = transition_task(self._task, target)
+    def _transition(
+        self,
+        target: TaskStatus,
+        *,
+        message: str | None = None,
+        code: str | None = None,
+    ) -> None:
+        updated_task, event = transition_task(self._task, target, message=message)
+        if code is not None:
+            event = event.model_copy(update={"metadata": {"code": code}})
         self._task = updated_task
         self._state = self._state.model_copy(
             update={
@@ -160,4 +232,66 @@ class AgentOrchestrator:
                 "events": (*self._state.events, event),
                 "updated_at": event.occurred_at,
             }
+        )
+
+    def _refresh_runtime(self) -> None:
+        current = monotonic()
+        if self._runtime_last_reading is not None:
+            self._elapsed_runtime += max(0.0, current - self._runtime_last_reading)
+        self._runtime_last_reading = current
+
+    def _append_error_event(
+        self,
+        stage: TaskStatus,
+        *,
+        step_number: int,
+        attempt: int,
+        cause_code: str,
+    ) -> None:
+        event = TaskEvent(
+            task_id=self._task.task_id,
+            event_type=TaskEventType.ERROR,
+            to_status=self._task.status,
+            message="stage execution failed",
+            metadata={
+                "stage": stage.value,
+                "step_number": step_number,
+                "attempt": attempt,
+                "cause_code": cause_code,
+            },
+        )
+        self._state = self._state.model_copy(
+            update={"events": (*self._state.events, event), "updated_at": event.occurred_at}
+        )
+
+    def _terminal_failure(self, code: str, message: str) -> OrchestrationResult:
+        if self._state.status not in TERMINAL_STATUSES:
+            self._task = self._task.model_copy(
+                update={"error_code": code, "error_message": message}
+            )
+            self._transition(TaskStatus.FAILED, message=message, code=code)
+        return self._result(error_code=code, error_message=message)
+
+    def _cancelled_result(self) -> OrchestrationResult:
+        code = "ORCHESTRATOR_CANCELLED"
+        message = "orchestration cancelled"
+        if self._state.status not in TERMINAL_STATUSES:
+            self._task = self._task.model_copy(
+                update={"error_code": code, "error_message": message}
+            )
+            self._transition(TaskStatus.CANCELLED, message=message, code=code)
+        return self._result(error_code=code, error_message=message)
+
+    def _result(
+        self, *, error_code: str | None = None, error_message: str | None = None
+    ) -> OrchestrationResult:
+        checkpoint = self.checkpoint()
+        return OrchestrationResult(
+            task_id=checkpoint.task.task_id,
+            status=self._state.status,
+            state=self._state,
+            output=dict(self._output),
+            error_code=error_code,
+            error_message=error_message,
+            checkpoint=checkpoint,
         )

@@ -87,12 +87,15 @@ def test_orchestrator_runs_the_declared_stage_order_and_reaches_completed():
 def test_incomplete_stage_repeats_before_advancing_to_its_successor(monkeypatch):
     trace = []
     stage_inputs = []
+    analyzing_calls = 0
     handlers = _handlers(trace, stage_inputs)
 
     def analyzing_handler(stage_input, call_tool):
+        nonlocal analyzing_calls
+        analyzing_calls += 1
         trace.append((TaskStatus.ANALYZING, stage_input.stage, stage_input.attempt))
         stage_inputs.append(stage_input)
-        if stage_input.attempt == 0:
+        if analyzing_calls == 1:
             return StageResult(completed=False, context_updates={"analysis": "pending"})
         return StageResult(output={"stage": TaskStatus.ANALYZING.value})
 
@@ -124,7 +127,7 @@ def test_incomplete_stage_repeats_before_advancing_to_its_successor(monkeypatch)
         for stage_input in stage_inputs
         if stage_input.stage is TaskStatus.ANALYZING
     ]
-    assert [stage_input.attempt for stage_input in analyzing_inputs] == [0, 1]
+    assert [stage_input.attempt for stage_input in analyzing_inputs] == [0, 0]
     assert analyzing_inputs[1].context["analysis"] == "pending"
     assert analyzing_inputs[1].state.updated_at == context_update_time
 

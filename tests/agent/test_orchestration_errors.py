@@ -13,7 +13,7 @@ from data_analysis_agent.agent.orchestration_errors import (
 @pytest.mark.parametrize(
     ("error_type", "code"),
     [
-        (InvalidCheckpointError, "INVALID_CHECKPOINT"),
+        (InvalidCheckpointError, "ORCHESTRATOR_INVALID_CHECKPOINT"),
         (StageExecutionError, "STAGE_EXECUTION_ERROR"),
         (DisallowedToolError, "DISALLOWED_TOOL"),
         (ToolUnavailableError, "TOOL_UNAVAILABLE"),

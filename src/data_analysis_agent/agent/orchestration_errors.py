@@ -8,7 +8,7 @@ class AgentOrchestrationError(Exception):
 
 
 class InvalidCheckpointError(AgentOrchestrationError):
-    code = "INVALID_CHECKPOINT"
+    code = "ORCHESTRATOR_INVALID_CHECKPOINT"
 
 
 class StageExecutionError(AgentOrchestrationError):
