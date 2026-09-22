@@ -19,6 +19,13 @@ from .orchestration_models import (
     StageResult,
     StageToolCaller,
 )
+from .orchestrator import (
+    ACTIVE_STAGES,
+    NEXT_STAGE,
+    STAGE_ALLOWED_TOOLS,
+    TERMINAL_STATUSES,
+    AgentOrchestrator,
+)
 
 __all__ = [
     "DataAnalysisAgent",
@@ -26,6 +33,8 @@ __all__ = [
     "ToolExecutor",
     "ToolRegistry",
     "quick_analysis",
+    "ACTIVE_STAGES",
+    "AgentOrchestrator",
     "AgentCheckpoint",
     "AgentOrchestrationError",
     "DisallowedToolError",
@@ -33,6 +42,8 @@ __all__ = [
     "OrchestrationResult",
     "OrchestratorBudgetError",
     "OrchestratorLimits",
+    "NEXT_STAGE",
+    "STAGE_ALLOWED_TOOLS",
     "StageExecutionError",
     "StageFailure",
     "StageHandler",
@@ -40,4 +51,5 @@ __all__ = [
     "StageResult",
     "StageToolCaller",
     "ToolUnavailableError",
+    "TERMINAL_STATUSES",
 ]
