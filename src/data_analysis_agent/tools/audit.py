@@ -19,6 +19,7 @@ _UNSERIALIZABLE = "[UNSERIALIZABLE]"
 _MAX_STRING_LENGTH = 256
 _MAX_ITEMS = 20
 _SENSITIVE_KEY_PARTS = ("api_key", "authorization", "token", "password", "secret")
+_PATH_KEY_NAMES = {"path", "uri", "url"}
 
 
 class ToolAuditRecord(ToolModel):
@@ -164,7 +165,7 @@ def _snapshot(value: Any, *, _seen: set[int] | None = None) -> Any:
                 key_text = _UNSERIALIZABLE
             items[key_text] = (
                 _REDACTED
-                if any(part in key_text.lower() for part in _SENSITIVE_KEY_PARTS)
+                if _should_redact_key(key_text)
                 else _snapshot(item, _seen=seen)
             )
         seen.remove(value_id)
@@ -180,6 +181,15 @@ def _snapshot(value: Any, *, _seen: set[int] | None = None) -> Any:
         seen.remove(value_id)
         return result
     return _UNSERIALIZABLE
+
+
+def _should_redact_key(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_")
+    return (
+        any(part in normalized for part in _SENSITIVE_KEY_PARTS)
+        or normalized in _PATH_KEY_NAMES
+        or normalized.endswith(("_path", "_uri", "_url"))
+    )
 
 
 def _freeze(value: Any) -> Any:

@@ -2,8 +2,9 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from datetime import datetime, timezone
+from functools import partial
 import inspect
 import logging
 import time
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 
 from data_analysis_agent.domain.enums import ToolCallStatus
 from data_analysis_agent.tools.audit import ToolAuditRecord, ToolCallRecorder
-from data_analysis_agent.tools.errors import UnknownToolError
+from data_analysis_agent.tools.errors import ToolError, UnknownToolError
 from data_analysis_agent.tools.models import (
     ToolCallRequest,
     ToolCallResult,
@@ -32,6 +33,8 @@ _SAFE_ERROR_MESSAGES = {
     "TOOL_NETWORK_DENIED": "Tool network access denied",
     "TOOL_TIMEOUT": "Tool execution timed out",
     "TOOL_OUTPUT_INVALID": "Tool output is invalid",
+    "TOOL_DEPENDENCY_FAILED": "Tool dependency failed",
+    "TOOL_AUDIT_PERSISTENCE_FAILED": "Tool audit persistence failed",
     "TOOL_EXECUTION_FAILED": "Tool execution failed",
 }
 _SYNC_EXECUTOR: ContextVar[ThreadPoolExecutor | None] = ContextVar(
@@ -66,12 +69,16 @@ class ToolExecutor:
             return asyncio.run(self.aexecute(request, context))
         finally:
             _SYNC_EXECUTOR.reset(token)
+            executor.shutdown(wait=False, cancel_futures=True)
 
     async def aexecute(self, request: ToolCallRequest, context: ToolContext) -> ToolCallResult:
         """Execute a request while enforcing its registered tool policy."""
         sync_executor = _SYNC_EXECUTOR.get()
-        if sync_executor is not None:
-            asyncio.get_running_loop().set_default_executor(sync_executor)
+        owns_executor = sync_executor is None
+        executor_token = None
+        if owns_executor:
+            sync_executor = _TimeoutFriendlyThreadPoolExecutor()
+            executor_token = _SYNC_EXECUTOR.set(sync_executor)
         started_at = datetime.now(timezone.utc)
         started_monotonic = time.monotonic()
 
@@ -86,44 +93,52 @@ class ToolExecutor:
             )
 
         try:
-            registered = self._registry.get(request.tool_name, request.task_id)
-        except UnknownToolError:
-            result = failed("UNKNOWN_TOOL")
+            try:
+                registered = self._registry.get(request.tool_name, request.task_id)
+            except UnknownToolError:
+                result = failed("UNKNOWN_TOOL")
+                self._record(request, result)
+                return result
+
+            if request.task_id != context.task_id:
+                result = failed("TOOL_CONTEXT_INVALID")
+            else:
+                try:
+                    tool_input = registered.definition.input_model.model_validate(request.arguments)
+                except ValidationError:
+                    result = failed("TOOL_INPUT_INVALID")
+                else:
+                    definition = registered.definition
+                    if not definition.required_permissions.issubset(context.permissions):
+                        result = failed("TOOL_PERMISSION_DENIED")
+                    elif definition.network_access and not context.network_allowed:
+                        result = failed("TOOL_NETWORK_DENIED")
+                    elif (
+                        definition.risk_level is ToolRiskLevel.HIGH
+                        and "execute:python" not in context.permissions
+                    ):
+                        result = failed("TOOL_PERMISSION_DENIED")
+                    else:
+                        result = await self._invoke(
+                            request,
+                            context,
+                            registered.handler,
+                            definition.output_model,
+                            tool_input,
+                            definition.max_runtime_seconds,
+                            started_at,
+                            started_monotonic,
+                            sync_executor,
+                        )
+
             self._record(request, result)
             return result
-
-        if request.task_id != context.task_id:
-            result = failed("TOOL_CONTEXT_INVALID")
-        else:
-            try:
-                tool_input = registered.definition.input_model.model_validate(request.arguments)
-            except ValidationError:
-                result = failed("TOOL_INPUT_INVALID")
-            else:
-                definition = registered.definition
-                if not definition.required_permissions.issubset(context.permissions):
-                    result = failed("TOOL_PERMISSION_DENIED")
-                elif definition.network_access and not context.network_allowed:
-                    result = failed("TOOL_NETWORK_DENIED")
-                elif (
-                    definition.risk_level is ToolRiskLevel.HIGH
-                    and "execute:python" not in context.permissions
-                ):
-                    result = failed("TOOL_PERMISSION_DENIED")
-                else:
-                    result = await self._invoke(
-                        request,
-                        context,
-                        registered.handler,
-                        definition.output_model,
-                        tool_input,
-                        definition.max_runtime_seconds,
-                        started_at,
-                        started_monotonic,
-                    )
-
-        self._record(request, result)
-        return result
+        finally:
+            if owns_executor:
+                assert executor_token is not None
+                _SYNC_EXECUTOR.reset(executor_token)
+                assert sync_executor is not None
+                sync_executor.shutdown(wait=False, cancel_futures=True)
 
     async def _invoke(
         self,
@@ -135,10 +150,12 @@ class ToolExecutor:
         timeout_seconds: float,
         started_at: datetime,
         started_monotonic: float,
+        sync_executor: ThreadPoolExecutor,
     ) -> ToolCallResult:
         try:
             handler_output = await asyncio.wait_for(
-                self._call_handler(handler, tool_input, context), timeout=timeout_seconds
+                self._call_handler(handler, tool_input, context, sync_executor),
+                timeout=timeout_seconds,
             )
         except TimeoutError:
             return self._result(
@@ -148,6 +165,20 @@ class ToolExecutor:
                 status=ToolCallStatus.FAILED,
                 error_code="TOOL_TIMEOUT",
                 error_message=_SAFE_ERROR_MESSAGES["TOOL_TIMEOUT"],
+            )
+        except ToolError as exc:
+            error_code = (
+                exc.code
+                if exc.code in _SAFE_ERROR_MESSAGES
+                else "TOOL_EXECUTION_FAILED"
+            )
+            return self._result(
+                request,
+                started_at,
+                started_monotonic,
+                status=ToolCallStatus.FAILED,
+                error_code=error_code,
+                error_message=_SAFE_ERROR_MESSAGES[error_code],
             )
         except Exception:
             return self._result(
@@ -180,10 +211,21 @@ class ToolExecutor:
             output=output,
         )
 
-    async def _call_handler(self, handler: Any, tool_input: Any, context: ToolContext) -> Any:
+    async def _call_handler(
+        self,
+        handler: Any,
+        tool_input: Any,
+        context: ToolContext,
+        sync_executor: ThreadPoolExecutor,
+    ) -> Any:
         if inspect.iscoroutinefunction(handler):
             return await handler(tool_input, context)
-        output = await asyncio.to_thread(handler, tool_input, context)
+        handler_call = partial(handler, tool_input, context)
+        output = await asyncio.get_running_loop().run_in_executor(
+            sync_executor,
+            copy_context().run,
+            handler_call,
+        )
         if inspect.isawaitable(output):
             return await output
         return output

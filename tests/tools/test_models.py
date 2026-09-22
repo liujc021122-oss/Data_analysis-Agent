@@ -21,11 +21,11 @@ class Output(BaseModel):
     doubled: int
 
 
-def definition(name="double_value", runtime=1.5):
+def definition(name="double_value", runtime=1.5, required_permissions=frozenset()):
     return ToolDefinition(
         name=name, description="Double an integer.", input_model=Input,
         output_model=Output, side_effect=False, network_access=False,
-        max_runtime_seconds=runtime, required_permissions=frozenset(),
+        max_runtime_seconds=runtime, required_permissions=required_permissions,
         risk_level=ToolRiskLevel.LOW,
     )
 
@@ -39,6 +39,18 @@ def test_definition_exports_schema_and_rejects_bad_metadata():
         definition("run python")
     with pytest.raises(ValueError, match="max_runtime_seconds"):
         definition(runtime=0)
+
+
+def test_definition_copies_required_permissions_into_an_immutable_set():
+    permissions = {"reports:read"}
+
+    item = definition(required_permissions=permissions)
+    permissions.add("reports:write")
+
+    assert item.required_permissions == frozenset({"reports:read"})
+    assert isinstance(item.required_permissions, frozenset)
+    with pytest.raises(AttributeError):
+        item.required_permissions.add("execute:python")
 
 
 def test_request_result_preserve_ids_and_are_json_serializable():

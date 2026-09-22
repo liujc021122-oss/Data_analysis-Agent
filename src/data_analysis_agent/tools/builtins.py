@@ -24,6 +24,17 @@ class InspectDatasetInput(DatasetIdInput):
     model_config = ConfigDict(extra="forbid", title="DatasetIdInput")
 
 
+class InspectDatasetOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: UUID
+    name: StrictStr = Field(min_length=1)
+    content_type: StrictStr = Field(min_length=1)
+    size_bytes: StrictInt = Field(ge=0)
+    checksum: StrictStr | None = None
+    profile: DatasetProfile | None = None
+
+
 class RunSqlInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -118,10 +129,6 @@ class ReportArtifactOutput(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class _MappingOutput(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
 def _dependency(name: str, context: ToolContext | None) -> ToolDependencyError:
     return ToolDependencyError(name, context.task_id if context is not None else None)
 
@@ -152,10 +159,16 @@ def _inspect_handler(store: Any, value: InspectDatasetInput, context: ToolContex
     if store is None:
         raise _dependency("inspect_dataset", context)
     record = _call_metadata_store(store, value.dataset_id, _user_id(context))
-    return _object_fields(
+    result = _object_fields(
         record,
-        ("dataset_id", "name", "content_type", "size_bytes", "checksum", "profile", "metadata"),
+        ("dataset_id", "name", "content_type", "size_bytes", "checksum", "profile"),
     )
+    if "profile" not in result:
+        metadata = _object_fields(record, ("metadata_json", "metadata"))
+        metadata_value = metadata.get("metadata_json", metadata.get("metadata"))
+        if isinstance(metadata_value, Mapping) and "profile" in metadata_value:
+            result["profile"] = metadata_value["profile"]
+    return result
 
 
 def _profile_handler(resolver: Any, value: DatasetIdInput, context: ToolContext | None) -> Any:
@@ -260,7 +273,7 @@ def build_builtin_registry(
         lambda value, context: _report_handler(report_generator, value, context),
     )
     registry.register(
-        _definition("inspect_dataset", "Inspect dataset metadata.", InspectDatasetInput, _MappingOutput),
+        _definition("inspect_dataset", "Inspect dataset metadata.", InspectDatasetInput, InspectDatasetOutput),
         lambda value, context: _inspect_handler(metadata_store, value, context),
     )
     registry.register(
@@ -297,6 +310,7 @@ def build_builtin_registry(
 __all__ = [
     "DatasetIdInput",
     "InspectDatasetInput",
+    "InspectDatasetOutput",
     "RunSqlInput",
     "RunSqlOutput",
     "RunPythonAnalysisInput",

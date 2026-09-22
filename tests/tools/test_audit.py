@@ -82,3 +82,34 @@ def test_audit_snapshot_rejects_in_place_mapping_merge():
         record.arguments.__ior__({"unexpected": "value"})
 
     assert record.arguments == {"dataset_id": "ds-1"}
+
+
+def test_audit_snapshot_redacts_storage_paths_and_uris():
+    record = ToolAuditRecord(
+        call_id=uuid4(),
+        task_id=uuid4(),
+        tool_name="inspect_dataset",
+        status=ToolCallStatus.SUCCEEDED,
+        started_at="2026-09-21T12:00:00+00:00",
+        finished_at="2026-09-21T12:00:00.010000+00:00",
+        duration_ms=10,
+        arguments={
+            "file_path": "C:/private/uploads/sales.csv",
+            "source_uri": "local://datasets/ds-1/original.csv",
+            "nested": {"storage_uri": "s3://private-bucket/secret.csv"},
+        },
+        output={
+            "file_path": "C:/private/outputs/chart.png",
+            "source_uri": "s3://private-bucket/chart.png",
+        },
+    )
+
+    payload = record.model_dump_json()
+
+    assert record.arguments["file_path"] == "[REDACTED]"
+    assert record.arguments["source_uri"] == "[REDACTED]"
+    assert record.arguments["nested"]["storage_uri"] == "[REDACTED]"
+    assert record.output["file_path"] == "[REDACTED]"
+    assert record.output["source_uri"] == "[REDACTED]"
+    assert "C:/private" not in payload
+    assert "s3://private-bucket" not in payload

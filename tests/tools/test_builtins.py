@@ -9,6 +9,7 @@ from data_analysis_agent.tools.builtins import (
     DatasetIdInput,
     GenerateReportInput,
     InspectDatasetInput,
+    InspectDatasetOutput,
     RunPythonAnalysisInput,
     RunSqlInput,
     SaveChartInput,
@@ -61,6 +62,30 @@ def test_builtin_input_models_forbid_source_paths_and_unknown_fields():
             mime_type="text/markdown",
             format="MARKDOWN",
             unexpected=True,
+        )
+
+
+def test_inspect_dataset_output_is_strict_and_has_no_storage_path_fields():
+    dataset_id = uuid4()
+    valid = {
+        "dataset_id": dataset_id,
+        "name": "sales.csv",
+        "content_type": "text/csv",
+        "size_bytes": 12,
+        "checksum": "sha256:abc",
+    }
+
+    output = InspectDatasetOutput.model_validate(valid)
+
+    assert output.dataset_id == dataset_id
+    assert InspectDatasetOutput.model_config["extra"] == "forbid"
+    with pytest.raises(ValidationError):
+        InspectDatasetOutput.model_validate(
+            {**valid, "source_uri": "local://datasets/ds-1/original.csv"}
+        )
+    with pytest.raises(ValidationError):
+        InspectDatasetOutput.model_validate(
+            {**valid, "file_path": "C:/private/sales.csv"}
         )
 
 

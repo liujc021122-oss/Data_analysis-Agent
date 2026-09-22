@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 from data_analysis_agent.domain.enums import ToolCallStatus
 from data_analysis_agent.tools.audit import InMemoryToolCallRecorder
+from data_analysis_agent.tools.errors import ToolDependencyError
 from data_analysis_agent.tools.executor import ToolExecutor
 from data_analysis_agent.tools.models import (
     ToolCallRequest,
@@ -105,6 +106,21 @@ def test_invalid_input_never_enters_handler_and_handler_errors_are_sanitized():
     assert failed.error_code == "TOOL_EXECUTION_FAILED"
     assert "secret stack" not in (failed.error_message or "")
     assert "RuntimeError" not in (failed.error_message or "")
+
+
+def test_known_tool_errors_preserve_their_stable_error_code():
+    task_id = uuid4()
+
+    def raises_dependency(value, context):
+        raise ToolDependencyError("add", context.task_id)
+
+    result = make_executor(raises_dependency).execute(
+        request(task_id, left=1, right=2),
+        context(task_id),
+    )
+
+    assert result.error_code == "TOOL_DEPENDENCY_FAILED"
+    assert result.error_message == "Tool dependency failed"
 
 
 def test_permissions_network_high_risk_and_timeout_are_checked():
@@ -238,3 +254,24 @@ def test_aexecute_returns_validated_result_for_async_callers():
 
     assert result.status is ToolCallStatus.SUCCEEDED
     assert result.output == {"total": 13}
+
+
+def test_aexecute_sync_handler_timeout_does_not_wait_for_worker_thread():
+    task_id = uuid4()
+
+    def slow(value, context):
+        time.sleep(0.2)
+        return {"total": 1}
+
+    async def run():
+        return await make_executor(slow, runtime=0.01).aexecute(
+            request(task_id, left=1, right=2),
+            context(task_id),
+        )
+
+    started = time.monotonic()
+    result = asyncio.run(run())
+    elapsed = time.monotonic() - started
+
+    assert result.error_code == "TOOL_TIMEOUT"
+    assert elapsed < 0.15

@@ -89,6 +89,7 @@ class ToolDefinition:
     risk_level: ToolRiskLevel
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "required_permissions", frozenset(self.required_permissions))
         if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", self.name):
             raise ValueError("name must match ^[a-z][a-z0-9_]{0,63}$")
         if not isinstance(self.description, str) or not self.description.strip():
