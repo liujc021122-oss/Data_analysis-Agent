@@ -18,6 +18,7 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|password|passwd|secret|token|key|sig|signature|openai_api_key|database_url|redis_url|storage_secret_access_key)\b\s*[:=]\s*)(['\"]?)[^,\s'\";)}]+"
 )
 _WINDOWS_PATH_RE = re.compile(r"(?i)(?<![\w])(?:[a-z]:[\\/])[^<>\"'\r\n;]+")
+_UNC_PATH_RE = re.compile(r"(?i)(?<![\w])\\\\[^\\/\s]+[\\/][^<>\"'\r\n;]+")
 _UNIX_PATH_RE = re.compile(r"(?<![\w])/(?:[^/\s;,'\"]+/)*[^/\s;,'\"]+")
 
 
@@ -56,6 +57,7 @@ def sanitize_execution_text(
     text = _CREDENTIAL_URL_RE.sub(r"\1[REDACTED]@", text)
     text = _SENSITIVE_QUERY_RE.sub(r"\1[REDACTED]", text)
     text = _SENSITIVE_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", text)
+    text = _UNC_PATH_RE.sub("[PATH]", text)
     text = _WINDOWS_PATH_RE.sub("[PATH]", text)
     text = _UNIX_PATH_RE.sub("[PATH]", text)
     return truncate_execution_text(text, limit=limit)

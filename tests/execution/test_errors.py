@@ -60,3 +60,12 @@ def test_sanitize_execution_text_redacts_credentials_paths_and_truncates():
     assert "password" not in sanitized
     assert r"C:\Users\analyst\repo\file.py" not in sanitized
     assert "[truncated]" in sanitized
+
+
+def test_sanitize_execution_text_redacts_unc_paths():
+    unc_path = r"\\fileserver\shared\private\secret.py"
+
+    sanitized = sanitize_execution_text(f"failed at {unc_path}")
+
+    assert unc_path not in sanitized
+    assert "[PATH]" in sanitized

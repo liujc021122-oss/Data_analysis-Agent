@@ -168,8 +168,7 @@ class ExecutionRequest(ExecutionModel):
     code: StrictStr
     input_files: tuple[ExecutionInput, ...] = ()
     output_dir: Path
-    output_scope: Path | None = Field(
-        default=None,
+    output_scope: Path = Field(
         validation_alias=AliasChoices(
             "output_scope",
             "allowed_output_dir",
@@ -182,10 +181,8 @@ class ExecutionRequest(ExecutionModel):
     @model_validator(mode="after")
     def _validate_output_scope_and_inputs(self) -> "ExecutionRequest":
         output_dir = _resolve_path(self.output_dir)
-        output_scope = (
-            _resolve_path(self.output_scope) if self.output_scope is not None else None
-        )
-        if output_scope is not None and not _is_within(output_dir, output_scope):
+        output_scope = _resolve_path(self.output_scope)
+        if not _is_within(output_dir, output_scope):
             raise _path_error("output directory is outside the allowed scope")
         logical_names = [item.logical_name for item in self.input_files]
         if len(logical_names) != len(set(logical_names)):
@@ -199,8 +196,8 @@ class ExecutionRequest(ExecutionModel):
         return code_sha256(self.code)
 
     @field_serializer("output_dir", "output_scope", when_used="json")
-    def _serialize_path(self, value: Path | None) -> str | None:
-        return str(value) if value is not None else None
+    def _serialize_path(self, value: Path) -> str:
+        return str(value)
 
 
 class ExecutionFile(ExecutionModel):
@@ -247,6 +244,11 @@ class ExecutionResult(ExecutionModel):
         default=None,
         validation_alias=AliasChoices("error_message", "error"),
     )
+    redaction_secrets: tuple[StrictStr, ...] = Field(
+        default=(),
+        exclude=True,
+        repr=False,
+    )
     code_sha256: StrictStr
     duration_ms: float = Field(ge=0)
     output_files: tuple[ExecutionFile, ...] = Field(
@@ -272,12 +274,25 @@ class ExecutionResult(ExecutionModel):
         return value
 
     @model_validator(mode="after")
-    def _fill_stable_limit_code(self) -> "ExecutionResult":
+    def _sanitize_and_validate_failure(self) -> "ExecutionResult":
         if self.error_code is None:
             if self.timed_out:
                 object.__setattr__(self, "error_code", ExecutionErrorCode.TIMEOUT)
             elif self.resource_limited:
                 object.__setattr__(self, "error_code", ExecutionErrorCode.RESOURCE_LIMIT)
+        for field_name in ("stdout", "stderr", "error_message"):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    sanitize_execution_text(value, secrets=self.redaction_secrets),
+                )
+        if not self.success:
+            if self.error_code is None:
+                raise ValueError("failed execution requires error_code")
+            if self.error_message is None or not self.error_message.strip():
+                raise ValueError("failed execution requires error_message")
         return self
 
 

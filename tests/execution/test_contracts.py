@@ -24,6 +24,7 @@ def test_execution_request_defaults_to_disabled_network_and_serializes():
         task_id=uuid4(),
         code="print('ok')",
         output_dir=Path("outputs") / "task-1",
+        output_scope=Path("outputs"),
     )
 
     assert request.network_policy is NetworkPolicy.DISABLED
@@ -98,6 +99,15 @@ def test_execution_request_rejects_output_directory_outside_scope(tmp_path):
         )
 
 
+def test_execution_request_requires_explicit_output_scope(tmp_path):
+    with pytest.raises(ValidationError, match="output_scope"):
+        ExecutionRequest(
+            task_id=uuid4(),
+            code="pass",
+            output_dir=tmp_path / "outputs" / "task-1",
+        )
+
+
 def test_execution_file_derives_suffix_and_validates_sha256():
     digest = sha256(b"png").hexdigest()
     artifact = ExecutionFile(
@@ -121,6 +131,7 @@ def test_execution_result_is_bounded_and_redacts_secrets_and_host_paths():
         success=False,
         stdout=("x" * (MAX_SAFE_TEXT_LENGTH + 100)) + " OPENAI_API_KEY=" + secret,
         stderr=f"failed at {host_path}",
+        error_code="CONTAINER_FAILURE",
         error_message=f"OPENAI_API_KEY={secret}; source={host_path}",
         code_sha256=sha256(b"pass").hexdigest(),
         duration_ms=1.0,
@@ -132,6 +143,45 @@ def test_execution_result_is_bounded_and_redacts_secrets_and_host_paths():
     assert host_path not in result.stderr
     assert "[REDACTED]" in result.error_message
     assert result.model_dump_json()
+
+
+def test_execution_result_applies_caller_redaction_secrets_without_serializing_them():
+    secret = "caller-supplied-secret"
+    raw_code = "print('raw code must not enter result metadata')"
+    result = ExecutionResult(
+        success=False,
+        stdout=f"secret={secret}; code={raw_code}",
+        stderr=f"secret={secret}",
+        error_code="CONTAINER_FAILURE",
+        error_message=f"execution failed for {raw_code}; secret={secret}",
+        code_sha256=sha256(raw_code.encode()).hexdigest(),
+        duration_ms=1.0,
+        redaction_secrets=(secret, raw_code),
+    )
+
+    serialized = result.model_dump_json()
+    assert secret not in result.stdout
+    assert raw_code not in result.error_message
+    assert secret not in serialized
+    assert raw_code not in serialized
+    assert "redaction_secrets" not in serialized
+
+
+def test_failed_execution_result_requires_stable_error_code_and_diagnostic():
+    common = {
+        "code_sha256": sha256(b"pass").hexdigest(),
+        "duration_ms": 1.0,
+    }
+
+    with pytest.raises(ValidationError, match="error_code"):
+        ExecutionResult(success=False, **common)
+
+    with pytest.raises(ValidationError, match="error_message"):
+        ExecutionResult(
+            success=False,
+            error_code="CONTAINER_FAILURE",
+            **common,
+        )
 
 
 def test_execution_backend_protocol_describes_synchronous_execution():
