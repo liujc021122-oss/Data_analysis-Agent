@@ -25,4 +25,3 @@ files were changed.
   - 55 passed
 - `git diff --check`
   - passed
-
