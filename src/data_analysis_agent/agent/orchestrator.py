@@ -2,7 +2,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..domain.enums import TaskStatus
-from ..domain.models import AgentState, AnalysisTask
+from ..domain.models import AgentState, AnalysisTask, utc_now
 from ..domain.state import transition_task
 from .orchestration_errors import ToolUnavailableError
 from .orchestration_models import (
@@ -64,7 +64,11 @@ class AgentOrchestrator:
         tool_context_factory: Callable[[], Any] | None = None,
         initial_state: AgentState | None = None,
     ) -> None:
-        state = initial_state or AgentState(task_id=task.task_id, status=task.status)
+        state = (
+            initial_state
+            if initial_state is not None
+            else AgentState(task_id=task.task_id, status=task.status)
+        )
         if state.task_id != task.task_id:
             raise ValueError("initial state task ID must match task ID")
         if state.status is not task.status:
@@ -109,11 +113,14 @@ class AgentOrchestrator:
             self._stage_attempts[stage.value] = attempt + 1
             self._step_number += 1
             self._context.update(result.context_updates)
-            self._state = self._state.model_copy(update={"context": dict(self._context)})
+            if result.context_updates:
+                self._state = self._state.model_copy(
+                    update={"context": dict(self._context), "updated_at": utc_now()}
+                )
             if result.output is not None:
                 self._output[stage.value] = result.output
             if not result.completed:
-                break
+                continue
             if stage is TaskStatus.REPORTING:
                 self._report_generated = True
             self._transition(NEXT_STAGE[stage])
