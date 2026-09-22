@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+import inspect
 from threading import Event
 from time import monotonic
 from typing import Any
@@ -50,6 +51,8 @@ STAGE_ALLOWED_TOOLS = {
     TaskStatus.REPORTING: frozenset({"generate_report"}),
 }
 
+ToolContextFactory = Callable[[], ToolContext] | Callable[[UUID], ToolContext]
+
 
 class AgentOrchestrator:
     ACTIVE_STAGES = ACTIVE_STAGES
@@ -64,7 +67,7 @@ class AgentOrchestrator:
         handlers: Mapping[TaskStatus, StageHandler],
         limits: OrchestratorLimits | None = None,
         tool_executor: Any = None,
-        tool_context_factory: Callable[[UUID], ToolContext] | None = None,
+        tool_context_factory: ToolContextFactory | None = None,
         initial_state: AgentState | None = None,
     ) -> None:
         state = (
@@ -245,7 +248,7 @@ class AgentOrchestrator:
             tool_name=tool_name,
             arguments=dict(arguments),
         )
-        context = self._tool_context_factory(self._task.task_id)
+        context = self._create_tool_context()
         result = self._tool_executor.execute(request, context)
         self._record_tool_result(request, result)
         return result
@@ -253,6 +256,18 @@ class AgentOrchestrator:
     @staticmethod
     def _default_tool_context(task_id: UUID) -> ToolContext:
         return ToolContext(task_id=task_id)
+
+    def _create_tool_context(self) -> ToolContext:
+        """Invoke legacy zero-argument or task-aware context factories safely."""
+        try:
+            signature = inspect.signature(self._tool_context_factory)
+        except (TypeError, ValueError):
+            return self._tool_context_factory(self._task.task_id)
+        try:
+            signature.bind(self._task.task_id)
+        except TypeError:
+            return self._tool_context_factory()
+        return self._tool_context_factory(self._task.task_id)
 
     def _failed_tool_result(
         self, tool_name: str, error_code: str, error_message: str

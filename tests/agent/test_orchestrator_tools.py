@@ -7,6 +7,7 @@ from data_analysis_agent.domain.models import AnalysisTask
 from data_analysis_agent.tools import (
     ToolDefinition,
     ToolExecutor,
+    ToolContext,
     ToolRegistry,
     ToolRiskLevel,
 )
@@ -79,9 +80,42 @@ def test_allowed_tool_is_executed_with_the_orchestrator_task_id_and_recorded():
         "duration_ms",
     }
     assert tool_event.metadata["tool_name"] == "validate_metric"
-    assert result.state.tool_calls[0].tool_name == "validate_metric"
-    assert result.state.tool_calls[0].arguments == {"value": 7}
-    assert result.state.tool_calls[0].result == {"result": 7}
+    tool_call = result.state.tool_calls[0]
+    assert tool_call.task_id == task.task_id
+    assert str(tool_call.tool_call_id) == tool_event.metadata["call_id"]
+    assert tool_call.tool_name == "validate_metric"
+    assert tool_call.arguments == {"value": 7}
+    assert tool_call.result == {"result": 7}
+    assert tool_call.status is ToolCallStatus.SUCCEEDED
+    assert tool_call.started_at is not None
+    assert tool_call.finished_at is not None
+    assert tool_call.started_at <= tool_call.finished_at
+
+
+def test_tool_context_factory_supports_zero_and_one_argument_callables():
+    for factory in (
+        lambda task_id: ToolContext(task_id=task_id),
+        lambda: ToolContext(task_id=task.task_id),
+    ):
+        seen = []
+        task = AnalysisTask(query="factory")
+        handlers = _handlers()
+
+        def validate(stage_input, call_tool):
+            result = call_tool("validate_metric", {"value": 3})
+            assert result.status is ToolCallStatus.SUCCEEDED
+            return StageResult()
+
+        handlers[TaskStatus.ANALYZING] = validate
+        result = AgentOrchestrator(
+            task=task,
+            handlers=handlers,
+            tool_executor=ToolExecutor(_registry(seen)),
+            tool_context_factory=factory,
+        ).run()
+
+        assert result.status is TaskStatus.COMPLETED
+        assert seen == [(3, task.task_id)]
 
 
 def test_tool_not_allowed_for_the_current_stage_never_reaches_the_handler():
