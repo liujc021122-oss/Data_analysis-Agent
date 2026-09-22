@@ -251,6 +251,17 @@ py -3 -m pytest -q
 python -m data_analysis_agent --help
 ```
 
+### M08 编排器与离线验证
+
+`DataAnalysisAgent` remains the compatibility facade for existing callers. 生产调用方可以使用 `AgentOrchestrator`，并通过 typed handlers、checkpoints 和 orchestration result 接入固定阶段流程。M08 不新增持久化要求。
+
+模块启动和 agent 离线测试：
+
+```powershell
+python -m data_analysis_agent --help
+pytest tests/agent -q
+```
+
 ### 文件存储抽象
 
 数据集、图表和报告通过统一的 `Storage` 接口保存。开发和测试环境默认使用
