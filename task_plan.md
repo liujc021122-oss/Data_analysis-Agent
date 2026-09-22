@@ -1,58 +1,30 @@
-# M02 Task 6 Plan
+# M09 安全代码执行沙箱实施计划
 
 ## Goal
 
-Verify the domain, persistence, and API model boundaries; preserve M00/M01 behavior; record and commit the complete no-key regression evidence.
+在 M08 状态机基础上，把生产代码执行迁移到一次性受限容器，并保留 development/test 的本地 IPython 兼容能力；生产环境绝不回退到进程内执行。
 
 ## Phases
 
-- [x] Write and run the cross-layer tests (TDD RED/GREEN evidence)
-- [x] Run compile, full no-key regression, help, dependency, diff, and external-import checks
-- [x] Update progress, findings, and task report with exact evidence
-- [x] Commit Task 6 changes and verify the final commit
+1. [ ] 执行模型、限制策略和稳定错误契约
+2. [ ] 本地后端与旧 `CodeExecutor` 兼容门面
+3. [ ] 容器运行时协议与 `ContainerCodeExecutor`
+4. [ ] 配置选择和生产 fail-closed 边界
+5. [ ] Agent/任务执行路径接入统一执行接口
+6. [ ] 安全回归、审计元数据和文档
+7. [ ] 全量验证与 whole-branch review
 
-## Evidence
+## Decisions
 
-- Cross-layer contract tests: `2 passed in 3.45s`.
-- Full no-key regression: `162 passed` after final domain snapshot hardening.
-- Compileall, module help, root help, pip check, diff check, and external import verification exited 0.
-- The specified external command first failed with exit `9009` because `Get-Command python` resolved to the WindowsApps alias; the safe explicit-venv interpreter rerun passed.
-- No Agent/Worker/API runtime orchestration was added or changed.
-- Final hardening commits: `da11b9f`, `22e2275`, `f66e235`, and `cc384f7` close immutable snapshot, canonical JSON, UTC, cycle/key, and stable-set-sorting boundaries.
+- 基线：M08 `a74afc2`。
+- 生产 `APP_ENV=production` 强制 `container`；Docker 不可用、镜像缺失或容器失败都返回稳定错误，不回退 local。
+- 测试默认使用 fake container runtime；真实 Docker 只作为显式环境集成测试。
+- 原始代码、密钥、宿主绝对路径和未截断大输出不写入日志或审计记录。
+- 旧 `CodeExecutor.execute_code()` 只作为 development/test 兼容入口。
 
-## Constraints
-
-- Do not change M00/M01 runtime orchestration.
-- Do not add API keys, virtual environments, temporary external directories, or generated reports to Git.
-- Preserve the existing SDD ledger at `.git/worktrees/m02-domain-models/sdd/progress.md`.
-
-## M03 Final Review Fix: ordered task-dataset associations
-
-### Goal
-
-Persist request tuple order for task datasets across creation, reload, restart, and idempotent lookup while preserving ownership, foreign keys, duplicate protection, and order-sensitive request hashing.
-
-### Phases
-
-- [x] Add order regression and migration assertions; run RED.
-- [x] Implement ORM/repository/service ordering and reversible migration; run GREEN.
-- [x] Run focused/full verification and SQLite migration lifecycle checks.
-- [x] Update SDD report, self-review, and commit all changes.
-
-### Errors Encountered
+## Errors Encountered
 
 | Error | Attempt | Resolution |
-|---|---:|---|
-| PowerShell smoke wrapper | 1 | Simplified to direct explicit-venv Python invocation; smoke passed |
+| --- | --- | --- |
+| M09 worktree initially based on main before M08 | 1 | Removed untouched worktree and recreated from `a74afc2` |
 
-## Task 3: encoding correctness
-
-### Goal
-
-Preserve valid non-BOM UTF-8 dataset text before heuristic charset detection, while requiring a meaningful normalizer score and retaining strict Chinese-encoding fallbacks.
-
-### Phases
-
-- [x] Reproduce the UTF-8 Chinese mojibake and add a failing regression test.
-- [x] Implement ordered decoding and run focused tests.
-- [x] Run the required full verification, write the SDD report, and commit.
