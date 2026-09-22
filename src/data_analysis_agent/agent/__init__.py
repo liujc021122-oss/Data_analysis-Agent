@@ -26,6 +26,7 @@ from .orchestrator import (
     TERMINAL_STATUSES,
     AgentOrchestrator,
 )
+from .legacy_adapter import LegacyAnalysisAdapter
 
 __all__ = [
     "DataAnalysisAgent",
@@ -35,6 +36,7 @@ __all__ = [
     "quick_analysis",
     "ACTIVE_STAGES",
     "AgentOrchestrator",
+    "LegacyAnalysisAdapter",
     "AgentCheckpoint",
     "AgentOrchestrationError",
     "DisallowedToolError",
