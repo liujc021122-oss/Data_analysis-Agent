@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping
 import inspect
+import json
 from threading import Event
 from time import monotonic
 from typing import Any
@@ -100,7 +101,20 @@ class AgentOrchestrator:
         self._elapsed_runtime = 0.0
         self._runtime_last_reading: float | None = None
 
-    def run(self) -> OrchestrationResult:
+    def run(self, *, checkpoint: AgentCheckpoint | None = None) -> OrchestrationResult:
+        if checkpoint is not None:
+            if not self._restore_checkpoint(checkpoint):
+                return self._terminal_failure(
+                    "ORCHESTRATOR_INVALID_CHECKPOINT", "checkpoint is invalid"
+                )
+            if self._task.status is TaskStatus.COMPLETED:
+                return self._result()
+            if self._task.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
+                return self._result(
+                    error_code=self._task.error_code or "ORCHESTRATOR_TERMINAL_CHECKPOINT",
+                    error_message=self._task.error_message
+                    or "checkpoint is already terminal",
+                )
         self._runtime_last_reading = monotonic()
         if self._task.status is TaskStatus.PENDING:
             self._transition(TaskStatus.QUEUED)
@@ -127,6 +141,11 @@ class AgentOrchestrator:
                     "maximum model calls exceeded",
                 )
             stage = self._task.status
+            if stage is TaskStatus.REPORTING and (
+                self._report_generated or self._state.report_artifacts
+            ):
+                self._transition(TaskStatus.COMPLETED)
+                continue
             attempt = self._stage_attempts.get(stage.value, 0)
             stage_input = StageInput(
                 task=self._task,
@@ -175,7 +194,9 @@ class AgentOrchestrator:
                 self._state = self._state.model_copy(
                     update={"context": dict(self._context), "updated_at": utc_now()}
                 )
-            if result.output is not None:
+            if stage is TaskStatus.REPORTING and isinstance(result.output, Mapping):
+                self._output.update(result.output)
+            elif result.output is not None:
                 self._output[stage.value] = result.output
             if result.failure is not None:
                 self._append_error_event(
@@ -224,6 +245,44 @@ class AgentOrchestrator:
             context=dict(self._context),
             output=dict(self._output),
         )
+
+    def _restore_checkpoint(self, checkpoint: AgentCheckpoint) -> bool:
+        if not self._is_valid_checkpoint(checkpoint):
+            return False
+        self._task = checkpoint.task.model_copy(deep=True)
+        self._state = checkpoint.state.model_copy(
+            update={"context": dict(checkpoint.context)}, deep=True
+        )
+        self._step_number = checkpoint.step_number
+        self._stage_attempts = dict(checkpoint.stage_attempts)
+        self._context = dict(checkpoint.context)
+        self._output = dict(checkpoint.output)
+        self._report_generated = checkpoint.report_generated
+        self._model_calls = checkpoint.task.model_call_count
+        self._elapsed_runtime = checkpoint.elapsed_runtime_seconds
+        return True
+
+    def _is_valid_checkpoint(self, checkpoint: AgentCheckpoint) -> bool:
+        try:
+            AgentCheckpoint.model_validate(checkpoint.model_dump(mode="json"))
+            json.dumps(checkpoint.context)
+        except (TypeError, ValueError):
+            return False
+        if checkpoint.version != 1:
+            return False
+        if checkpoint.task.task_id != self._task.task_id:
+            return False
+        if checkpoint.state.task_id != checkpoint.task.task_id:
+            return False
+        if checkpoint.task.status is not checkpoint.state.status:
+            return False
+        if checkpoint.task.status not in ACTIVE_STAGES and checkpoint.task.status not in TERMINAL_STATUSES:
+            return False
+        if checkpoint.step_number < 0 or checkpoint.elapsed_runtime_seconds < 0:
+            return False
+        if checkpoint.task.model_call_count < 0:
+            return False
+        return all(attempt >= 0 for attempt in checkpoint.stage_attempts.values())
 
     def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> ToolCallResult:
         if self._cancel_event.is_set():

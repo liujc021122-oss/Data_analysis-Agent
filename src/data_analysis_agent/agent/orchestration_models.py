@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+import json
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -76,6 +77,10 @@ class AgentCheckpoint(OrchestrationModel):
     def validate_stage_attempts(self) -> "AgentCheckpoint":
         if any(attempt < 0 for attempt in self.stage_attempts.values()):
             raise ValueError("stage attempts must be non-negative")
+        try:
+            json.dumps(self.context, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint context must be JSON-safe") from exc
         return self
 
 
