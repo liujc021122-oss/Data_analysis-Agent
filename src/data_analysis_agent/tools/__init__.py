@@ -10,6 +10,7 @@ from .errors import (
     ToolTimeoutError,
     UnknownToolError,
 )
+from .audit import InMemoryToolCallRecorder, ToolAuditRecord, ToolCallRecorder
 from .models import (
     ToolCallRequest,
     ToolCallResult,
@@ -38,4 +39,7 @@ __all__ = [
     "ToolTimeoutError",
     "ToolDependencyError",
     "ToolExecutionError",
+    "ToolAuditRecord",
+    "ToolCallRecorder",
+    "InMemoryToolCallRecorder",
 ]
