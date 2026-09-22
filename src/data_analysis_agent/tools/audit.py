@@ -44,6 +44,11 @@ class ToolAuditRecord(ToolModel):
             raise ValueError("arguments must be a mapping")
         return _snapshot(value)
 
+    @field_validator("arguments", mode="after")
+    @classmethod
+    def _freeze_arguments(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return _freeze(value)
+
     @field_validator("output", "error_code", "error_message", mode="before")
     @classmethod
     def _snapshot_value(cls, value: Any) -> Any:
@@ -123,8 +128,16 @@ def _snapshot(value: Any, *, _seen: set[int] | None = None) -> Any:
     return _UNSERIALIZABLE
 
 
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _FrozenDict({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, tuple):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
 class _FrozenDict(dict[str, Any]):
     def _immutable(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("audit snapshot is immutable")
 
-    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _immutable
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = __ior__ = _immutable

@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import pytest
+
 from data_analysis_agent.domain.enums import ToolCallStatus
 from data_analysis_agent.tools.audit import InMemoryToolCallRecorder, ToolAuditRecord
 
@@ -62,3 +64,21 @@ def test_audit_snapshot_caps_strings_mappings_and_sequences():
     assert len(snapshot.arguments) == 20
     assert all(len(value) == 256 for value in snapshot.arguments.values())
     assert snapshot.output == tuple(range(20))
+
+
+def test_audit_snapshot_rejects_in_place_mapping_merge():
+    record = ToolAuditRecord(
+        call_id=uuid4(),
+        task_id=uuid4(),
+        tool_name="inspect_dataset",
+        status=ToolCallStatus.SUCCEEDED,
+        started_at="2026-09-21T12:00:00+00:00",
+        finished_at="2026-09-21T12:00:00.010000+00:00",
+        duration_ms=10,
+        arguments={"dataset_id": "ds-1"},
+    )
+
+    with pytest.raises(TypeError, match="audit snapshot is immutable"):
+        record.arguments.__ior__({"unexpected": "value"})
+
+    assert record.arguments == {"dataset_id": "ds-1"}
