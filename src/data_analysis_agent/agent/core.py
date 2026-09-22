@@ -18,7 +18,7 @@ import asyncio
 import inspect
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -49,6 +49,7 @@ from ..storage.errors import StorageError, StorageErrorCode
 from .llm_port import AgentLLMPort
 from .prompts import data_analysis_system_prompt, final_report_system_prompt
 from .schemas import AgentAction
+from ..tools import ToolCallRequest, ToolCallResult, ToolContext, ToolExecutor, ToolRegistry
 
 
 class _EphemeralArtifactRepository:
@@ -145,6 +146,8 @@ class DataAnalysisAgent:
         artifact_storage: ArtifactStorageService | None = None,
         task_id: UUID | None = None,
         llm: Any | None = None,
+        tool_registry: ToolRegistry | None = None,
+        tool_executor: ToolExecutor | None = None,
     ):
         """
         初始化智能体
@@ -160,6 +163,17 @@ class DataAnalysisAgent:
         self._llm_closed = False
         self.llm = llm if llm is not None else LLMHelper(self.config)
         self.llm_port = AgentLLMPort(self.llm, self.config)
+        if (
+            tool_registry is not None
+            and tool_executor is not None
+            and tool_executor.registry is not tool_registry
+        ):
+            raise ValueError("tool_executor and tool_registry must use the same registry")
+        self.tool_executor = (
+            ToolExecutor(tool_registry)
+            if tool_registry is not None and tool_executor is None
+            else tool_executor
+        )
         self.base_output_dir = output_dir
         self.max_rounds = max_rounds
         self.generate_word_report = generate_word_report
@@ -191,6 +205,35 @@ class DataAnalysisAgent:
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
+
+    def execute_tool(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        permissions: Iterable[str] = (),
+        network_allowed: bool = False,
+    ) -> ToolCallResult:
+        """Execute an opt-in typed tool and record its agent-facing result."""
+        if self.tool_executor is None:
+            raise RuntimeError(
+                "tool executor is not configured; pass tool_registry or tool_executor"
+            )
+
+        request = ToolCallRequest(
+            task_id=self.task_id,
+            tool_name=tool_name,
+            arguments=dict(arguments),
+        )
+        context = ToolContext(
+            task_id=self.task_id,
+            user_id=self.dataset_owner_id,
+            permissions=frozenset(permissions),
+            network_allowed=network_allowed,
+        )
+        result = self.tool_executor.execute(request, context)
+        self.conversation_history.append(result.to_agent_payload())
+        return result
 
     def _close_owned_llm(self) -> None:
         """Close only the LLM created by this Agent instance."""

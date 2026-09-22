@@ -316,6 +316,54 @@ markdown_only_agent = DataAnalysisAgent(
 )
 ```
 
+### 可选 typed tool bridge
+
+工具注册与执行是可选的，不会改变旧的 `analyze()` 调用、YAML/action
+兼容契约。可以注入一个带 Pydantic 输入/输出模型的 fake handler：
+
+```python
+from pydantic import BaseModel
+
+from data_analysis_agent import (
+    DataAnalysisAgent,
+    ToolDefinition,
+    ToolRegistry,
+    ToolRiskLevel,
+)
+
+
+class AddInput(BaseModel):
+    value: int
+
+
+class AddOutput(BaseModel):
+    result: int
+
+
+registry = ToolRegistry()
+registry.register(
+    ToolDefinition(
+        name="double_value",
+        description="Double one value.",
+        input_model=AddInput,
+        output_model=AddOutput,
+        side_effect=False,
+        network_access=False,
+        max_runtime_seconds=1,
+        required_permissions=frozenset(),
+        risk_level=ToolRiskLevel.LOW,
+    ),
+    lambda value, context: {"result": value.value * 2},
+)
+
+agent = DataAnalysisAgent(llm=fake_llm, tool_registry=registry)
+result = agent.execute_tool("double_value", {"value": 4})
+```
+
+`execute_tool()` 返回 typed `ToolCallResult`，并把 agent payload 追加到
+`conversation_history`。不传 `tool_registry` 或 `tool_executor` 时，Agent
+仍保持 legacy default；旧 YAML/action 路径继续按原契约运行。
+
 ## 📦 返回值说明
 
 `analyze()` 返回一个包含分析全过程的字典：
