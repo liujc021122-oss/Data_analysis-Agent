@@ -2,11 +2,12 @@ from collections.abc import Callable, Mapping
 from threading import Event
 from time import monotonic
 from typing import Any
+from uuid import UUID, uuid4
 
-from ..domain.enums import TaskEventType, TaskStatus
-from ..domain.models import AgentState, AnalysisTask, TaskEvent, utc_now
+from ..domain.enums import TaskEventType, TaskStatus, ToolCallStatus
+from ..domain.models import AgentState, AnalysisTask, TaskEvent, ToolCall, utc_now
 from ..domain.state import transition_task
-from .orchestration_errors import ToolUnavailableError
+from ..tools import ToolAuditRecord, ToolCallRequest, ToolCallResult, ToolContext
 from .orchestration_models import (
     AgentCheckpoint,
     OrchestrationResult,
@@ -63,7 +64,7 @@ class AgentOrchestrator:
         handlers: Mapping[TaskStatus, StageHandler],
         limits: OrchestratorLimits | None = None,
         tool_executor: Any = None,
-        tool_context_factory: Callable[[], Any] | None = None,
+        tool_context_factory: Callable[[UUID], ToolContext] | None = None,
         initial_state: AgentState | None = None,
     ) -> None:
         state = (
@@ -85,7 +86,7 @@ class AgentOrchestrator:
         self._handlers = dict(handlers)
         self._limits = limits or OrchestratorLimits()
         self._tool_executor = tool_executor
-        self._tool_context_factory = tool_context_factory
+        self._tool_context_factory = tool_context_factory or self._default_tool_context
         self._step_number = 0
         self._stage_attempts: dict[str, int] = {}
         self._context = dict(state.context)
@@ -181,7 +182,10 @@ class AgentOrchestrator:
                     cause_code=result.failure.code,
                 )
                 self._step_number += 1
-                if result.failure.retryable and attempt < self._limits.max_stage_retries:
+                if (
+                    result.failure.retryable
+                    and attempt < self._limits.max_stage_retries
+                ):
                     self._stage_attempts[stage.value] = attempt + 1
                     continue
                 return self._terminal_failure(
@@ -218,8 +222,100 @@ class AgentOrchestrator:
             output=dict(self._output),
         )
 
-    def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
-        raise ToolUnavailableError("tool execution is implemented in Task 4")
+    def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> ToolCallResult:
+        if self._cancel_event.is_set():
+            return self._failed_tool_result(
+                tool_name, "ORCHESTRATOR_CANCELLED", "orchestration cancelled"
+            )
+        if tool_name not in STAGE_ALLOWED_TOOLS[self._state.status]:
+            return self._failed_tool_result(
+                tool_name,
+                "ORCHESTRATOR_TOOL_NOT_ALLOWED",
+                "tool is not allowed in the current stage",
+            )
+        if self._tool_executor is None:
+            return self._failed_tool_result(
+                tool_name,
+                "ORCHESTRATOR_TOOL_UNAVAILABLE",
+                "tool executor is not configured",
+            )
+
+        request = ToolCallRequest(
+            task_id=self._task.task_id,
+            tool_name=tool_name,
+            arguments=dict(arguments),
+        )
+        context = self._tool_context_factory(self._task.task_id)
+        result = self._tool_executor.execute(request, context)
+        self._record_tool_result(request, result)
+        return result
+
+    @staticmethod
+    def _default_tool_context(task_id: UUID) -> ToolContext:
+        return ToolContext(task_id=task_id)
+
+    def _failed_tool_result(
+        self, tool_name: str, error_code: str, error_message: str
+    ) -> ToolCallResult:
+        occurred_at = utc_now()
+        return ToolCallResult(
+            call_id=uuid4(),
+            task_id=self._task.task_id,
+            tool_name=tool_name,
+            status=ToolCallStatus.FAILED,
+            error_code=error_code,
+            error_message=error_message,
+            started_at=occurred_at,
+            finished_at=occurred_at,
+            duration_ms=0,
+        )
+
+    def _record_tool_result(
+        self, request: ToolCallRequest, result: ToolCallResult
+    ) -> None:
+        snapshot = ToolAuditRecord(
+            call_id=result.call_id,
+            task_id=result.task_id,
+            tool_name=result.tool_name,
+            status=result.status,
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+            duration_ms=result.duration_ms,
+            arguments=request.arguments,
+            output=result.output,
+            error_code=result.error_code,
+            error_message=result.error_message,
+        )
+        event = TaskEvent(
+            task_id=self._task.task_id,
+            event_type=TaskEventType.TOOL_CALLED,
+            to_status=self._state.status,
+            metadata={
+                "tool_name": result.tool_name,
+                "call_id": str(result.call_id),
+                "status": result.status.value,
+                "error_code": result.error_code,
+                "duration_ms": result.duration_ms,
+            },
+        )
+        call = ToolCall(
+            tool_call_id=result.call_id,
+            task_id=result.task_id,
+            tool_name=result.tool_name,
+            arguments=dict(snapshot.arguments),
+            result=snapshot.output,
+            status=result.status,
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+            error_message=snapshot.error_message,
+        )
+        self._state = self._state.model_copy(
+            update={
+                "events": (*self._state.events, event),
+                "tool_calls": (*self._state.tool_calls, call),
+                "updated_at": event.occurred_at,
+            }
+        )
 
     def _transition(
         self,
@@ -267,7 +363,10 @@ class AgentOrchestrator:
             },
         )
         self._state = self._state.model_copy(
-            update={"events": (*self._state.events, event), "updated_at": event.occurred_at}
+            update={
+                "events": (*self._state.events, event),
+                "updated_at": event.occurred_at,
+            }
         )
 
     def _terminal_failure(self, code: str, message: str) -> OrchestrationResult:
