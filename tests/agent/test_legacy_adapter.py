@@ -1,3 +1,10 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
+
+from pydantic import BaseModel
+
 from data_analysis_agent.agent.core import DataAnalysisAgent
 from data_analysis_agent.agent.legacy_adapter import LegacyAnalysisAdapter
 from data_analysis_agent.agent.orchestrator import AgentOrchestrator
@@ -5,6 +12,11 @@ from data_analysis_agent.config.llm import LLMConfig
 from data_analysis_agent.domain.enums import TaskStatus
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
 from tests.fixtures.recording_executor import RecordingExecutor
+
+
+class _ReportPayload(BaseModel):
+    report_id: UUID
+    score: float
 
 
 def test_adapter_keeps_execution_failure_as_feedback_for_the_next_model_step(tmp_path, monkeypatch):
@@ -129,3 +141,61 @@ def test_adapter_maps_action_serialization_failure_to_safe_model_error():
     assert error_event.metadata["cause_code"] == "MODEL_ERROR"
     assert "secret" not in result.error_message
     assert "private" not in result.error_message
+
+
+def test_to_legacy_result_normalizes_report_and_agent_values_for_strict_json():
+    task_id = UUID("11111111-1111-1111-1111-111111111111")
+    report_payload = _ReportPayload(report_id=task_id, score=float("nan"))
+    opaque_value = object()
+    agent = object.__new__(DataAnalysisAgent)
+    agent.analysis_results = [
+        {
+            "payload": report_payload,
+            "run_id": task_id,
+            "score": float("inf"),
+            "opaque": opaque_value,
+        }
+    ]
+    agent.conversation_history = [
+        {"role": "assistant", "content": report_payload, "score": float("-inf")}
+    ]
+    agent.current_round = 1
+    agent.session_output_dir = Path("outputs")
+    agent.task_id = task_id
+    agent.artifact_records = [report_payload]
+    agent.storage_error = opaque_value
+    agent._generate_final_report = lambda: {
+        "final_report": report_payload,
+        "report_id": task_id,
+        "report_score": float("nan"),
+        "report_path": Path("report.md"),
+    }
+
+    adapter = LegacyAnalysisAdapter(
+        agent=agent,
+        user_input="offline",
+        dataset_context=[],
+        max_rounds=0,
+    )
+    report_result = adapter._report(None, None)
+    payload = adapter.to_legacy_result(
+        SimpleNamespace(output=report_result.output, task_id=task_id)
+    )
+
+    json.dumps(payload, allow_nan=False)
+
+    safe_model = {"report_id": str(task_id), "score": "nan"}
+    assert payload["final_report"] == safe_model
+    assert payload["report_id"] == str(task_id)
+    assert payload["report_score"] == "nan"
+    assert payload["report_path"] == "report.md"
+    assert payload["analysis_results"][0]["payload"] == safe_model
+    assert payload["analysis_results"][0]["run_id"] == str(task_id)
+    assert payload["analysis_results"][0]["score"] == "inf"
+    assert payload["analysis_results"][0]["opaque"] == str(opaque_value)
+    assert payload["conversation_history"][0]["content"] == safe_model
+    assert payload["conversation_history"][0]["score"] == "-inf"
+    assert payload["artifact_records"][0] == safe_model
+    assert payload["session_output_dir"] == "outputs"
+    assert payload["task_id"] == str(task_id)
+    assert payload["storage_error"] == str(opaque_value)

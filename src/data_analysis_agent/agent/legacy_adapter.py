@@ -222,7 +222,7 @@ class LegacyAnalysisAdapter:
                 ),
             }
         )
-        return report_output
+        return self._json_safe(report_output)
 
     @staticmethod
     def _collect_figures(analysis_results: Sequence[Any]) -> list[Any]:
