@@ -1,6 +1,7 @@
 import pytest
+from math import nan
 
-from data_analysis_agent.agent.orchestration_models import AgentCheckpoint, StageResult
+from data_analysis_agent.agent.orchestration_models import AgentCheckpoint, StageFailure, StageResult
 from data_analysis_agent.agent.orchestrator import AgentOrchestrator
 from data_analysis_agent.domain.enums import ReportFormat, TaskStatus
 from data_analysis_agent.domain.models import AgentState, AnalysisTask, ReportArtifact
@@ -90,6 +91,63 @@ def test_report_generated_checkpoint_skips_report_handler():
     assert result.status is TaskStatus.COMPLETED
     assert calls.count(TaskStatus.REPORTING) == 0
     assert result.checkpoint.report_generated is True
+
+
+def test_non_finite_checkpoint_context_is_invalid_without_handler_calls():
+    task = AnalysisTask(query="non-finite")
+    state = AgentState(task_id=task.task_id, status=TaskStatus.EXPLORING)
+    checkpoint = AgentCheckpoint(
+        task=task.model_copy(update={"status": TaskStatus.EXPLORING}),
+        state=state,
+        step_number=2,
+    ).model_copy(update={"context": {"value": nan}})
+    calls = []
+
+    result = AgentOrchestrator(task=task, handlers=_handlers(calls)).run(checkpoint=checkpoint)
+
+    assert result.status is TaskStatus.FAILED
+    assert result.error_code == "ORCHESTRATOR_INVALID_CHECKPOINT"
+    assert calls == []
+
+
+def test_report_skip_precedes_exhausted_step_budget():
+    task = AnalysisTask(query="report budget")
+    state = AgentState(task_id=task.task_id, status=TaskStatus.REPORTING)
+    checkpoint = AgentCheckpoint(
+        task=task.model_copy(update={"status": TaskStatus.REPORTING}),
+        state=state,
+        step_number=50,
+        report_generated=True,
+    )
+    calls = []
+
+    result = AgentOrchestrator(task=task, handlers=_handlers(calls)).run(checkpoint=checkpoint)
+
+    assert result.status is TaskStatus.COMPLETED
+    assert calls == []
+
+
+def test_failed_report_does_not_persist_output_or_report_flag():
+    task = AnalysisTask(query="failed report")
+    state = AgentState(task_id=task.task_id, status=TaskStatus.REPORTING)
+    checkpoint = AgentCheckpoint(
+        task=task.model_copy(update={"status": TaskStatus.REPORTING}),
+        state=state,
+        step_number=7,
+    )
+    handlers = _handlers([])
+    handlers[TaskStatus.REPORTING] = lambda stage_input, call_tool: StageResult(
+        completed=False,
+        output={"final_report": "# should not persist"},
+        failure=StageFailure(code="REPORT_FAILED", message="offline failure"),
+    )
+
+    result = AgentOrchestrator(task=task, handlers=handlers).run(checkpoint=checkpoint)
+
+    assert result.status is TaskStatus.FAILED
+    assert result.output == {}
+    assert result.checkpoint.output == {}
+    assert result.checkpoint.report_generated is False
 
 
 @pytest.mark.parametrize(

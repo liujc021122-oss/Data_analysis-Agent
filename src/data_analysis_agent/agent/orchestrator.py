@@ -122,6 +122,12 @@ class AgentOrchestrator:
             self._transition(TaskStatus.RUNNING)
 
         while self._task.status in ACTIVE_STAGES:
+            stage = self._task.status
+            if stage is TaskStatus.REPORTING and (
+                self._report_generated or self._state.report_artifacts
+            ):
+                self._transition(TaskStatus.COMPLETED)
+                continue
             if self._cancel_event.is_set():
                 return self._cancelled_result()
             if self._step_number >= self._limits.max_steps:
@@ -140,12 +146,6 @@ class AgentOrchestrator:
                     "ORCHESTRATOR_MAX_MODEL_CALLS",
                     "maximum model calls exceeded",
                 )
-            stage = self._task.status
-            if stage is TaskStatus.REPORTING and (
-                self._report_generated or self._state.report_artifacts
-            ):
-                self._transition(TaskStatus.COMPLETED)
-                continue
             attempt = self._stage_attempts.get(stage.value, 0)
             stage_input = StageInput(
                 task=self._task,
@@ -194,10 +194,6 @@ class AgentOrchestrator:
                 self._state = self._state.model_copy(
                     update={"context": dict(self._context), "updated_at": utc_now()}
                 )
-            if stage is TaskStatus.REPORTING and isinstance(result.output, Mapping):
-                self._output.update(result.output)
-            elif result.output is not None:
-                self._output[stage.value] = result.output
             if result.failure is not None:
                 self._append_error_event(
                     stage,
@@ -215,6 +211,10 @@ class AgentOrchestrator:
                 return self._terminal_failure(
                     "ORCHESTRATOR_STAGE_FAILED", "stage execution failed"
                 )
+            if stage is TaskStatus.REPORTING and isinstance(result.output, Mapping):
+                self._output.update(result.output)
+            elif result.output is not None:
+                self._output[stage.value] = result.output
             self._step_number += 1
             if not result.completed:
                 continue
@@ -264,8 +264,9 @@ class AgentOrchestrator:
 
     def _is_valid_checkpoint(self, checkpoint: AgentCheckpoint) -> bool:
         try:
-            AgentCheckpoint.model_validate(checkpoint.model_dump(mode="json"))
-            json.dumps(checkpoint.context)
+            payload = checkpoint.model_dump(mode="json")
+            json.dumps(payload, allow_nan=False)
+            AgentCheckpoint.model_validate(payload)
         except (TypeError, ValueError):
             return False
         if checkpoint.version != 1:
