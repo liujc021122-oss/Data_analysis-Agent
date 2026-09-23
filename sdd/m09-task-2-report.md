@@ -95,22 +95,32 @@ Result: **64 passed, 5 warnings in 11.84s**.
 - The change set is limited to the local executor, its focused tests, and
   this report; Docker/configuration/Agent wiring was not changed.
 
-Full offline-suite attempt:
+Full offline-suite verification:
 
 ```powershell
 $env:PYTHONPATH='.;src'
 py -3.12 -m pytest -q
 ```
 
-The run was terminated after visible progress reached approximately 70%.
-The visible output included `s.sF` and therefore at least one failure, but
-pytest produced no final summary or reliable exit code. The full suite is
-recorded as incomplete, not passing.
+Result: **709 passed, 3 skipped, 3 failed, 18 warnings in 56.67s**.
+
+The three failures are the same pre-existing Agent/storage failures already
+recorded in the Task 1 report; none exercises the changed local executor
+implementation:
+
+- `tests/test_final_review_fixes.py::test_agent_error_feedback_and_report_fallback_redact_secret`
+- `tests/storage/test_agent_storage_integration.py::test_storage_backed_analysis_uploads_chart_and_markdown_without_local_download_paths`
+- `tests/storage/test_agent_storage_integration.py::test_failed_analysis_cleans_staged_directory_and_uploaded_artifacts`
+
+The full suite therefore has a reliable result but is not globally green.
 
 ## Concerns
 
 - The symlink regression remains environment-skipped when symlink creation is
   unavailable.
+- The repository baseline still has the three Agent/storage failures listed
+  above; they are outside this Task 2 change set and were already present in
+  the Task 1 full-suite result.
 - Existing Pydantic protected-namespace and IPython deprecation warnings
   remain unchanged.
 - Production isolation and hard timeout/resource enforcement remain outside
