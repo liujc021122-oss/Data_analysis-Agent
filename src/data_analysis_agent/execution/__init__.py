@@ -1,4 +1,4 @@
-from .code_executor import CodeExecutor
+from .code_executor import CodeExecutor, LocalCodeExecutor
 from .backend import CodeExecutionBackend
 from .errors import (
     MAX_SAFE_TEXT_LENGTH,
@@ -8,6 +8,7 @@ from .errors import (
     ContainerFailureError,
     ExecutionError,
     ExecutionErrorCode,
+    ExecutionFailureError,
     ExecutionTimeoutError,
     FileLimitError,
     NetworkDeniedError,
@@ -42,6 +43,7 @@ from .models import (
 
 __all__ = [
     "CodeExecutor",
+    "LocalCodeExecutor",
     "CodeExecutionBackend",
     "DEFAULT_CPU_LIMIT",
     "DEFAULT_MAX_FILES",
@@ -62,6 +64,7 @@ __all__ = [
     "ContainerFailureError",
     "ExecutionError",
     "ExecutionErrorCode",
+    "ExecutionFailureError",
     "ExecutionFile",
     "ExecutionInput",
     "ExecutionLimits",

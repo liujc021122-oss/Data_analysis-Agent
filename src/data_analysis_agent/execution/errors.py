@@ -66,6 +66,7 @@ def sanitize_execution_text(
 class ExecutionErrorCode(str, Enum):
     CONFIGURATION_MISSING = "CONFIGURATION_MISSING"
     BACKEND_UNAVAILABLE = "BACKEND_UNAVAILABLE"
+    EXECUTION_FAILED = "EXECUTION_FAILED"
     TIMEOUT = "TIMEOUT"
     RESOURCE_LIMIT = "RESOURCE_LIMIT"
     OUTPUT_LIMIT = "OUTPUT_LIMIT"
@@ -103,6 +104,11 @@ class ConfigurationMissingError(ExecutionError):
 class BackendUnavailableError(ExecutionError):
     code = ExecutionErrorCode.BACKEND_UNAVAILABLE.value
     default_message = "execution backend is unavailable"
+
+
+class ExecutionFailureError(ExecutionError):
+    code = ExecutionErrorCode.EXECUTION_FAILED.value
+    default_message = "code execution failed"
 
 
 class ExecutionTimeoutError(ExecutionError):
@@ -153,6 +159,7 @@ __all__ = [
     "ContainerFailureError",
     "ExecutionError",
     "ExecutionErrorCode",
+    "ExecutionFailureError",
     "ExecutionTimeoutError",
     "FileLimitError",
     "NetworkDeniedError",

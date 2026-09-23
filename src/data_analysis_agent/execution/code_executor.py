@@ -9,6 +9,10 @@ import ast
 import builtins
 import traceback
 import io
+import mimetypes
+import time
+from hashlib import sha256
+from pathlib import Path
 from typing import Dict, Any, Iterable, List, Optional, Tuple
 from contextlib import redirect_stdout, redirect_stderr
 from IPython.core.interactiveshell import InteractiveShell
@@ -18,10 +22,20 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import pandas as pd
 
-class CodeExecutor:
+from .errors import ExecutionErrorCode, sanitize_execution_text
+from .models import ExecutionFile, ExecutionRequest, ExecutionResult
+
+
+class LocalCodeExecutor:
     """
-    安全的代码执行器，限制依赖库，捕获输出，支持图片保存与路径输出
+    Development/test-only IPython execution backend.
+
+    This class deliberately retains the historical in-process behavior for
+    compatibility. It is not a security boundary and must not be selected for
+    production execution; the production backend is introduced in a later M09
+    task.
     """
+    production_safe = False
     ALLOWED_IMPORTS = {
         'pandas', 'pd',
         'numpy', 'np',
@@ -424,6 +438,183 @@ from IPython.display import display
                 set(plt.get_fignums()) - figures_before
             )
 
+    @staticmethod
+    def _truncate_utf8(value: Any, limit: int) -> tuple[str, bool]:
+        """Bound text by UTF-8 bytes while keeping diagnostics readable."""
+        text = str(value or "")
+        encoded = text.encode("utf-8", errors="replace")
+        if len(encoded) <= limit:
+            return text, False
+        if limit <= 0:
+            return "", True
+
+        suffix = "...[truncated]"
+        suffix_bytes = suffix.encode("utf-8")
+        if len(suffix_bytes) >= limit:
+            return encoded[:limit].decode("utf-8", errors="ignore"), True
+        prefix = encoded[: limit - len(suffix_bytes)].decode("utf-8", errors="ignore")
+        return prefix + suffix, True
+
+    @classmethod
+    def _bound_streams(
+        cls, stdout: Any, stderr: Any, limit: int
+    ) -> tuple[str, str, bool]:
+        """Bound combined stdout/stderr bytes without returning large output."""
+        stdout_text = str(stdout or "")
+        stderr_text = str(stderr or "")
+        total_bytes = len(stdout_text.encode("utf-8", errors="replace")) + len(
+            stderr_text.encode("utf-8", errors="replace")
+        )
+        bounded_stdout, stdout_truncated = cls._truncate_utf8(stdout_text, limit)
+        remaining = max(0, limit - len(bounded_stdout.encode("utf-8")))
+        bounded_stderr, stderr_truncated = cls._truncate_utf8(stderr_text, remaining)
+        return (
+            bounded_stdout,
+            bounded_stderr,
+            total_bytes > limit or stdout_truncated or stderr_truncated,
+        )
+
+    @staticmethod
+    def _file_metadata(root: Path, path: Path) -> ExecutionFile:
+        """Build bounded metadata for one file already proven inside root."""
+        digest = sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        relative_name = path.relative_to(root).as_posix()
+        mime_type, _ = mimetypes.guess_type(path.name)
+        return ExecutionFile(
+            logical_name=relative_name,
+            size_bytes=path.stat().st_size,
+            sha256=digest.hexdigest(),
+            mime_type=mime_type,
+        )
+
+    @classmethod
+    def _collect_output_files(
+        cls, request: ExecutionRequest
+    ) -> tuple[tuple[ExecutionFile, ...], ExecutionErrorCode | None, str | None]:
+        """Collect only regular files whose resolved paths remain in output_dir."""
+        root = request.output_dir.resolve(strict=False)
+        files: list[ExecutionFile] = []
+        try:
+            candidates = sorted(root.rglob("*"), key=lambda item: item.as_posix())
+            for candidate in candidates:
+                if candidate.is_symlink():
+                    resolved = candidate.resolve(strict=False)
+                    try:
+                        resolved.relative_to(root)
+                    except ValueError:
+                        return (
+                            (),
+                            ExecutionErrorCode.PATH_TRAVERSAL,
+                            "generated file escaped output scope",
+                        )
+                if candidate.is_dir():
+                    continue
+                resolved = candidate.resolve(strict=False)
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    return (), ExecutionErrorCode.PATH_TRAVERSAL, "generated file escaped output scope"
+                if not candidate.is_file():
+                    continue
+                files.append(cls._file_metadata(root, candidate))
+                if len(files) > request.limits.max_files:
+                    return (), ExecutionErrorCode.FILE_LIMIT, "output file count exceeded configured limit"
+        except OSError:
+            return (), ExecutionErrorCode.EXECUTION_FAILED, "output file metadata could not be collected"
+        return tuple(files), None, None
+
+    def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        """Execute a typed request and return the bounded M09 result contract."""
+        started = time.perf_counter()
+        sentinel = object()
+        previous_output_dir = self.shell.user_ns.get("session_output_dir", sentinel)
+
+        try:
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            self.shell.user_ns["session_output_dir"] = str(request.output_dir)
+            legacy_result = self.execute_code(request.code)
+            duration_ms = (time.perf_counter() - started) * 1000
+            stdout, stderr, output_limited = self._bound_streams(
+                legacy_result.get("output", ""),
+                legacy_result.get("error", ""),
+                request.limits.max_output_bytes,
+            )
+            output_files, file_error_code, file_error_message = self._collect_output_files(
+                request
+            )
+
+            success = bool(legacy_result.get("success"))
+            error_code: ExecutionErrorCode | None = None
+            error_message: str | None = None
+            timed_out = False
+
+            if not success:
+                error_code = ExecutionErrorCode.EXECUTION_FAILED
+                error_message = legacy_result.get("error") or "local code execution failed"
+            if output_limited:
+                success = False
+                error_code = ExecutionErrorCode.OUTPUT_LIMIT
+                error_message = "execution output exceeded configured limit"
+            if file_error_code is not None:
+                success = False
+                error_code = file_error_code
+                error_message = file_error_message
+                output_files = ()
+            if duration_ms > request.limits.timeout_seconds * 1000:
+                success = False
+                timed_out = True
+                error_code = ExecutionErrorCode.TIMEOUT
+                error_message = "local code execution exceeded configured timeout"
+
+            if success:
+                error_code = None
+                error_message = None
+
+            return ExecutionResult(
+                success=success,
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=0 if success else 1,
+                timed_out=timed_out,
+                error_code=error_code,
+                error_message=(
+                    sanitize_execution_text(
+                        error_message or "",
+                        secrets=(request.code,),
+                    )
+                    if error_message is not None
+                    else None
+                ),
+                redaction_secrets=(request.code,),
+                code_sha256=request.code_sha256,
+                duration_ms=duration_ms,
+                output_files=output_files,
+            )
+        except Exception as exc:
+            duration_ms = (time.perf_counter() - started) * 1000
+            return ExecutionResult(
+                success=False,
+                stdout="",
+                stderr="",
+                exit_code=1,
+                error_code=ExecutionErrorCode.EXECUTION_FAILED,
+                error_message=sanitize_execution_text(
+                    "local code execution failed",
+                    secrets=(request.code, str(exc)),
+                ),
+                redaction_secrets=(request.code, str(exc)),
+                code_sha256=request.code_sha256,
+                duration_ms=duration_ms,
+            )
+        finally:
+            if previous_output_dir is sentinel:
+                self.shell.user_ns.pop("session_output_dir", None)
+            else:
+                self.shell.user_ns["session_output_dir"] = previous_output_dir
+
     def reset_environment(self):
         """重置执行环境"""
         self.shell.reset()
@@ -478,3 +669,12 @@ from IPython.display import display
             )
 
         return "\n".join(info_parts)
+
+
+class CodeExecutor(LocalCodeExecutor):
+    """Backward-compatible development/test facade for the local backend."""
+
+    pass
+
+
+__all__ = ["CodeExecutor", "LocalCodeExecutor"]
