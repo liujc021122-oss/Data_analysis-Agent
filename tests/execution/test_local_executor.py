@@ -1,7 +1,12 @@
 from hashlib import sha256
 from pathlib import Path
+import time
 from uuid import uuid4
 
+import pytest
+import matplotlib.pyplot as plt
+
+import data_analysis_agent.execution.code_executor as code_executor_module
 from data_analysis_agent.execution import (
     CodeExecutor,
     ExecutionErrorCode,
@@ -87,6 +92,144 @@ def test_local_backend_marks_stdout_limit_and_bounds_feedback(tmp_path):
     assert "output" in result.error_message.lower()
 
 
+def test_local_backend_stops_code_when_output_limit_is_reached(tmp_path):
+    executor = LocalCodeExecutor(tmp_path / "legacy")
+    request = make_request(
+        tmp_path,
+        "print('x' * 400)\n"
+        "reached_after_output_limit = True",
+        limits=ExecutionLimits(max_output_bytes=64),
+    )
+
+    result = executor.execute(request)
+
+    assert result.error_code is ExecutionErrorCode.OUTPUT_LIMIT
+    assert "reached_after_output_limit" not in executor.shell.user_ns
+    assert len(result.stdout.encode("utf-8")) + len(result.stderr.encode("utf-8")) <= 64
+
+
+def test_local_backend_classifies_overdue_in_process_execution(tmp_path):
+    executor = LocalCodeExecutor(tmp_path / "legacy")
+    request = make_request(
+        tmp_path,
+        "import time\n"
+        "time.sleep(0.05)",
+        limits=ExecutionLimits(timeout_seconds=0.01),
+    )
+
+    started = time.perf_counter()
+    result = executor.execute(request)
+
+    assert time.perf_counter() - started < 1.0
+    assert result.success is False
+    assert result.timed_out is True
+    assert result.error_code is ExecutionErrorCode.TIMEOUT
+
+
+def test_output_collection_stops_before_hashing_beyond_file_limit(tmp_path, monkeypatch):
+    request = make_request(
+        tmp_path,
+        "pass",
+        limits=ExecutionLimits(max_files=1, max_output_bytes=1024),
+    )
+    (request.output_dir / "a.bin").write_bytes(b"a")
+    (request.output_dir / "b.bin").write_bytes(b"b")
+    hashed: list[str] = []
+    original = LocalCodeExecutor._file_metadata
+
+    def record_hash(root, path):
+        hashed.append(path.name)
+        return original(root, path)
+
+    monkeypatch.setattr(LocalCodeExecutor, "_file_metadata", staticmethod(record_hash))
+
+    files, error_code, _ = LocalCodeExecutor._collect_output_files(request)
+
+    assert files == ()
+    assert error_code is ExecutionErrorCode.FILE_LIMIT
+    assert hashed == ["a.bin"]
+
+
+def test_output_collection_stops_before_hashing_beyond_byte_limit(tmp_path, monkeypatch):
+    request = make_request(
+        tmp_path,
+        "pass",
+        limits=ExecutionLimits(max_files=10, max_output_bytes=5),
+    )
+    (request.output_dir / "a.bin").write_bytes(b"1234")
+    (request.output_dir / "b.bin").write_bytes(b"5678")
+    hashed: list[str] = []
+    original = LocalCodeExecutor._file_metadata
+
+    def record_hash(root, path):
+        hashed.append(path.name)
+        return original(root, path)
+
+    monkeypatch.setattr(LocalCodeExecutor, "_file_metadata", staticmethod(record_hash))
+
+    files, error_code, _ = LocalCodeExecutor._collect_output_files(request)
+
+    assert files == ()
+    assert error_code is ExecutionErrorCode.OUTPUT_LIMIT
+    assert hashed == ["a.bin"]
+
+
+def test_output_collection_rejects_escaped_symlink_before_hashing(tmp_path, monkeypatch):
+    request = make_request(tmp_path, "pass")
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"secret")
+    escaped = request.output_dir / "escaped.bin"
+    try:
+        escaped.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable in this environment")
+
+    hashed: list[str] = []
+
+    def fail_if_hashed(root, path):
+        hashed.append(path.name)
+        raise AssertionError("escaped symlink was hashed")
+
+    monkeypatch.setattr(LocalCodeExecutor, "_file_metadata", staticmethod(fail_if_hashed))
+
+    files, error_code, _ = LocalCodeExecutor._collect_output_files(request)
+
+    assert files == ()
+    assert error_code is ExecutionErrorCode.PATH_TRAVERSAL
+    assert hashed == []
+
+
+def test_local_backend_measures_duration_after_output_collection(tmp_path, monkeypatch):
+    executor = LocalCodeExecutor(tmp_path / "legacy")
+    request = make_request(
+        tmp_path,
+        "pass",
+        limits=ExecutionLimits(timeout_seconds=0.1),
+    )
+    clock_values = iter((100.0, 100.250))
+    monkeypatch.setattr(
+        code_executor_module.time,
+        "perf_counter",
+        lambda: next(clock_values),
+    )
+    monkeypatch.setattr(
+        executor,
+        "execute_code",
+        lambda code, **kwargs: {
+            "success": True,
+            "output": "",
+            "error": "",
+            "variables": {},
+        },
+    )
+    monkeypatch.setattr(executor, "_collect_output_files", lambda request: ((), None, None))
+
+    result = executor.execute(request)
+
+    assert result.duration_ms == pytest.approx(250.0)
+    assert result.error_code is ExecutionErrorCode.TIMEOUT
+
+
 def test_legacy_code_executor_preserves_execute_code_and_set_variable(tmp_path):
     executor = CodeExecutor(tmp_path / "legacy")
     executor.set_variable("answer", 42)
@@ -122,9 +265,22 @@ def test_legacy_reset_does_not_close_figures_owned_by_another_executor(tmp_path)
     first = CodeExecutor(tmp_path / "first")
     second = CodeExecutor(tmp_path / "second")
 
-    first.set_variable("value", 1)
-    second.set_variable("value", 2)
-    second.reset_environment()
+    before = set(plt.get_fignums())
+    try:
+        first.set_variable("value", 1)
+        second.set_variable("value", 2)
+        first.execute_code("owned_figure = plt.figure()")
+        owned_by_first = set(plt.get_fignums()) - before
+        assert owned_by_first
 
-    assert first.execute_code("print(value)")["output"].strip() == "1"
-    assert second.execute_code("print('value' in globals())")["output"].strip() == "False"
+        second.reset_environment()
+
+        assert owned_by_first <= set(plt.get_fignums())
+        assert first.execute_code("print(value)")["output"].strip() == "1"
+        assert second.execute_code("print('value' in globals())")["output"].strip() == "False"
+
+        first.reset_environment()
+        assert owned_by_first.isdisjoint(set(plt.get_fignums()))
+    finally:
+        for figure_number in owned_by_first if "owned_by_first" in locals() else ():
+            plt.close(figure_number)

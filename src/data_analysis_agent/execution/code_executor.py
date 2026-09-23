@@ -14,7 +14,7 @@ import time
 from hashlib import sha256
 from pathlib import Path
 from typing import Dict, Any, Iterable, List, Optional, Tuple
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import ExitStack, redirect_stdout, redirect_stderr
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.utils.capture import capture_output
 import matplotlib
@@ -24,6 +24,65 @@ import pandas as pd
 
 from .errors import ExecutionErrorCode, sanitize_execution_text
 from .models import ExecutionFile, ExecutionRequest, ExecutionResult
+
+
+class _OutputLimitReached(RuntimeError):
+    """Internal signal used to stop typed execution at the output boundary."""
+
+
+class _SharedOutputBudget:
+    """Track one UTF-8 byte budget shared by stdout and stderr."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.used = 0
+        self.exceeded = False
+
+    def accept(self, value: str) -> str:
+        encoded = value.encode("utf-8", errors="replace")
+        remaining = self.limit - self.used
+        if not encoded:
+            return ""
+        if remaining <= 0:
+            self.exceeded = True
+            raise _OutputLimitReached
+        if len(encoded) <= remaining:
+            self.used += len(encoded)
+            return value
+
+        accepted = encoded[:remaining].decode("utf-8", errors="ignore")
+        self.used += len(accepted.encode("utf-8", errors="replace"))
+        self.exceeded = True
+        return accepted
+
+
+class _BoundedTextWriter:
+    """Text stream that never stores more than the shared UTF-8 byte budget."""
+
+    def __init__(self, budget: _SharedOutputBudget):
+        self._budget = budget
+        self._chunks: list[str] = []
+
+    def write(self, value: Any) -> int:
+        text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+        accepted = self._budget.accept(text)
+        self._chunks.append(accepted)
+        if self._budget.exceeded:
+            raise _OutputLimitReached
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+    @property
+    def encoding(self) -> str:
+        return "utf-8"
+
+    def getvalue(self) -> str:
+        return "".join(self._chunks)
 
 
 class LocalCodeExecutor:
@@ -338,7 +397,13 @@ from IPython.display import display
 
         return self._safe_object_text(obj)
 
-    def execute_code(self, code: str) -> Dict[str, Any]:
+    def execute_code(
+        self,
+        code: str,
+        *,
+        _stdout_writer: _BoundedTextWriter | None = None,
+        _stderr_writer: _BoundedTextWriter | None = None,
+    ) -> Dict[str, Any]:
         """
         执行代码并返回结果
 
@@ -368,68 +433,97 @@ from IPython.display import display
         vars_before = set(self.shell.user_ns.keys())
         figures_before = set(plt.get_fignums())
 
+        captured = None
         try:
-            # 使用IPython的capture_output来捕获所有输出
-            with capture_output() as captured:
+            with ExitStack() as output_stack:
+                if _stdout_writer is None:
+                    captured = output_stack.enter_context(capture_output())
+                else:
+                    output_stack.enter_context(redirect_stdout(_stdout_writer))
+                    output_stack.enter_context(
+                        redirect_stderr(_stderr_writer or _stdout_writer)
+                    )
+
                 result = self.shell.run_cell(code)
+                captured_stdout = (
+                    captured.stdout
+                    if captured is not None
+                    else _stdout_writer.getvalue()
+                )
+                if _stdout_writer is None:
+                    # Keep the legacy facade's post-execution formatting and
+                    # printing behavior outside IPython's capture context.
+                    output_stack.close()
 
-            # 检查执行结果
-            if result.error_before_exec:
+                # 检查执行结果
+                if result.error_before_exec:
+                    self._refresh_sensitive_values()
+                    error_msg = self._redact_text(result.error_before_exec)
+                    return {
+                        'success': False,
+                        'output': self._redact_text(captured_stdout),
+                        'error': f"执行前错误: {error_msg}",
+                        'variables': {}
+                    }
+
+                if result.error_in_exec:
+                    self._refresh_sensitive_values()
+                    error_msg = self._redact_text(result.error_in_exec)
+                    return {
+                        'success': False,
+                        'output': self._redact_text(captured_stdout),
+                        'error': f"执行错误: {error_msg}",
+                        'variables': {}
+                    }
+
+                # 获取输出
+                output = captured_stdout
+
+                # 如果有返回值，添加到输出
+                if result.result is not None:
+                    formatted_result = self._format_table_output(result.result)
+                    if _stdout_writer is None:
+                        output += f"\n{formatted_result}"
+                    else:
+                        _stdout_writer.write(f"\n{formatted_result}")
+                        output = _stdout_writer.getvalue()
+
+                # 记录新产生的重要变量（简化版本）
+                vars_after = set(self.shell.user_ns.keys())
+                new_vars = vars_after - vars_before
+
+                # 只记录新创建的DataFrame等重要数据结构
+                important_new_vars = {}
+                for var_name in new_vars:
+                    if not var_name.startswith('_'):
+                        try:
+                            var_value = self.shell.user_ns[var_name]
+                            if hasattr(var_value, 'shape'):  # pandas DataFrame, numpy array
+                                important_new_vars[var_name] = f"{type(var_value).__name__} with shape {var_value.shape}"
+                            elif var_name in ['session_output_dir']:  # 重要的配置变量
+                                important_new_vars[var_name] = str(var_value)
+                        except:
+                            pass
+
                 self._refresh_sensitive_values()
-                error_msg = self._redact_text(result.error_before_exec)
                 return {
-                    'success': False,
-                    'output': self._redact_text(captured.stdout),
-                    'error': f"执行前错误: {error_msg}",
-                    'variables': {}
+                    'success': True,
+                    'output': self._redact_text(output),
+                    'error': '',
+                    'variables': important_new_vars
                 }
-
-            if result.error_in_exec:
-                self._refresh_sensitive_values()
-                error_msg = self._redact_text(result.error_in_exec)
-                return {
-                    'success': False,
-                    'output': self._redact_text(captured.stdout),
-                    'error': f"执行错误: {error_msg}",
-                    'variables': {}
-                }
-
-            # 获取输出
-            output = captured.stdout
-
-            # 如果有返回值，添加到输出
-            if result.result is not None:
-                formatted_result = self._format_table_output(result.result)
-                output += f"\n{formatted_result}"
-              # 记录新产生的重要变量（简化版本）
-            vars_after = set(self.shell.user_ns.keys())
-            new_vars = vars_after - vars_before
-
-            # 只记录新创建的DataFrame等重要数据结构
-            important_new_vars = {}
-            for var_name in new_vars:
-                if not var_name.startswith('_'):
-                    try:
-                        var_value = self.shell.user_ns[var_name]
-                        if hasattr(var_value, 'shape'):  # pandas DataFrame, numpy array
-                            important_new_vars[var_name] = f"{type(var_value).__name__} with shape {var_value.shape}"
-                        elif var_name in ['session_output_dir']:  # 重要的配置变量
-                            important_new_vars[var_name] = str(var_value)
-                    except:
-                        pass
-
-            self._refresh_sensitive_values()
-            return {
-                'success': True,
-                'output': self._redact_text(output),
-                'error': '',
-                'variables': important_new_vars
-            }
         except Exception as e:
             self._refresh_sensitive_values()
+            captured_output = (
+                captured.stdout
+                if captured is not None
+                else _stdout_writer.getvalue()
+                if _stdout_writer is not None
+                else ''
+            )
             return {
                 'success': False,
-                'output': self._redact_text(captured.stdout if 'captured' in locals() else ''),
+                'output': self._redact_text(captured_output),
                 'error': self._redact_text(f"执行异常: {str(e)}\n{traceback.format_exc()}"),
                 'variables': {}
             }
@@ -497,6 +591,7 @@ from IPython.display import display
         """Collect only regular files whose resolved paths remain in output_dir."""
         root = request.output_dir.resolve(strict=False)
         files: list[ExecutionFile] = []
+        total_bytes = 0
         try:
             candidates = sorted(root.rglob("*"), key=lambda item: item.as_posix())
             for candidate in candidates:
@@ -519,9 +614,21 @@ from IPython.display import display
                     return (), ExecutionErrorCode.PATH_TRAVERSAL, "generated file escaped output scope"
                 if not candidate.is_file():
                     continue
+                if len(files) >= request.limits.max_files:
+                    return (
+                        (),
+                        ExecutionErrorCode.FILE_LIMIT,
+                        "output file count exceeded configured limit",
+                    )
+                candidate_size = candidate.stat().st_size
+                if total_bytes + candidate_size > request.limits.max_output_bytes:
+                    return (
+                        (),
+                        ExecutionErrorCode.OUTPUT_LIMIT,
+                        "output file bytes exceeded configured limit",
+                    )
                 files.append(cls._file_metadata(root, candidate))
-                if len(files) > request.limits.max_files:
-                    return (), ExecutionErrorCode.FILE_LIMIT, "output file count exceeded configured limit"
+                total_bytes += candidate_size
         except OSError:
             return (), ExecutionErrorCode.EXECUTION_FAILED, "output file metadata could not be collected"
         return tuple(files), None, None
@@ -535,16 +642,27 @@ from IPython.display import display
         try:
             request.output_dir.mkdir(parents=True, exist_ok=True)
             self.shell.user_ns["session_output_dir"] = str(request.output_dir)
-            legacy_result = self.execute_code(request.code)
-            duration_ms = (time.perf_counter() - started) * 1000
+            output_budget = _SharedOutputBudget(request.limits.max_output_bytes)
+            stdout_writer = _BoundedTextWriter(output_budget)
+            stderr_writer = _BoundedTextWriter(output_budget)
+            legacy_result = self.execute_code(
+                request.code,
+                _stdout_writer=stdout_writer,
+                _stderr_writer=stderr_writer,
+            )
             stdout, stderr, output_limited = self._bound_streams(
                 legacy_result.get("output", ""),
-                legacy_result.get("error", ""),
+                "\n".join(
+                    value
+                    for value in (stderr_writer.getvalue(), legacy_result.get("error", ""))
+                    if value
+                ),
                 request.limits.max_output_bytes,
             )
             output_files, file_error_code, file_error_message = self._collect_output_files(
                 request
             )
+            duration_ms = (time.perf_counter() - started) * 1000
 
             success = bool(legacy_result.get("success"))
             error_code: ExecutionErrorCode | None = None
@@ -554,7 +672,7 @@ from IPython.display import display
             if not success:
                 error_code = ExecutionErrorCode.EXECUTION_FAILED
                 error_message = legacy_result.get("error") or "local code execution failed"
-            if output_limited:
+            if output_limited or output_budget.exceeded:
                 success = False
                 error_code = ExecutionErrorCode.OUTPUT_LIMIT
                 error_message = "execution output exceeded configured limit"
