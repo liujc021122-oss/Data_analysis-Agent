@@ -10,7 +10,7 @@
 - 📊 **智能可视化**：自动生成高质量的图表，支持中文显示，输出到专用会话目录
 - 🔄 **多轮迭代优化**：基于执行结果自动调整分析策略，持续优化分析质量
 - 📝 **双格式报告**：自动生成包含图表和分析结论的专业报告（Markdown + Word）
-- 🛡️ **安全执行**：基于 IPython 的受限执行环境，仅允许预定义的分析库
+- 🛡️ **安全执行**：生产使用一次性受限容器；IPython 仅保留给开发和测试兼容路径
 - 🔧 **错误自愈**：自动检测并修复常见错误（编码、列名、数据类型等）
 
 ## ✨ 核心特性
@@ -262,6 +262,41 @@ python -m data_analysis_agent --help
 pytest tests/agent -q
 ```
 
+### M09 安全代码执行
+
+生产环境的分析代码不会在 API 进程内执行。`APP_ENV=production` 会强制选择
+`ContainerCodeExecutor`；Docker/runtime 不可用、镜像缺失或容器执行失败时任务会
+失败，不会回退到本地 IPython。开发和测试环境默认使用旧的本地兼容执行器。
+
+容器执行的安全边界包括：
+
+- 输入数据只读挂载到固定的 `/input`，任务输出目录是唯一可写挂载并映射为 `/output`；
+- 非 root 用户、只读根文件系统、`no-new-privileges`、丢弃 capabilities，以及 CPU、内存、PID、超时、输出字节数和文件数限制；
+- 默认 `EXECUTION_NETWORK_MODE=none`，不会继承宿主环境变量，也不会把 API Key、数据库 URL 或宿主绝对路径放入代码协议；
+- 每次执行使用独立容器和临时输入 staging；结果只保留代码哈希、耗时、退出状态、限制标志、错误码和输出文件元数据等最小审计信息。
+
+配置示例：
+
+```text
+# development/test
+EXECUTION_BACKEND=local
+EXECUTION_IMAGE=
+EXECUTION_NETWORK_MODE=none
+
+# production
+EXECUTION_BACKEND=container
+EXECUTION_IMAGE=data-analysis-agent:production
+EXECUTION_NETWORK_MODE=none
+```
+
+生产部署前必须准备可用的 Docker runtime 和分析镜像，并运行：
+
+```bash
+python -m alembic upgrade head
+python -m data_analysis_agent --help
+python -m pytest -q
+```
+
 ### 文件存储抽象
 
 数据集、图表和报告通过统一的 `Storage` 接口保存。开发和测试环境默认使用
@@ -391,6 +426,7 @@ result = agent.execute_tool("double_value", {"value": 4})
 | `word_report_file_path` | Word 报告文件路径（未生成时为 `None`） |
 | `word_report_generated` | Word 报告是否生成成功 |
 | `word_report_error` | Word 报告生成失败时的错误信息 |
+| `execution_audits` | 每次 typed 代码执行的最小安全审计元数据，不包含源代码或宿主路径 |
 
 Word 转换处理报告 Markdown 中的标题、段落、列表、行内粗体/斜体、代码块和图片语法；识别 `【部分总结】` 与 `【分析要点】` 语义标记；图片会以当前会话输出目录为边界进行路径校验，并以带边框和阴影的板块嵌入。
 
@@ -434,9 +470,10 @@ class LLMConfig:
 
 支持通过环境变量或直接传参两种方式配置，也可以通过 `LLMConfig.from_dict()` 从字典创建。
 
-### 代码执行器安全限制
+### 开发/测试代码执行器兼容限制
 
-代码执行器基于 IPython，通过 AST 静态分析限制可导入的库和危险函数调用：
+开发和测试环境仍保留基于 IPython 的兼容执行器。它通过 AST 静态分析限制可导入
+的库和危险函数调用，但不是生产安全边界；生产必须使用上面的容器后端：
 
 ```python
 ALLOWED_IMPORTS = {

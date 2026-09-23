@@ -213,6 +213,9 @@ class LegacyAnalysisAdapter:
                 "artifact_records": report_output.get(
                     "artifact_records", getattr(self.agent, "artifact_records", [])
                 ),
+                "execution_audits": report_output.get(
+                    "execution_audits", getattr(self.agent, "execution_audits", [])
+                ),
                 "report_download_url": report_output.get("report_download_url"),
                 "word_report_download_url": report_output.get(
                     "word_report_download_url"

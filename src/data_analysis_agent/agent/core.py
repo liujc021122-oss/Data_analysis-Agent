@@ -190,7 +190,7 @@ class DataAnalysisAgent:
             else tool_executor
         )
         self.base_output_dir = output_dir
-        self.settings = settings
+        self.settings = settings or load_settings()
         self._provided_execution_backend = execution_backend
         self._execution_runtime = execution_runtime
         self.max_rounds = max_rounds
@@ -220,6 +220,7 @@ class DataAnalysisAgent:
         self.current_round = 0
         self.task_id = self._provided_task_id or uuid4()
         self.artifact_records: list[ArtifactRecord] = []
+        self.execution_audits: list[dict[str, Any]] = []
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
@@ -273,7 +274,12 @@ class DataAnalysisAgent:
             try:
                 close()
             except Exception:
-                logging.getLogger(__name__).warning("Execution session cleanup failed")
+                logger = logging.getLogger(__name__)
+                logger.warning("Execution session cleanup failed; retrying")
+                try:
+                    close()
+                except Exception:
+                    logger.error("Execution session cleanup retry failed")
 
     def execute_tool(
         self,
@@ -410,6 +416,9 @@ class DataAnalysisAgent:
             file_path = figure_info.get('file_path', '')  # 获取具体的文件路径
             if file_path:
                 file_path = self._resolve_executor_path(file_path)
+                if not file_path:
+                    print("   ⚠️ 图片路径不在执行输出目录内，已忽略")
+                    continue
             description = figure_info.get('description', '')
             analysis = figure_info.get('analysis', '')
             print(f"📈 收集图片 {figure_number}: {filename}")
@@ -458,6 +467,10 @@ class DataAnalysisAgent:
 
             # 执行代码
             result = self.executor.execute_code(code)
+            if isinstance(result, Mapping):
+                audit = result.get("audit")
+                if isinstance(audit, Mapping):
+                    self.execution_audits.append(dict(audit))
 
             # 格式化执行结果
             feedback = format_execution_result(result)
@@ -529,6 +542,7 @@ class DataAnalysisAgent:
         self.current_round = 0
         self.task_id = self._provided_task_id or uuid4()
         self.artifact_records = []
+        self.execution_audits = []
         self.storage_error = None
 
         if files is not None and dataset_ids is not None:
@@ -538,7 +552,7 @@ class DataAnalysisAgent:
             )
         if files is not None:
             with _upload_compatibility_files(
-                files, settings=load_settings()
+                files, settings=self.settings
             ) as (uploaded_ids, resolver, owner_id):
                 previous_resolver, previous_owner = self.dataset_resolver, self.dataset_owner_id
                 try:

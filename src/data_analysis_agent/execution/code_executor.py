@@ -96,6 +96,7 @@ class LocalCodeExecutor:
     task.
     """
     production_safe = False
+    backend_name = "local"
     ALLOWED_IMPORTS = {
         'pandas', 'pd',
         'numpy', 'np',

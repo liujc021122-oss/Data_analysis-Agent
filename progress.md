@@ -17,4 +17,6 @@
 - Task 5 已完成：新增 `AgentExecutionSession`，生产 Agent 通过 typed backend 执行，dataset 输入只读挂载到固定 `/input`，输出只写挂载到固定 `/output`；开发/测试继续兼容旧 `CodeExecutor`。
 - Task 5 TDD 补强：生产拒绝显式注入的非安全 backend；越界容器图片路径解析为空；`quick_analysis` 保持原公开签名。
 - Task 5 聚焦 Agent/backend/integration 回归：211 passed、1 skipped、14 warnings；完整离线回归：738 passed、3 skipped、3 failed、18 warnings，失败均为已记录的 Agent/storage 基线问题。
-- 下一步：Task 5 提交并独立复核，随后进入 Task 6 安全回归、审计元数据和文档。
+- Task 5 已提交：`3b3a06d`；独立 reviewer 对 Task 5 提出 4 个 Important 和 3 个 Minor，Task 6 已补回归测试并修复生产直构、compatibility files 配置、清理重试、越界图表丢弃和 Python 字面量序列化问题。
+- Task 6 已完成：新增 `ExecutionAudit`，Agent 返回最小审计元数据，更新 production/development/test 配置样例与 README；聚焦回归 238 passed、1 skipped，完整离线回归 746 passed、3 skipped、3 failed（均为已记录基线问题）。
+- 下一步：Task 6 提交并复核，随后执行 Task 7 whole-branch verification/review。

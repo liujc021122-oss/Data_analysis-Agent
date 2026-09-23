@@ -30,6 +30,7 @@ class ContainerCodeExecutor:
     """
 
     production_safe = True
+    backend_name = "container"
     _SAFE_ENV = {
         "MPLBACKEND": "Agg",
         "PYTHONUNBUFFERED": "1",

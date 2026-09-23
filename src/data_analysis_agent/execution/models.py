@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from hashlib import sha256
 import math
@@ -296,6 +297,42 @@ class ExecutionResult(ExecutionModel):
         return self
 
 
+class ExecutionAudit(ExecutionModel):
+    """Minimal, JSON-safe metadata retained for one code execution."""
+
+    task_id: UUID
+    backend: StrictStr = Field(min_length=1)
+    code_sha256: StrictStr
+    started_at: datetime
+    finished_at: datetime
+    success: StrictBool
+    exit_code: StrictInt | None = None
+    timed_out: StrictBool = False
+    resource_limited: StrictBool = False
+    error_code: ExecutionErrorCode | None = None
+    duration_ms: float = Field(ge=0)
+    output_files: tuple[ExecutionFile, ...] = ()
+
+    _code_sha256 = field_validator("code_sha256")(_validate_sha256)
+
+    @field_validator("duration_ms")
+    @classmethod
+    def _finite_audit_duration(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("duration_ms must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_audit_times(self) -> "ExecutionAudit":
+        if self.started_at.tzinfo is None or self.started_at.utcoffset() is None:
+            raise ValueError("started_at must be timezone-aware")
+        if self.finished_at.tzinfo is None or self.finished_at.utcoffset() is None:
+            raise ValueError("finished_at must be timezone-aware")
+        if self.finished_at < self.started_at:
+            raise ValueError("finished_at must not precede started_at")
+        return self
+
+
 __all__ = [
     "DEFAULT_CPU_LIMIT",
     "DEFAULT_MAX_FILES",
@@ -304,6 +341,7 @@ __all__ = [
     "DEFAULT_PIDS_LIMIT",
     "DEFAULT_TIMEOUT_SECONDS",
     "ExecutionFile",
+    "ExecutionAudit",
     "ExecutionInput",
     "ExecutionLimits",
     "ExecutionModel",

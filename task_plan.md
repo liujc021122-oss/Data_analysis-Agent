@@ -11,7 +11,7 @@
 3. [x] 容器运行时协议与 `ContainerCodeExecutor`
 4. [x] 配置选择和生产 fail-closed 边界
 5. [x] Agent/任务执行路径接入统一执行接口
-6. [ ] 安全回归、审计元数据和文档
+6. [x] 安全回归、审计元数据和文档
 7. [ ] 全量验证与 whole-branch review
 
 ## Decisions

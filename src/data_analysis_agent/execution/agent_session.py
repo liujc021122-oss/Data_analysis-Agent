@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 import tempfile
@@ -8,13 +9,15 @@ from typing import Any, Callable, Iterable, Mapping
 from uuid import UUID
 
 from .backend import CodeExecutionBackend
-from .errors import ExecutionErrorCode, sanitize_execution_text
+from .errors import CleanupFailureError, ExecutionErrorCode, sanitize_execution_text
 from .models import (
     ExecutionInput,
+    ExecutionAudit,
     ExecutionLimits,
     ExecutionRequest,
     ExecutionResult,
     NetworkPolicy,
+    code_sha256,
 )
 
 
@@ -68,7 +71,13 @@ session_output_dir = '/output'
         self._code_history: list[str] = []
         self._sensitive_columns: set[str] = set()
         self._sensitive_values: set[str] = set()
+        self.audit_records: list[ExecutionAudit] = []
         self._closed = False
+
+    @property
+    def backend_name(self) -> str:
+        configured_name = getattr(self.backend, "backend_name", None)
+        return str(configured_name or type(self.backend).__name__)
 
     def set_variable(self, name: str, value: Any) -> None:
         self._variables[name] = value
@@ -155,7 +164,7 @@ session_output_dir = '/output'
         if not values:
             return ""
         return "\n".join(
-            f"{name} = {json.dumps(value, ensure_ascii=False, allow_nan=False)}"
+            f"{name} = {value!r}"
             for name, value in values.items()
         )
 
@@ -185,6 +194,30 @@ def load_dataset(dataset_id):
         parts.append(code)
         return "\n\n".join(parts)
 
+    def _record_audit(
+        self,
+        result: ExecutionResult,
+        *,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> ExecutionAudit:
+        audit = ExecutionAudit(
+            task_id=self.task_id,
+            backend=self.backend_name,
+            code_sha256=result.code_sha256,
+            started_at=started_at,
+            finished_at=finished_at,
+            success=result.success,
+            exit_code=result.exit_code,
+            timed_out=result.timed_out,
+            resource_limited=result.resource_limited,
+            error_code=result.error_code,
+            duration_ms=result.duration_ms,
+            output_files=result.output_files,
+        )
+        self.audit_records.append(audit)
+        return audit
+
     def execute_code(self, code: str) -> dict[str, Any]:
         if self._closed:
             return {
@@ -194,6 +227,8 @@ def load_dataset(dataset_id):
                 "variables": {},
                 "error_code": ExecutionErrorCode.EXECUTION_FAILED.value,
             }
+        started_at = datetime.now(timezone.utc)
+        request: ExecutionRequest | None = None
         try:
             self._stage_dataset_inputs()
             request = ExecutionRequest(
@@ -210,6 +245,12 @@ def load_dataset(dataset_id):
                 raise TypeError("execution backend returned an invalid result")
             if result.success:
                 self._code_history.append(code)
+            finished_at = datetime.now(timezone.utc)
+            audit = self._record_audit(
+                result,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
             output = sanitize_execution_text(
                 result.stdout,
                 secrets=self._sensitive_values,
@@ -228,8 +269,32 @@ def load_dataset(dataset_id):
                 "duration_ms": int(result.duration_ms),
                 "error_code": result.error_code.value if result.error_code else None,
                 "files": [item.model_dump(mode="json") for item in result.output_files],
+                "audit": audit.model_dump(mode="json"),
             }
-        except Exception as exc:
+        except Exception:
+            finished_at = datetime.now(timezone.utc)
+            fallback_result = ExecutionResult(
+                success=False,
+                stdout="",
+                stderr="",
+                exit_code=1,
+                error_code=ExecutionErrorCode.EXECUTION_FAILED,
+                error_message="typed execution request failed",
+                code_sha256=(
+                    request.code_sha256
+                    if request is not None
+                    else code_sha256(str(code))
+                ),
+                duration_ms=max(
+                    0.0,
+                    (finished_at - started_at).total_seconds() * 1000,
+                ),
+            )
+            audit = self._record_audit(
+                fallback_result,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
             return {
                 "success": False,
                 "output": "",
@@ -239,6 +304,7 @@ def load_dataset(dataset_id):
                 ),
                 "variables": {},
                 "error_code": ExecutionErrorCode.EXECUTION_FAILED.value,
+                "audit": audit.model_dump(mode="json"),
             }
 
     def reset_environment(self) -> None:
@@ -248,15 +314,16 @@ def load_dataset(dataset_id):
         self._input_files = ()
         self._code_history.clear()
         self._sensitive_values.clear()
+        self.audit_records.clear()
 
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         try:
             shutil.rmtree(self._input_root)
-        except OSError:
-            pass
+        except OSError as exc:
+            raise CleanupFailureError(task_id=self.task_id) from exc
+        self._closed = True
 
 
 __all__ = ["AgentExecutionSession"]
