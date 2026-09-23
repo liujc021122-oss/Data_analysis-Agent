@@ -1,4 +1,5 @@
 from .code_executor import CodeExecutor, LocalCodeExecutor
+from .container_executor import ContainerCodeExecutor
 from .backend import CodeExecutionBackend
 from .errors import (
     MAX_SAFE_TEXT_LENGTH,
@@ -40,11 +41,27 @@ from .models import (
     NetworkPolicy,
     code_sha256,
 )
+from .runtime import (
+    ContainerMount,
+    ContainerRuntime,
+    ContainerRuntimeError,
+    ContainerSpec,
+    DockerCliRuntime,
+    RuntimeOutput,
+    RuntimeTimeoutError,
+    RuntimeWaitResult,
+)
 
 __all__ = [
     "CodeExecutor",
     "LocalCodeExecutor",
+    "ContainerCodeExecutor",
     "CodeExecutionBackend",
+    "ContainerMount",
+    "ContainerRuntime",
+    "ContainerRuntimeError",
+    "ContainerSpec",
+    "DockerCliRuntime",
     "DEFAULT_CPU_LIMIT",
     "DEFAULT_MAX_FILES",
     "DEFAULT_MAX_OUTPUT_BYTES",
@@ -78,6 +95,9 @@ __all__ = [
     "OutputLimitError",
     "PathTraversalError",
     "ResourceLimitError",
+    "RuntimeOutput",
+    "RuntimeTimeoutError",
+    "RuntimeWaitResult",
     "code_sha256",
     "sanitize_execution_text",
     "truncate_execution_text",
