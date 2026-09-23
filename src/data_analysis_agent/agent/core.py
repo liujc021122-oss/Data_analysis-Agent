@@ -27,7 +27,15 @@ from ..config.llm import LLMConfig
 from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
 from ..domain.enums import TaskStatus
-from ..execution.code_executor import CodeExecutor
+from ..execution import (
+    AgentExecutionSession,
+    CodeExecutionBackend,
+    CodeExecutor,
+    ExecutionLimits,
+    NetworkPolicy,
+    build_execution_backend,
+)
+from ..execution.runtime import ContainerRuntime
 from ..llm import LLMStructuredOutputError
 from ..reports.word import generate_word_report
 from ..services.llm import LLMHelper
@@ -152,6 +160,9 @@ class DataAnalysisAgent:
         llm: Any | None = None,
         tool_registry: ToolRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
+        settings: Settings | None = None,
+        execution_backend: CodeExecutionBackend | None = None,
+        execution_runtime: ContainerRuntime | None = None,
     ):
         """
         初始化智能体
@@ -179,6 +190,9 @@ class DataAnalysisAgent:
             else tool_executor
         )
         self.base_output_dir = output_dir
+        self.settings = settings
+        self._provided_execution_backend = execution_backend
+        self._execution_runtime = execution_runtime
         self.max_rounds = max_rounds
         self.generate_word_report = generate_word_report
         self.dataset_resolver = dataset_resolver
@@ -210,6 +224,56 @@ class DataAnalysisAgent:
         self.session_output_dir = None
         self.executor = None
         self.orchestrator = None
+
+    def _build_execution_session(self):
+        """Create the typed execution facade for production or explicit injection."""
+        settings = getattr(self, "settings", None)
+        backend = getattr(self, "_provided_execution_backend", None)
+        use_typed_backend = backend is not None or (
+            settings is not None and getattr(settings, "app_env", None) == "production"
+        )
+        if not use_typed_backend:
+            return CodeExecutor(self.session_output_dir)
+
+        if backend is None:
+            backend = build_execution_backend(
+                settings,
+                runtime=getattr(self, "_execution_runtime", None),
+            )
+        if (
+            settings is not None
+            and getattr(settings, "app_env", None) == "production"
+            and not bool(getattr(backend, "production_safe", False))
+        ):
+            raise ConfigurationError(
+                "production requires a production-safe execution backend"
+            )
+        timeout_seconds = 300.0
+        network_policy = NetworkPolicy.DISABLED
+        if settings is not None:
+            timeout_seconds = min(
+                float(getattr(settings, "max_task_runtime", timeout_seconds)),
+                3600.0,
+            )
+            if getattr(settings, "execution_network_mode", "none") == "bridge":
+                network_policy = NetworkPolicy.ENABLED
+        return AgentExecutionSession(
+            backend=backend,
+            output_dir=self.session_output_dir,
+            output_scope=self.base_output_dir,
+            task_id=self.task_id,
+            limits=ExecutionLimits(timeout_seconds=timeout_seconds),
+            network_policy=network_policy,
+        )
+
+    def _close_execution_session(self) -> None:
+        executor = getattr(self, "executor", None)
+        close = getattr(executor, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logging.getLogger(__name__).warning("Execution session cleanup failed")
 
     def execute_tool(
         self,
@@ -344,6 +408,8 @@ class DataAnalysisAgent:
             figure_number = figure_info.get('figure_number')
             filename = figure_info.get('filename', f'figure_{figure_number}.png')
             file_path = figure_info.get('file_path', '')  # 获取具体的文件路径
+            if file_path:
+                file_path = self._resolve_executor_path(file_path)
             description = figure_info.get('description', '')
             analysis = figure_info.get('analysis', '')
             print(f"📈 收集图片 {figure_number}: {filename}")
@@ -436,6 +502,7 @@ class DataAnalysisAgent:
         finally:
             self._analysis_depth = depth
             if depth == 0:
+                self._close_execution_session()
                 self._close_owned_llm()
 
     def _analyze_impl(
@@ -521,7 +588,7 @@ class DataAnalysisAgent:
 
         # 初始化代码执行器，使用会话目录
         try:
-            self.executor = CodeExecutor(self.session_output_dir)
+            self.executor = self._build_execution_session()
         except Exception:
             self.cleanup_storage_outputs()
             raise
@@ -786,6 +853,21 @@ class DataAnalysisAgent:
         )
         return text
 
+    def _resolve_executor_path(self, value: object) -> str:
+        """Map a fixed executor path such as ``/output/chart.png`` to staging."""
+        resolver = getattr(getattr(self, "executor", None), "resolve_output_path", None)
+        if not callable(resolver):
+            return str(value)
+        try:
+            return str(resolver(value))
+        except (OSError, RuntimeError, ValueError):
+            return ""
+
+    def _prompt_output_dir(self) -> str:
+        if isinstance(getattr(self, "executor", None), AgentExecutionSession):
+            return "/output"
+        return str(self.session_output_dir)
+
     def _build_conversation_prompt(self) -> str:
         """构建对话提示词"""
         prompt_parts = []
@@ -982,7 +1064,7 @@ class DataAnalysisAgent:
         # 使用 prompts.py 中的统一提示词模板，并添加相对路径使用说明
         prompt = final_report_system_prompt.format(
             current_round=self.current_round,
-            session_output_dir=self.session_output_dir,
+            session_output_dir=self._prompt_output_dir(),
             figures_summary=figures_summary,
             code_results_summary=code_results_summary
         )
@@ -1074,6 +1156,7 @@ def quick_analysis(
             dataset_resolver=selected_resolver,
             dataset_owner_id=selected_owner_id,
             storage=selected_storage,
+            settings=resolved_settings,
         )
         try:
             return agent.analyze(
