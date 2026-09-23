@@ -24,7 +24,7 @@ from .config import (
     configure_logging,
     load_settings,
 )
-from .execution.code_executor import CodeExecutor
+from .execution import CodeExecutor, build_execution_backend
 from .api.schemas import DatasetUploadResponse
 from .llm import (
     CallRecorder,
@@ -111,6 +111,7 @@ from .tools import (
 
 __all__ = [
     "CodeExecutor",
+    "build_execution_backend",
     "ColumnProfile",
     "ConfigurationError",
     "DataAnalysisAgent",

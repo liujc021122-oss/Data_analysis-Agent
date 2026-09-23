@@ -13,6 +13,8 @@ from .llm import LLMConfig
 EnvironmentName = Literal["development", "test", "production"]
 VALID_ENVIRONMENTS = {"development", "test", "production"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+VALID_EXECUTION_BACKENDS = {"local", "container"}
+VALID_EXECUTION_NETWORK_MODES = {"none", "bridge"}
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_MAX_TASK_RUNTIME = 900
@@ -51,6 +53,9 @@ class Settings:
     storage_signing_secret: Optional[str] = field(default=None, repr=False)
     storage_url_expiry: int = 300
     storage_retention_days: int = 30
+    execution_backend: Literal["local", "container"] = "local"
+    execution_image: Optional[str] = None
+    execution_network_mode: Literal["none", "bridge"] = "none"
 
     def llm_config(self) -> LLMConfig:
         return LLMConfig(
@@ -167,6 +172,27 @@ def load_settings(
     api_key = _nonblank(values.get("OPENAI_API_KEY"))
     base_url = _nonblank(values.get("OPENAI_BASE_URL"))
     model = _nonblank(values.get("OPENAI_MODEL"))
+    execution_backend = (
+        _nonblank(values.get("EXECUTION_BACKEND"))
+        or ("container" if environment == "production" else "local")
+    ).lower()
+    if execution_backend not in VALID_EXECUTION_BACKENDS:
+        raise ConfigurationError(
+            "EXECUTION_BACKEND must be one of local or container"
+        )
+    execution_network_mode = (
+        _nonblank(values.get("EXECUTION_NETWORK_MODE"))
+        or _nonblank(values.get("EXECUTION_NETWORK_POLICY"))
+        or "none"
+    ).lower()
+    execution_network_mode = {
+        "disabled": "none",
+        "enabled": "bridge",
+    }.get(execution_network_mode, execution_network_mode)
+    if execution_network_mode not in VALID_EXECUTION_NETWORK_MODES:
+        raise ConfigurationError(
+            "EXECUTION_NETWORK_MODE must be one of none or bridge"
+        )
     settings = Settings(
         app_env=environment,
         database_url=_nonblank(values.get("DATABASE_URL")),
@@ -200,12 +226,19 @@ def load_settings(
             or selected_output_path / "datasets"
         ),
         log_level=values.get("LOG_LEVEL", "INFO").upper(),
+        execution_backend=execution_backend,
+        execution_image=_nonblank(values.get("EXECUTION_IMAGE")),
+        execution_network_mode=execution_network_mode,
     )
     if settings.log_level not in VALID_LOG_LEVELS:
         raise ConfigurationError(
             "LOG_LEVEL must be one of DEBUG, INFO, WARNING, or ERROR"
         )
     if environment == "production":
+        if settings.execution_backend != "container":
+            raise ConfigurationError(
+                "EXECUTION_BACKEND must be container in production"
+            )
         missing = [
             field
             for field, value in (

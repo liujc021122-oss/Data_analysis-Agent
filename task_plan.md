@@ -8,7 +8,7 @@
 
 1. [x] 执行模型、限制策略和稳定错误契约
 2. [x] 本地后端与旧 `CodeExecutor` 兼容门面
-3. [ ] 容器运行时协议与 `ContainerCodeExecutor`
+3. [x] 容器运行时协议与 `ContainerCodeExecutor`
 4. [ ] 配置选择和生产 fail-closed 边界
 5. [ ] Agent/任务执行路径接入统一执行接口
 6. [ ] 安全回归、审计元数据和文档

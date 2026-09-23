@@ -1,5 +1,6 @@
 from .code_executor import CodeExecutor, LocalCodeExecutor
 from .container_executor import ContainerCodeExecutor
+from .factory import build_execution_backend
 from .backend import CodeExecutionBackend
 from .errors import (
     MAX_SAFE_TEXT_LENGTH,
@@ -56,6 +57,7 @@ __all__ = [
     "CodeExecutor",
     "LocalCodeExecutor",
     "ContainerCodeExecutor",
+    "build_execution_backend",
     "CodeExecutionBackend",
     "ContainerMount",
     "ContainerRuntime",
