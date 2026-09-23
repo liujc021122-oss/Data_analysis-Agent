@@ -59,8 +59,15 @@ class ContainerCodeExecutor:
     def _is_non_root_user(user: str) -> bool:
         if not user or not user.strip():
             return False
-        identities = [part.strip().casefold() for part in user.strip().split(":")]
-        return all(identity not in {"0", "root"} for identity in identities)
+        for identity in (part.strip().casefold() for part in user.strip().split(":")):
+            if identity == "root":
+                return False
+            try:
+                if int(identity, 10) == 0:
+                    return False
+            except ValueError:
+                continue
+        return True
 
     @staticmethod
     def _network_mode(policy: NetworkPolicy) -> str:

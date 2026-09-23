@@ -25,7 +25,17 @@ from data_analysis_agent.execution import (
 )
 
 
-@pytest.mark.parametrize("user", ("0:123", "root:123", "123:0", "123:root"))
+@pytest.mark.parametrize(
+    "user",
+    (
+        "0:123",
+        "00:123",
+        "root:123",
+        "123:0",
+        "123:00",
+        "123:root",
+    ),
+)
 def test_container_backend_rejects_root_uid_or_gid(user):
     with pytest.raises(ValueError, match="non-root"):
         ContainerCodeExecutor(image="analysis:offline", user=user)

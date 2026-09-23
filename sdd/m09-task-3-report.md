@@ -24,6 +24,8 @@ Tasks 4 and 5.
   it is being read rather than after an unbounded `communicate()` collection.
 - Rejected root identities in either the UID or GID position and added finite
   timeouts to Docker CLI create, kill, and remove operations.
+- Root validation also rejects numeric forms that Docker parses as zero, such
+  as `00:1000` and `65532:00`.
 - Exported the new runtime and backend types through
   `data_analysis_agent.execution`.
 - Added fake-runtime tests covering successful execution, mount and security
@@ -62,7 +64,10 @@ $env:PYTHONPATH = '.;src'
 pytest -q tests/execution/test_container_executor.py
 ```
 
-Result: **14 passed, 5 warnings in 5.73s**.
+Result before the follow-up root-form regression: **14 passed, 5 warnings in
+5.73s**. The added leading-zero root cases initially failed as expected; after
+the fix the combined Task 3/Task 4/configuration verification is **42 passed,
+5 warnings in 5.92s**.
 
 The warnings are the existing Pydantic protected-namespace warnings for
 unrelated `model_*` fields.
