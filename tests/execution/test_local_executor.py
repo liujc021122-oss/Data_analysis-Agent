@@ -174,6 +174,47 @@ def test_output_collection_stops_before_hashing_beyond_byte_limit(tmp_path, monk
     assert hashed == ["a.bin"]
 
 
+def test_output_collection_does_not_materialize_candidates_after_byte_limit(
+    tmp_path, monkeypatch
+):
+    request = make_request(
+        tmp_path,
+        "pass",
+        limits=ExecutionLimits(max_files=10, max_output_bytes=1),
+    )
+    root = request.output_dir.resolve()
+    oversized = root / "oversized.bin"
+    oversized.write_bytes(b"12")
+    yielded: list[str] = []
+    original_rglob = Path.rglob
+    original_iterdir = Path.iterdir
+
+    def candidates():
+        yielded.append("oversized.bin")
+        yield oversized
+        yielded.append("beyond-limit.bin")
+        yield root / "beyond-limit.bin"
+
+    def guarded_rglob(path, pattern):
+        if path != root:
+            return original_rglob(path, pattern)
+        return candidates()
+
+    def guarded_iterdir(path):
+        if path != root:
+            return original_iterdir(path)
+        return candidates()
+
+    monkeypatch.setattr(Path, "rglob", guarded_rglob)
+    monkeypatch.setattr(Path, "iterdir", guarded_iterdir)
+
+    files, error_code, _ = LocalCodeExecutor._collect_output_files(request)
+
+    assert files == ()
+    assert error_code is ExecutionErrorCode.OUTPUT_LIMIT
+    assert yielded == ["oversized.bin"]
+
+
 def test_output_collection_rejects_escaped_symlink_before_hashing(tmp_path, monkeypatch):
     request = make_request(tmp_path, "pass")
     outside = tmp_path / "outside.bin"
@@ -283,4 +324,33 @@ def test_legacy_reset_does_not_close_figures_owned_by_another_executor(tmp_path)
         assert owned_by_first.isdisjoint(set(plt.get_fignums()))
     finally:
         for figure_number in owned_by_first if "owned_by_first" in locals() else ():
+            plt.close(figure_number)
+
+
+def test_reset_does_not_close_reused_figure_number_owned_by_another_executor(tmp_path):
+    first = CodeExecutor(tmp_path / "first")
+    second = CodeExecutor(tmp_path / "second")
+
+    before = set(plt.get_fignums())
+    try:
+        first.execute_code("owned_figure = plt.figure()")
+        owned_by_first = set(plt.get_fignums()) - before
+        assert len(owned_by_first) == 1
+        first_number = next(iter(owned_by_first))
+        first_figure = plt.figure(first_number)
+        plt.close(first_figure)
+
+        second.execute_code(f"reused_figure = plt.figure(num={first_number})")
+        second_figure = plt.figure(first_number)
+        assert second_figure is not first_figure
+        assert first_number in set(plt.get_fignums())
+
+        first.reset_environment()
+
+        assert first_number in set(plt.get_fignums())
+
+        second.reset_environment()
+        assert first_number not in set(plt.get_fignums())
+    finally:
+        for figure_number in set(plt.get_fignums()) - before:
             plt.close(figure_number)

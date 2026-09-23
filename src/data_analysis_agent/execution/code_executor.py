@@ -11,9 +11,10 @@ import traceback
 import io
 import mimetypes
 import time
+import weakref
 from hashlib import sha256
 from pathlib import Path
-from typing import Dict, Any, Iterable, List, Optional, Tuple
+from typing import Dict, Any, Iterable, Iterator, List, Optional, Tuple
 from contextlib import ExitStack, redirect_stdout, redirect_stderr
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.utils.capture import capture_output
@@ -122,7 +123,7 @@ class LocalCodeExecutor:
         self.shell = InteractiveShell()
         self.sensitive_columns: set[str] = set()
         self._sensitive_values: set[str] = set()
-        self._owned_figure_numbers: set[int] = set()
+        self._owned_figures: weakref.WeakSet[Any] = weakref.WeakSet()
         for table_type in (pd.DataFrame, pd.Series):
             self.shell.display_formatter.formatters['text/plain'].for_type(
                 table_type, self._display_table
@@ -528,8 +529,9 @@ from IPython.display import display
                 'variables': {}
             }
         finally:
-            self._owned_figure_numbers.update(
-                set(plt.get_fignums()) - figures_before
+            self._owned_figures.update(
+                plt.figure(figure_number)
+                for figure_number in set(plt.get_fignums()) - figures_before
             )
 
     @staticmethod
@@ -584,6 +586,23 @@ from IPython.display import display
             mime_type=mime_type,
         )
 
+    @staticmethod
+    def _iter_output_candidates(root: Path) -> Iterator[Path]:
+        """Yield output paths lazily without materializing the whole tree."""
+        stack: list[Iterator[Path]] = [iter(root.iterdir())]
+        while stack:
+            try:
+                candidate = next(stack[-1])
+            except StopIteration:
+                stack.pop()
+                continue
+
+            yield candidate
+            if candidate.is_symlink():
+                continue
+            if candidate.is_dir():
+                stack.append(iter(candidate.iterdir()))
+
     @classmethod
     def _collect_output_files(
         cls, request: ExecutionRequest
@@ -593,8 +612,7 @@ from IPython.display import display
         files: list[ExecutionFile] = []
         total_bytes = 0
         try:
-            candidates = sorted(root.rglob("*"), key=lambda item: item.as_posix())
-            for candidate in candidates:
+            for candidate in cls._iter_output_candidates(root):
                 if candidate.is_symlink():
                     resolved = candidate.resolve(strict=False)
                     try:
@@ -739,9 +757,9 @@ from IPython.display import display
         self._sensitive_values.clear()
         self._setup_common_imports()
         self._setup_chinese_font()
-        for figure_number in list(self._owned_figure_numbers):
-            plt.close(figure_number)
-        self._owned_figure_numbers.clear()
+        for figure in list(self._owned_figures):
+            plt.close(figure)
+        self._owned_figures.clear()
         self.image_counter = 0
 
     def set_variable(self, name: str, value: Any):

@@ -2,9 +2,9 @@
 
 ## Status
 
-Complete for the four Task 2 review findings. The local backend remains
-development/test-only. No Docker backend, configuration/factory wiring, or
-Agent wiring was changed.
+Complete for the six Task 2 review findings. This update addresses the two
+remaining review findings. The local backend remains development/test-only.
+No Docker backend, configuration/factory wiring, or Agent wiring was changed.
 
 ## Fixes
 
@@ -13,13 +13,17 @@ Agent wiring was changed.
   and stops typed execution when the budget is exceeded. The legacy
   `execute_code()` path keeps its existing capture behavior and compatibility
   shape.
-- Output traversal validates resolved paths, including symlinks, before any
-  file metadata read. It checks `max_files` and cumulative file bytes before
-  calling metadata hashing for the next file.
+- Output traversal uses a lazy depth-first `Path.iterdir()` iterator instead
+  of materializing `sorted(root.rglob("*"))`. It validates resolved paths,
+  including symlinks, before any file metadata read, and stops discovery as
+  soon as `max_files`, cumulative output bytes, or path escape is known.
 - Result duration is measured after output-file collection and hashing.
-- The isolation regression creates a real matplotlib figure in the first
-  executor, resets the second executor, verifies the first figure remains
-  alive, then resets and closes the owned figure during cleanup.
+- Figure ownership is tracked by `matplotlib.figure.Figure` object identity in
+  a `weakref.WeakSet`, so cleanup cannot close a later figure that reuses an
+  earlier executor's numeric figure ID.
+- The isolation regressions create real matplotlib figures, exercise reset
+  isolation, and verify that reused figure numbers remain owned by the second
+  executor until its own reset.
 
 Local execution remains in-process IPython. Its timeout behavior is explicitly
 post-execution/cooperative classification; this task does not claim hard
@@ -51,7 +55,21 @@ $env:PYTHONPATH='.;src'
 py -3.12 -m pytest tests/execution/test_local_executor.py -q
 ```
 
-Result: **12 passed, 1 skipped, 14 warnings in 8.58s**.
+Result: **14 passed, 1 skipped, 14 warnings in 10.67s**.
+
+### Remaining-review focused verification
+
+The two remaining regression tests were added before the production edits.
+The initial focused RED invocation was interrupted before pytest emitted a
+summary, so no RED count is claimed for that interrupted process. The
+post-fix focused command was:
+
+```powershell
+$env:PYTHONPATH='.;src'
+py -3.12 -m pytest tests/execution/test_local_executor.py -q -k "does_not_materialize_candidates_after_byte_limit or reused_figure_number_owned_by_another_executor"
+```
+
+Result: **2 passed, 13 deselected, 5 warnings in 5.59s**.
 
 ## Regression verification
 
@@ -62,7 +80,20 @@ $env:PYTHONPATH='.;src'
 py -3.12 -m pytest tests/contract/test_executor_contract.py tests/contract/test_executor_privacy.py tests/tools/test_executor.py tests/agent/test_agent_compatibility.py tests/integration/test_analysis_flow.py tests/integration/test_dataset_analysis_flow.py tests/llm/test_agent_structured_boundary.py -q
 ```
 
-Result: **64 passed, 5 warnings in 9.36s**.
+Result: **64 passed, 5 warnings in 11.84s**.
+
+## Self-review
+
+- The implementation no longer contains `sorted(root.rglob("*"))` or the
+  numeric `_owned_figure_numbers` ownership set.
+- The traversal test proves that an over-byte-limit first candidate does not
+  consume a later candidate; existing tests still prove hashing stops before
+  file-count and byte-limit violations and escaped symlinks are rejected
+  before hashing.
+- The figure-reuse test proves the first executor reset leaves the second
+  executor's replacement figure alive, while the second reset closes it.
+- The change set is limited to the local executor, its focused tests, and
+  this report; Docker/configuration/Agent wiring was not changed.
 
 Full offline-suite attempt:
 
