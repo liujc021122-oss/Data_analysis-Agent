@@ -2,7 +2,7 @@
 
 ## Status
 
-The Task 3 implementation is ready for independent review. It adds an
+The Task 3 implementation is ready for a follow-up independent review. It adds an
 injectable container-runtime protocol, a Docker CLI adapter, and a
 `ContainerCodeExecutor` that fails closed and never falls back to the local
 IPython executor. Configuration selection and Agent wiring remain deferred to
@@ -20,6 +20,10 @@ Tasks 4 and 5.
   collection, output-file metadata checks, timeout cleanup in kill/wait/remove
   order, stable error mapping, diagnostic redaction, and unconditional
   container cleanup.
+- Added bounded threaded Docker CLI stream capture so output is capped while
+  it is being read rather than after an unbounded `communicate()` collection.
+- Rejected root identities in either the UID or GID position and added finite
+  timeouts to Docker CLI create, kill, and remove operations.
 - Exported the new runtime and backend types through
   `data_analysis_agent.execution`.
 - Added fake-runtime tests covering successful execution, mount and security
@@ -45,7 +49,20 @@ $env:PYTHONPATH = '.;src'
 pytest -q tests/execution/test_container_executor.py
 ```
 
-Result: **7 passed, 5 warnings in 5.20s**.
+The first RED run reported seven failures. Four were the expected root-user
+validation failures; the remaining failures exposed the missing runtime
+output-limit flag and Docker CLI timeout/bounded-capture APIs. A test import
+setup issue was corrected before the GREEN run and is not counted as a
+production defect.
+
+Focused GREEN command:
+
+```powershell
+$env:PYTHONPATH = '.;src'
+pytest -q tests/execution/test_container_executor.py
+```
+
+Result: **14 passed, 5 warnings in 5.73s**.
 
 The warnings are the existing Pydantic protected-namespace warnings for
 unrelated `model_*` fields.
@@ -59,7 +76,7 @@ $env:PYTHONPATH = '.;src'
 pytest -q tests/execution tests/agent tests/integration/test_dataset_analysis_flow.py tests/integration/test_compatibility_upload_cleanup.py
 ```
 
-Result: **138 passed, 1 skipped, 14 warnings in 14.89s**.
+Result: **145 passed, 1 skipped, 14 warnings in 16.16s**.
 
 The skip is the existing Windows environment limitation for symlink creation.
 
@@ -72,7 +89,7 @@ $env:PYTHONPATH = '.;src'
 pytest -q
 ```
 
-Result: **716 passed, 3 skipped, 3 failed, 18 warnings in 55.76s**.
+Result: **723 passed, 3 skipped, 3 failed, 18 warnings in 60.57s**.
 
 The three failures are the unchanged Agent/storage baseline failures already
 recorded by M09 Tasks 1 and 2:
@@ -100,6 +117,9 @@ No real model API, Docker daemon, or network was used by these tests.
   normal and failed paths also attempt removal.
 - The implementation does not instantiate or call `LocalCodeExecutor` for
   fallback execution.
+- Follow-up review findings were addressed: Docker output is captured with a
+  bounded byte budget, root UID/GID forms are rejected, and Docker CLI
+  lifecycle commands have finite timeouts.
 
 ## Scope boundary
 

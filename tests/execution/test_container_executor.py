@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 from pathlib import Path
+import subprocess
 from typing import Mapping
 from uuid import uuid4
 
@@ -10,7 +12,9 @@ import pytest
 from data_analysis_agent.execution import (
     ContainerCodeExecutor,
     ContainerMount,
+    ContainerRuntimeError,
     ContainerSpec,
+    DockerCliRuntime,
     ExecutionErrorCode,
     ExecutionLimits,
     ExecutionRequest,
@@ -19,6 +23,12 @@ from data_analysis_agent.execution import (
     RuntimeTimeoutError,
     RuntimeWaitResult,
 )
+
+
+@pytest.mark.parametrize("user", ("0:123", "root:123", "123:0", "123:root"))
+def test_container_backend_rejects_root_uid_or_gid(user):
+    with pytest.raises(ValueError, match="non-root"):
+        ContainerCodeExecutor(image="analysis:offline", user=user)
 
 
 def make_request(
@@ -222,6 +232,90 @@ def test_container_backend_maps_output_and_cleanup_limits(tmp_path):
     assert result.success is False
     assert result.error_code is ExecutionErrorCode.CLEANUP_FAILURE
     assert "docker socket" not in (result.error_message or "")
+
+
+def test_container_backend_honors_runtime_output_limit_flag(tmp_path):
+    runtime = FakeRuntime(output=RuntimeOutput(stdout="kept", truncated=True))
+
+    result = ContainerCodeExecutor(image="analysis:offline", runtime=runtime).execute(
+        make_request(tmp_path)
+    )
+
+    assert result.success is False
+    assert result.error_code is ExecutionErrorCode.OUTPUT_LIMIT
+
+
+class _FakeDockerProcess:
+    def __init__(self):
+        self.stdin = io.BytesIO()
+        self.stdout = io.BytesIO(b"x" * 128)
+        self.stderr = io.BytesIO()
+        self.returncode = 0
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        del timeout
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+
+def test_docker_runtime_bounds_attached_output(monkeypatch):
+    calls = []
+    process = _FakeDockerProcess()
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type("Completed", (), {"stdout": "container-1\n"})()
+
+    monkeypatch.setattr("data_analysis_agent.execution.runtime.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "data_analysis_agent.execution.runtime.subprocess.Popen",
+        lambda *args, **kwargs: process,
+    )
+
+    runtime = DockerCliRuntime(command_timeout_seconds=1.0)
+    spec = ContainerSpec(
+        image="analysis:offline",
+        command=("python",),
+        mounts=(),
+        env={},
+        network_mode="none",
+        user="65532:65532",
+        read_only_rootfs=True,
+        tmpfs=(),
+        cap_drop=(),
+        security_options=(),
+        pids_limit=1,
+        cpu_limit=1.0,
+        memory_limit_bytes=1024,
+        max_output_bytes=16,
+    )
+    container_id = runtime.create(spec)
+    runtime.start(container_id, stdin="print('x')")
+    wait_result = runtime.wait(container_id, timeout_seconds=1.0)
+    output = runtime.read_output(container_id, max_output_bytes=16)
+
+    assert wait_result.output_limited is True
+    assert output.truncated is True
+    assert len(output.stdout.encode("utf-8")) <= 16
+    assert all("communicate" not in str(command) for command, _ in calls)
+
+
+def test_docker_runtime_kill_and_remove_have_bounded_cli_timeouts(monkeypatch):
+    def timeout_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr("data_analysis_agent.execution.runtime.subprocess.run", timeout_run)
+    runtime = DockerCliRuntime(command_timeout_seconds=0.25)
+
+    with pytest.raises(ContainerRuntimeError, match="container kill failed"):
+        runtime.kill("container-1")
+    with pytest.raises(ContainerRuntimeError, match="container remove failed"):
+        runtime.remove("container-1")
 
 
 def test_timeout_exception_is_supported_by_fake_runtime_contract():

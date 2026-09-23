@@ -49,11 +49,18 @@ class ContainerCodeExecutor:
     ) -> None:
         if not image or not image.strip():
             raise ValueError("container image must not be blank")
-        if not user or user.strip() in {"0", "root", "0:0"}:
+        if not self._is_non_root_user(user):
             raise ValueError("container executor requires a non-root user")
         self.image = image.strip()
         self.user = user.strip()
         self.runtime = runtime or DockerCliRuntime()
+
+    @staticmethod
+    def _is_non_root_user(user: str) -> bool:
+        if not user or not user.strip():
+            return False
+        identities = [part.strip().casefold() for part in user.strip().split(":")]
+        return all(identity not in {"0", "root"} for identity in identities)
 
     @staticmethod
     def _network_mode(policy: NetworkPolicy) -> str:
@@ -94,6 +101,7 @@ class ContainerCodeExecutor:
             cpu_limit=request.limits.cpu_limit,
             memory_limit_bytes=request.limits.memory_limit_bytes,
             workdir="/output",
+            max_output_bytes=request.limits.max_output_bytes,
         )
 
     @staticmethod
@@ -238,9 +246,17 @@ class ContainerCodeExecutor:
                             if resource_limited and not timed_out:
                                 error_code = ExecutionErrorCode.RESOURCE_LIMIT
                                 error_message = "container resource limit reached"
+                            if (
+                                wait_result.output_limited
+                                and not timed_out
+                                and not resource_limited
+                            ):
+                                error_code = ExecutionErrorCode.OUTPUT_LIMIT
+                                error_message = "execution output exceeded configured limit"
                             if exit_code != 0 and not timed_out and not resource_limited:
-                                error_code = ExecutionErrorCode.CONTAINER_FAILURE
-                                error_message = "container exited unsuccessfully"
+                                if error_code is None:
+                                    error_code = ExecutionErrorCode.CONTAINER_FAILURE
+                                    error_message = "container exited unsuccessfully"
                             try:
                                 output = self.runtime.read_output(
                                     container_id,
@@ -253,6 +269,7 @@ class ContainerCodeExecutor:
                                     output.stderr,
                                     request.limits.max_output_bytes,
                                 )
+                                output_limited = output_limited or output.truncated
                                 if output_limited and not timed_out and not resource_limited:
                                     error_code = ExecutionErrorCode.OUTPUT_LIMIT
                                     error_message = "execution output exceeded configured limit"
