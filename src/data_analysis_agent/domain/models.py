@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timezone
 from enum import Enum
 import json
 import math
+import re
 from types import MappingProxyType
 from typing import Any
 from uuid import UUID, uuid4
@@ -20,7 +21,15 @@ from pydantic import (
     field_serializer,
 )
 
-from .enums import ReportFormat, TaskEventType, TaskStatus, ToolCallStatus
+from .enums import (
+    EvidenceClaimKind,
+    EvidenceClaimStatus,
+    EvidenceVerificationStatus,
+    ReportFormat,
+    TaskEventType,
+    TaskStatus,
+    ToolCallStatus,
+)
 
 
 def utc_now() -> datetime:
@@ -31,6 +40,18 @@ def _nonblank(value: str) -> str:
     value = value.strip()
     if not value:
         raise ValueError("must not be blank")
+    return value
+
+
+def _validate_evidence_sha256(value: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise ValueError("code_hash must be a 64-character hexadecimal digest")
+    return value.lower()
+
+
+def _finite_evidence_float(value: float) -> float:
+    if not math.isfinite(value):
+        raise ValueError("evidence numbers must be finite")
     return value
 
 
@@ -92,6 +113,8 @@ _DOMAIN_TIME_FIELDS = (
     "occurred_at",
     "started_at",
     "finished_at",
+    "computed_at",
+    "checked_at",
 )
 
 
@@ -327,24 +350,52 @@ class ExecutionResult(DomainModel):
 
 class MetricArtifact(DomainModel):
     artifact_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID | None = None
     name: StrictStr
     value: StrictFloat
     unit: StrictStr | None = None
     description: StrictStr | None = None
+    formula: StrictStr | None = None
+    source_columns: tuple[StrictStr, ...] = ()
+    source_dataset_ids: tuple[UUID, ...] = ()
+    execution_id: UUID | None = None
+    code_hash: StrictStr | None = None
+    computed_at: datetime | None = None
+    verification_status: EvidenceVerificationStatus = (
+        EvidenceVerificationStatus.UNVERIFIED
+    )
+    recomputed_value: StrictFloat | None = None
+    tolerance: StrictFloat = Field(default=1e-6, ge=0)
     source_tool_call_id: UUID | None = None
     created_at: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     _validate_name = field_validator("name")(_nonblank)
+    _validate_code_hash = field_validator("code_hash")(
+        lambda value: None if value is None else _validate_evidence_sha256(value)
+    )
+    _validate_values = field_validator("value", "recomputed_value")(
+        lambda value: None if value is None else _finite_evidence_float(value)
+    )
+    _validate_tolerance = field_validator("tolerance")(_finite_evidence_float)
 
 
 class ChartArtifact(DomainModel):
     artifact_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID | None = None
     filename: StrictStr
     file_path: StrictStr
     mime_type: StrictStr = "image/png"
     title: StrictStr | None = None
     description: StrictStr | None = None
+    chart_type: StrictStr | None = None
+    source_metric_ids: tuple[UUID, ...] = ()
+    execution_id: UUID | None = None
+    code_hash: StrictStr | None = None
+    verification_status: EvidenceVerificationStatus = (
+        EvidenceVerificationStatus.UNVERIFIED
+    )
+    checked_at: datetime | None = None
     source_tool_call_id: UUID | None = None
     created_at: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -353,6 +404,32 @@ class ChartArtifact(DomainModel):
 
     _validate_filename = field_validator("filename")(_nonblank)
     _validate_file_path = field_validator("file_path")(_nonblank)
+    _validate_code_hash = field_validator("code_hash")(
+        lambda value: None if value is None else _validate_evidence_sha256(value)
+    )
+
+
+class EvidenceClaim(DomainModel):
+    claim_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID
+    text: StrictStr
+    kind: EvidenceClaimKind
+    metric_ids: tuple[UUID, ...] = ()
+    chart_ids: tuple[UUID, ...] = ()
+    status: EvidenceClaimStatus = EvidenceClaimStatus.PENDING_CONFIRMATION
+    created_at: datetime = Field(default_factory=utc_now)
+
+    _validate_text = field_validator("text")(_nonblank)
+
+
+class EvidenceValidation(DomainModel):
+    task_id: UUID
+    valid: StrictBool
+    claims: tuple[EvidenceClaim, ...] = ()
+    unsupported_numeric_claims: tuple[StrictStr, ...] = ()
+    missing_chart_ids: tuple[UUID, ...] = ()
+    error_codes: tuple[StrictStr, ...] = ()
+    checked_at: datetime = Field(default_factory=utc_now)
 
 
 class ReportArtifact(DomainModel):
@@ -377,6 +454,8 @@ class AgentState(DomainModel):
     execution_results: tuple[ExecutionResult, ...] = ()
     metric_artifacts: tuple[MetricArtifact, ...] = ()
     chart_artifacts: tuple[ChartArtifact, ...] = ()
+    evidence_claims: tuple[EvidenceClaim, ...] = ()
+    evidence_validation: EvidenceValidation | None = None
     report_artifacts: tuple[ReportArtifact, ...] = ()
     context: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=utc_now)

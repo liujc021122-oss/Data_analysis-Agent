@@ -33,3 +33,19 @@ class ToolCallStatus(str, Enum):
 class ReportFormat(str, Enum):
     MARKDOWN = "MARKDOWN"
     DOCX = "DOCX"
+
+
+class EvidenceVerificationStatus(str, Enum):
+    UNVERIFIED = "UNVERIFIED"
+    VERIFIED = "VERIFIED"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"
+
+
+class EvidenceClaimKind(str, Enum):
+    FACT = "FACT"
+    INTERPRETATION = "INTERPRETATION"
+
+
+class EvidenceClaimStatus(str, Enum):
+    SUPPORTED = "SUPPORTED"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"

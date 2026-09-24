@@ -1,11 +1,28 @@
-from .enums import ReportFormat, TaskEventType, TaskStatus, ToolCallStatus
-from .errors import DomainError, InvalidStatusTransitionError, PersistenceMappingError
+from .enums import (
+    EvidenceClaimKind,
+    EvidenceClaimStatus,
+    EvidenceVerificationStatus,
+    ReportFormat,
+    TaskEventType,
+    TaskStatus,
+    ToolCallStatus,
+)
+from .errors import (
+    DomainError,
+    EvidenceError,
+    EvidenceErrorCode,
+    EvidenceReferenceError,
+    InvalidStatusTransitionError,
+    PersistenceMappingError,
+)
 from .models import (
     AgentState,
     AnalysisTask,
     ChartArtifact,
     Dataset,
     DomainModel,
+    EvidenceClaim,
+    EvidenceValidation,
     ExecutionResult,
     MetricArtifact,
     ReportArtifact,
@@ -21,17 +38,25 @@ from .state import (
 
 __all__ = [
     "DomainError",
+    "EvidenceError",
+    "EvidenceErrorCode",
+    "EvidenceReferenceError",
     "InvalidStatusTransitionError",
     "PersistenceMappingError",
     "ReportFormat",
     "TaskEventType",
     "TaskStatus",
     "ToolCallStatus",
+    "EvidenceClaimKind",
+    "EvidenceClaimStatus",
+    "EvidenceVerificationStatus",
     "AgentState",
     "AnalysisTask",
     "ChartArtifact",
     "Dataset",
     "DomainModel",
+    "EvidenceClaim",
+    "EvidenceValidation",
     "ExecutionResult",
     "MetricArtifact",
     "ReportArtifact",

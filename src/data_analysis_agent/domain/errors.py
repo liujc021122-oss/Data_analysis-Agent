@@ -1,3 +1,5 @@
+from enum import Enum
+
 from .enums import TaskStatus
 
 
@@ -17,3 +19,25 @@ class InvalidStatusTransitionError(DomainError):
 
 class PersistenceMappingError(DomainError):
     """A storage record cannot be converted into a domain object."""
+
+
+class EvidenceErrorCode(str, Enum):
+    EVIDENCE_TASK_MISMATCH = "EVIDENCE_TASK_MISMATCH"
+    METRIC_CONFLICT = "METRIC_CONFLICT"
+    METRIC_NOT_REPRODUCIBLE = "METRIC_NOT_REPRODUCIBLE"
+    CHART_PATH_INVALID = "CHART_PATH_INVALID"
+    CHART_NOT_FOUND = "CHART_NOT_FOUND"
+    UNSUPPORTED_NUMERIC_CLAIM = "UNSUPPORTED_NUMERIC_CLAIM"
+    EVIDENCE_REFERENCE_NOT_FOUND = "EVIDENCE_REFERENCE_NOT_FOUND"
+
+
+class EvidenceError(DomainError):
+    """Base error for safe, stable evidence validation failures."""
+
+    def __init__(self, code: EvidenceErrorCode, message: str):
+        self.code = code
+        super().__init__(message)
+
+
+class EvidenceReferenceError(EvidenceError):
+    """A claim references an unknown metric or chart artifact."""
