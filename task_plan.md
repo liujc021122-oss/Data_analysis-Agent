@@ -31,3 +31,4 @@
 | Invalid container figure path was returned to report flow | 1 | Failed `/output` path resolution now yields an empty path |
 | New execution injection parameters broke the stable public `quick_analysis` signature | 1 | Keep settings forwarding internal and preserve the existing public parameter list |
 | Whole-branch reviewer exhausted retries with HTTP 429 | 2 | Completed manual whole-branch static review and recorded the unavailable independent review in the Task 7 report |
+| M08 orchestration wrapped legacy model/report failures and normalized public UUIDs | 1 | Keep orchestrator errors sanitized internally; restore legacy fallback, safe exception propagation, and raw UUIDs only at the compatibility facade |

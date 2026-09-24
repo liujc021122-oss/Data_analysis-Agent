@@ -2,9 +2,10 @@
 
 ## Status
 
-The complete M09 implementation range `a74afc2..7d78270` was verified as an
-offline, installable branch. Production execution is container-only and
-fail-closed; development/test retain the local compatibility executor.
+The complete M09 implementation range `a74afc2..7d78270`, followed by the
+legacy compatibility follow-up `f174f3f`, was verified as an offline,
+installable branch. Production execution is container-only and fail-closed;
+development/test retain the local compatibility executor.
 
 ## Verification
 
@@ -15,10 +16,12 @@ $env:PYTHONPATH = '.;src'
 pytest -q
 ```
 
-Result: **746 passed, 3 skipped, 3 failed, 18 warnings in 61.31s** (exit code 1).
+The initial Task 7 run reported **746 passed, 3 skipped, 3 failed, 18
+warnings**. The three failures were then reproduced against the M08 base and
+fixed in the compatibility follow-up.
 
-The three failures are the unchanged baseline failures documented since M09
-Task 1:
+The three initial failures were the unchanged baseline failures documented
+since M09 Task 1:
 
 - `tests/test_final_review_fixes.py::test_agent_error_feedback_and_report_fallback_redact_secret`
 - `tests/storage/test_agent_storage_integration.py::test_storage_backed_analysis_uploads_chart_and_markdown_without_local_download_paths`
@@ -28,9 +31,16 @@ The three skipped tests are the existing async-plugin and Windows symlink
 environment limitations. No real model API, network, or Docker daemon was
 used.
 
-Each failing test was also run against the M08 base worktree
-(`a74afc2`) and reproduced with the same failure and assertion boundary; this
-confirms that the failures are pre-existing and not introduced by M09.
+The final fresh run after the follow-up reported:
+**749 passed, 3 skipped, 18 warnings in 65.98s**, exit code 0.
+
+The three skipped tests remain the existing async-plugin and Windows symlink
+environment limitations.
+
+The follow-up restored the legacy facade's model-error report fallback,
+safe propagation of report-generation exceptions, and UUID result contract;
+the orchestrator's internal failure state and sanitized events remain
+unchanged.
 
 ### Focused M09 suite
 
@@ -69,9 +79,8 @@ limitation explicitly recorded.
 
 ## Scope boundary
 
-The three baseline Agent/storage failures remain separate follow-up work. A
-real Docker integration test remains optional and was not required for the
-offline CI contract.
+No known test failures remain. A real Docker integration test remains
+optional and was not required for the offline CI contract.
 
 ## Report path
 

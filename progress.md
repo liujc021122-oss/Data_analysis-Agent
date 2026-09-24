@@ -22,3 +22,5 @@
 - Task 6 已提交：`7d78270`。
 - Task 7 已完成验证：全量离线 746 passed、3 skipped、3 failed；失败均为既有三项 Agent/storage 基线问题；编译、editable 安装、模块入口和 `git diff --check` 均通过。
 - Task 7 独立 reviewer 因服务端 HTTP 429 耗尽重试，未声称 Approved；人工完成 whole-branch 静态复核，限制已记录在 `sdd/m09-task-7-report.md`。
+- 后续基线收尾已提交：`f174f3f`；恢复兼容入口的模型失败报告兜底、报告异常安全传播和 UUID 返回契约。
+- 收尾复核：相关回归 273 passed；全量离线 749 passed、3 skipped、18 warnings，退出码 0。
