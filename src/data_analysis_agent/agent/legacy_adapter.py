@@ -47,6 +47,7 @@ class LegacyAnalysisAdapter:
         self._report_called = False
         self._raw_report_output: dict[str, Any] | None = None
         self._report_output: dict[str, Any] = {}
+        self.report_exception: BaseException | None = None
 
     def handlers(self):
         return {
@@ -176,7 +177,16 @@ class LegacyAnalysisAdapter:
             return StageResult(output=self._report_output)
 
         self._report_called = True
-        report_output = self.agent._generate_final_report()
+        try:
+            report_output = self.agent._generate_final_report()
+        except Exception as exc:
+            # Keep the original exception on the compatibility adapter.  The
+            # orchestrator intentionally exposes only a sanitized terminal
+            # result; the legacy facade can then preserve its historical
+            # exception behavior without leaking the exception through the
+            # orchestration event payload.
+            self.report_exception = exc
+            raise
         if not isinstance(report_output, Mapping):
             return StageResult(
                 completed=False,
@@ -191,7 +201,12 @@ class LegacyAnalysisAdapter:
         self._report_output = self._json_safe(report_output)
         return StageResult(output=self._report_output, model_calls=1)
 
-    def to_legacy_result(self, result: OrchestrationResult) -> dict[str, Any]:
+    def to_legacy_result(
+        self,
+        result: OrchestrationResult,
+        *,
+        json_safe: bool = True,
+    ) -> dict[str, Any]:
         """Return the established result dictionary used by the legacy facade."""
         report_output = dict(self._raw_report_output or result.output)
         analysis_results = getattr(self.agent, "analysis_results", [])
@@ -225,7 +240,7 @@ class LegacyAnalysisAdapter:
                 ),
             }
         )
-        return self._json_safe(report_output)
+        return self._json_safe(report_output) if json_safe else report_output
 
     @staticmethod
     def _collect_figures(analysis_results: Sequence[Any]) -> list[Any]:

@@ -689,12 +689,67 @@ class DataAnalysisAgent:
         )
         orchestration_result = self.orchestrator.run()
         if orchestration_result.status is not TaskStatus.COMPLETED:
+            report_exception = getattr(adapter, "report_exception", None)
+            if report_exception is not None:
+                self.cleanup_storage_outputs()
+                self._raise_compatibility_exception(report_exception)
+
+            failure_code = None
+            for event in reversed(orchestration_result.state.events):
+                if getattr(event.event_type, "value", event.event_type) != "ERROR":
+                    continue
+                failure_code = event.metadata.get("cause_code")
+                break
+
+            # The original DataAnalysisAgent continued to the final report
+            # after a transient gateway failure.  Preserve that public
+            # behavior while leaving the orchestrator's failed state and
+            # sanitized error event intact.
+            if failure_code == "MODEL_ERROR":
+                compatibility_error = f"LLM调用错误: {failure_code}"
+                print(f"❌ {compatibility_error}")
+                self.conversation_history.append(
+                    {"role": "user", "content": compatibility_error}
+                )
+                try:
+                    fallback_report = self._generate_final_report()
+                except Exception as exc:
+                    self.cleanup_storage_outputs()
+                    self._raise_compatibility_exception(exc)
+                if isinstance(fallback_report, Mapping):
+                    fallback_result = orchestration_result.model_copy(
+                        update={
+                            "output": LegacyAnalysisAdapter._json_safe(
+                                fallback_report
+                            )
+                        }
+                    )
+                    return adapter.to_legacy_result(
+                        fallback_result,
+                        json_safe=False,
+                    )
+
             self.cleanup_storage_outputs()
             raise AgentOrchestrationError(
                 orchestration_result.error_message or "analysis orchestration failed",
                 cause_code=orchestration_result.error_code or "ORCHESTRATOR_FAILED",
             )
-        return adapter.to_legacy_result(orchestration_result)
+        return adapter.to_legacy_result(orchestration_result, json_safe=False)
+
+    def _raise_compatibility_exception(self, exception: BaseException) -> None:
+        """Re-raise legacy failures with provider/path details redacted."""
+        safe_message = sanitize_exception(
+            exception,
+            secrets=(
+                getattr(self.config, "api_key", None),
+                getattr(self.config, "base_url", None),
+            ),
+        )
+        try:
+            safe_exception = type(exception)(safe_message)
+        except Exception:
+            safe_exception = RuntimeError(safe_message)
+        raise safe_exception from None
 
     def cleanup_storage_outputs(self) -> None:
         """Remove storage-backed artifacts and the private staging directory."""
