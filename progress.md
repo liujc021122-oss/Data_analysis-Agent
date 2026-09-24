@@ -24,3 +24,10 @@
 - Task 7 独立 reviewer 因服务端 HTTP 429 耗尽重试，未声称 Approved；人工完成 whole-branch 静态复核，限制已记录在 `sdd/m09-task-7-report.md`。
 - 后续基线收尾已提交：`f174f3f`；恢复兼容入口的模型失败报告兜底、报告异常安全传播和 UUID 返回契约。
 - 收尾复核：相关回归 273 passed；全量离线 749 passed、3 skipped、18 warnings，退出码 0。
+- M10 design submitted as `68b72fa`; user approved it and implementation planning is now active.
+- Task 1 RED confirmed with `E:\anaconda\Scripts\pytest.exe`: collection failed because `EvidenceClaimKind` is not yet exported; the initial `python -m pytest` wrapper used the WindowsApps stub and returned `9009`, so subsequent tests use the explicit Anaconda pytest executable.
+- M10 Task 1 GREEN: added evidence enums, stable error codes, provenance fields, claims, validation, and AgentState evidence fields; focused domain verification passed `63 passed, 5 warnings`.
+- Task 2 RED is next: registry tests will cover idempotent metrics, conflicts, provenance-gated verification, and cross-task rejection.
+- M10 Task 2 GREEN: added task-scoped in-memory `EvidenceRegistry` with metric idempotency, conflict detection, provenance-gated recomputation, stable errors, and public exports; focused registry/domain verification passed `9 passed, 5 warnings`.
+- Task 3 RED is next: add chart path, evidence claim, and report numeric validation tests before extending the registry.
+- M10 Task 3 GREEN: registry now checks chart paths/files, classifies claims, and validates report numbers while ignoring code blocks, URLs, UUIDs, and image links; focused domain/service verification passed `74 passed, 5 warnings`.

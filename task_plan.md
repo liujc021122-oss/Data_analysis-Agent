@@ -32,3 +32,18 @@
 | New execution injection parameters broke the stable public `quick_analysis` signature | 1 | Keep settings forwarding internal and preserve the existing public parameter list |
 | Whole-branch reviewer exhausted retries with HTTP 429 | 2 | Completed manual whole-branch static review and recorded the unavailable independent review in the Task 7 report |
 | M08 orchestration wrapped legacy model/report failures and normalized public UUIDs | 1 | Keep orchestrator errors sanitized internally; restore legacy fallback, safe exception propagation, and raw UUIDs only at the compatibility facade |
+
+## M10 分析结果与证据链（2026-09-24）
+
+1. [x] 领域证据枚举、模型、错误码和 JSON 契约
+2. [x] 指标登记、去重、复算和任务隔离
+3. [x] 图表文件边界检查、事实/解释 claim 和报告数字校验
+4. [ ] 执行 ID、Agent 证据接入和报告提示词证据上下文
+5. [ ] 文档、M00-M09 全量回归和最终复核
+
+## M10 Decisions
+
+- 证据登记第一版使用任务级内存 `EvidenceRegistry`，不新增数据库迁移。
+- 未验证指标不能进入报告数字上下文；无证据解释保留原文但标记为 `PENDING_CONFIRMATION`。
+- 图表路径只允许位于当前任务输出根目录内；不存在、目录或越界路径不能生成报告链接。
+- Agent 继续保留兼容结果字典，同时附加结构化指标、图表、claim 和 validation 快照。

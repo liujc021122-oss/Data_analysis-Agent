@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import re
 from typing import Any
 from uuid import UUID
 
-from ..domain.enums import EvidenceVerificationStatus
+from ..domain.enums import (
+    EvidenceClaimStatus,
+    EvidenceVerificationStatus,
+)
 from ..domain.errors import (
     EvidenceError,
     EvidenceErrorCode,
@@ -153,6 +157,171 @@ class EvidenceRegistry:
             "claims": tuple(self._claims.values()),
             "validation": self._validation,
         }
+
+    def register_chart(self, chart: ChartArtifact) -> ChartArtifact:
+        self._require_task(chart.task_id)
+        self._charts[chart.artifact_id] = chart
+        return chart
+
+    def _chart(self, chart_id: UUID) -> ChartArtifact:
+        chart = self._charts.get(chart_id)
+        if chart is None:
+            raise EvidenceReferenceError(
+                EvidenceErrorCode.EVIDENCE_REFERENCE_NOT_FOUND,
+                "chart reference was not found",
+            )
+        return chart
+
+    def check_chart(self, chart_id: UUID) -> ChartArtifact:
+        chart = self._chart(chart_id)
+        try:
+            if self.output_root is None:
+                raise EvidenceError(
+                    EvidenceErrorCode.CHART_PATH_INVALID,
+                    "chart output root is unavailable",
+                )
+            candidate = Path(chart.file_path)
+            if not candidate.is_absolute():
+                candidate = self.output_root / candidate
+            resolved = candidate.resolve(strict=False)
+            try:
+                resolved.relative_to(self.output_root)
+            except ValueError as exc:
+                raise EvidenceError(
+                    EvidenceErrorCode.CHART_PATH_INVALID,
+                    "chart path is outside the task output",
+                ) from exc
+            if not resolved.is_file():
+                raise EvidenceError(
+                    EvidenceErrorCode.CHART_NOT_FOUND,
+                    "chart file was not found",
+                )
+        except EvidenceError:
+            self._charts[chart_id] = chart.model_copy(
+                update={
+                    "verification_status": EvidenceVerificationStatus.PENDING_CONFIRMATION,
+                }
+            )
+            raise
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._charts[chart_id] = chart.model_copy(
+                update={
+                    "verification_status": EvidenceVerificationStatus.PENDING_CONFIRMATION,
+                }
+            )
+            raise EvidenceError(
+                EvidenceErrorCode.CHART_PATH_INVALID,
+                "chart path is invalid",
+            ) from exc
+
+        checked = chart.model_copy(
+            update={
+                "verification_status": EvidenceVerificationStatus.VERIFIED,
+                "checked_at": utc_now(),
+            }
+        )
+        self._charts[chart_id] = checked
+        return checked
+
+    def _metric(self, metric_id: UUID) -> MetricArtifact:
+        metric = self._metrics.get(metric_id)
+        if metric is None:
+            raise EvidenceReferenceError(
+                EvidenceErrorCode.EVIDENCE_REFERENCE_NOT_FOUND,
+                "metric reference was not found",
+            )
+        return metric
+
+    def validate_claim(self, claim: EvidenceClaim) -> EvidenceClaim:
+        self._require_task(claim.task_id)
+        for metric_id in claim.metric_ids:
+            self._metric(metric_id)
+        for chart_id in claim.chart_ids:
+            self._chart(chart_id)
+
+        supported = any(
+            self._metrics[metric_id].verification_status
+            is EvidenceVerificationStatus.VERIFIED
+            for metric_id in claim.metric_ids
+        ) or any(
+            self._charts[chart_id].verification_status
+            is EvidenceVerificationStatus.VERIFIED
+            for chart_id in claim.chart_ids
+        )
+        validated = claim.model_copy(
+            update={
+                "status": (
+                    EvidenceClaimStatus.SUPPORTED
+                    if supported
+                    else EvidenceClaimStatus.PENDING_CONFIRMATION
+                )
+            }
+        )
+        self._claims[claim.claim_id] = validated
+        return validated
+
+    @staticmethod
+    def _report_text_without_nonclaims(markdown: str) -> str:
+        text = re.sub(r"```.*?```", "", markdown, flags=re.DOTALL)
+        text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+        text = re.sub(r"https?://\S+|www\.\S+", "", text)
+        return re.sub(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+            "",
+            text,
+        )
+
+    def validate_report(self, markdown: str, task_id: UUID) -> EvidenceValidation:
+        self._require_task(task_id)
+        text = self._report_text_without_nonclaims(markdown)
+        numeric_pattern = re.compile(
+            r"(?<![\w.])-?(?:\d+(?:\.\d+)?|\.\d+)%?"
+        )
+        verified_values = tuple(
+            metric.value
+            for metric in self._metrics.values()
+            if metric.verification_status is EvidenceVerificationStatus.VERIFIED
+        )
+        unsupported: list[str] = []
+        for match in numeric_pattern.finditer(text):
+            token = match.group(0)
+            try:
+                value = float(token.rstrip("%"))
+            except ValueError:
+                continue
+            if not any(
+                math.isclose(
+                    value,
+                    verified_value,
+                    rel_tol=self.relative_tolerance,
+                    abs_tol=self.absolute_tolerance,
+                )
+                for verified_value in verified_values
+            ) and token not in unsupported:
+                unsupported.append(token)
+
+        pending_charts = tuple(
+            chart_id
+            for chart_id, chart in self._charts.items()
+            if chart.verification_status is not EvidenceVerificationStatus.VERIFIED
+        )
+        claims = tuple(self._claims.values())
+        error_codes: list[str] = []
+        if unsupported:
+            error_codes.append(EvidenceErrorCode.UNSUPPORTED_NUMERIC_CLAIM.value)
+        valid = not unsupported and not pending_charts and all(
+            claim.status is EvidenceClaimStatus.SUPPORTED for claim in claims
+        )
+        validation = EvidenceValidation(
+            task_id=self.task_id,
+            valid=valid,
+            claims=claims,
+            unsupported_numeric_claims=tuple(unsupported),
+            missing_chart_ids=pending_charts,
+            error_codes=tuple(error_codes),
+        )
+        self._validation = validation
+        return validation
 
 
 __all__ = ["EvidenceRegistry"]
