@@ -93,6 +93,9 @@ def test_quick_analysis_runs_complete_offline_flow_and_generates_chart_and_repor
     assert markdown_path.exists()
     assert "离线分析报告" in markdown_path.read_text(encoding="utf-8")
     assert result["collected_figures"][0]["file_path"] == str(chart_path)
+    assert result["metric_artifacts"] == []
+    assert result["chart_artifacts"][0]["verification_status"] == "VERIFIED"
+    assert "evidence_validation" in result
     assert result["word_report_generated"] is True
     assert word_path.exists()
     assert len(Document(word_path).inline_shapes) == 1

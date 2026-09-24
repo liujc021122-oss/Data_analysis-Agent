@@ -213,6 +213,30 @@ class LegacyAnalysisAdapter:
         conversation_history = getattr(self.agent, "conversation_history", [])
         all_figures = self._collect_figures(analysis_results)
 
+        registry = getattr(self.agent, "evidence_registry", None)
+        if registry is not None:
+            snapshot = registry.snapshot(
+                getattr(self.agent, "task_id", result.task_id)
+            )
+            report_output.setdefault(
+                "metric_artifacts",
+                [item.model_dump(mode="json") for item in snapshot["metrics"]],
+            )
+            report_output.setdefault(
+                "chart_artifacts",
+                [item.model_dump(mode="json") for item in snapshot["charts"]],
+            )
+            report_output.setdefault(
+                "evidence_claims",
+                [item.model_dump(mode="json") for item in snapshot["claims"]],
+            )
+            validation = snapshot.get("validation")
+            if validation is not None:
+                report_output.setdefault(
+                    "evidence_validation",
+                    validation.model_dump(mode="json"),
+                )
+
         report_output.update(
             {
                 "session_output_dir": report_output.get(

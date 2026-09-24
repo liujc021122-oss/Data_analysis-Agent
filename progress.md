@@ -31,3 +31,5 @@
 - M10 Task 2 GREEN: added task-scoped in-memory `EvidenceRegistry` with metric idempotency, conflict detection, provenance-gated recomputation, stable errors, and public exports; focused registry/domain verification passed `9 passed, 5 warnings`.
 - Task 3 RED is next: add chart path, evidence claim, and report numeric validation tests before extending the registry.
 - M10 Task 3 GREEN: registry now checks chart paths/files, classifies claims, and validates report numbers while ignoring code blocks, URLs, UUIDs, and image links; focused domain/service verification passed `74 passed, 5 warnings`.
+- Task 4 RED is next: add offline execution-audit and Agent evidence integration tests before modifying execution or Agent code.
+- M10 Task 4 GREEN: added per-execution IDs, task-scoped Agent registry lifecycle, metric/chart registration, verified-only report evidence context, and legacy result evidence snapshots; Agent/execution/integration/storage regression passed `39 passed, 5 warnings` after fixing adapter-vs-Agent task ID separation.

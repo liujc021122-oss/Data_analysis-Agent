@@ -26,7 +26,9 @@ from pydantic import ValidationError
 from ..config.llm import LLMConfig
 from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
-from ..domain.enums import TaskStatus
+from ..domain.errors import EvidenceError
+from ..domain.enums import EvidenceVerificationStatus, TaskStatus
+from ..domain.models import ChartArtifact, EvidenceClaim, MetricArtifact
 from ..execution import (
     AgentExecutionSession,
     CodeExecutionBackend,
@@ -42,6 +44,7 @@ from ..services.llm import LLMHelper
 from ..services.errors import sanitize_exception
 from ..services.responses import extract_code_from_response, format_execution_result
 from ..services.session import create_session_output_dir
+from ..services.evidence import EvidenceRegistry
 from ..datasets import (
     CsvInspector,
     DatasetAccessDeniedError,
@@ -163,6 +166,7 @@ class DataAnalysisAgent:
         settings: Settings | None = None,
         execution_backend: CodeExecutionBackend | None = None,
         execution_runtime: ContainerRuntime | None = None,
+        evidence_registry: EvidenceRegistry | None = None,
     ):
         """
         初始化智能体
@@ -193,14 +197,17 @@ class DataAnalysisAgent:
         self.settings = settings or load_settings()
         self._provided_execution_backend = execution_backend
         self._execution_runtime = execution_runtime
+        self._provided_evidence_registry = evidence_registry
         self.max_rounds = max_rounds
         self.generate_word_report = generate_word_report
         self.dataset_resolver = dataset_resolver
         self.dataset_owner_id = dataset_owner_id
         self.storage = storage
         self.artifact_storage = artifact_storage
-        self._provided_task_id = task_id
-        self.task_id = task_id
+        self._provided_task_id = task_id or (
+            evidence_registry.task_id if evidence_registry is not None else None
+        )
+        self.task_id = self._provided_task_id
         self.storage_lifecycle = None
         if self.storage is not None and self.artifact_storage is None:
             self.artifact_storage = ArtifactStorageService(
@@ -219,8 +226,14 @@ class DataAnalysisAgent:
         self.analysis_results = []
         self.current_round = 0
         self.task_id = self._provided_task_id or uuid4()
+        self.evidence_registry = evidence_registry or EvidenceRegistry(
+            task_id=self.task_id,
+            output_root=self.base_output_dir,
+        )
         self.artifact_records: list[ArtifactRecord] = []
         self.execution_audits: list[dict[str, Any]] = []
+        self._last_execution_id: UUID | None = None
+        self._last_code_hash: str | None = None
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
@@ -332,6 +345,25 @@ class DataAnalysisAgent:
             self.llm_port = port
         return port
 
+    def _get_evidence_registry(self) -> EvidenceRegistry:
+        registry = getattr(self, "evidence_registry", None)
+        if registry is None:
+            registry = EvidenceRegistry(
+                task_id=self.task_id,
+                output_root=getattr(self, "base_output_dir", None),
+            )
+            self.evidence_registry = registry
+        return registry
+
+    def register_metric(self, metric: MetricArtifact) -> MetricArtifact:
+        """Register a structured metric without inferring values from stdout."""
+        if metric.task_id is None:
+            metric = metric.model_copy(update={"task_id": self.task_id})
+        return self._get_evidence_registry().register_metric(metric)
+
+    def validate_claim(self, claim: EvidenceClaim) -> EvidenceClaim:
+        return self._get_evidence_registry().validate_claim(claim)
+
     def _request_structured_action(
         self, prompt: str, system_prompt: str | None = None
     ) -> AgentAction:
@@ -434,13 +466,39 @@ class DataAnalysisAgent:
             else:
                 print(f"   ⚠️ 未提供文件路径")
 
+            evidence_verified = False
+            if file_path:
+                try:
+                    chart = ChartArtifact(
+                        task_id=self.task_id,
+                        filename=str(filename),
+                        file_path=str(file_path),
+                        title=str(figure_info.get("title") or filename),
+                        description=str(description) if description else None,
+                        chart_type=(
+                            str(figure_info["chart_type"])
+                            if figure_info.get("chart_type")
+                            else None
+                        ),
+                        execution_id=getattr(self, "_last_execution_id", None),
+                        code_hash=getattr(self, "_last_code_hash", None),
+                    )
+                    registered_chart = self._get_evidence_registry().register_chart(chart)
+                    self._get_evidence_registry().check_chart(registered_chart.artifact_id)
+                    evidence_verified = True
+                except EvidenceError:
+                    # Preserve the legacy collection payload for storage/error
+                    # handling, while excluding the chart from report evidence.
+                    evidence_verified = False
+
             # 记录图片信息
             collected_figures.append({
                 'figure_number': figure_number,
                 'filename': filename,
                 'file_path': file_path,
                 'description': description,
-                'analysis': analysis
+                'analysis': analysis,
+                'evidence_verified': evidence_verified,
             })
 
         return {
@@ -471,6 +529,13 @@ class DataAnalysisAgent:
                 audit = result.get("audit")
                 if isinstance(audit, Mapping):
                     self.execution_audits.append(dict(audit))
+                    execution_id = audit.get("execution_id")
+                    if execution_id:
+                        try:
+                            self._last_execution_id = UUID(str(execution_id))
+                        except (TypeError, ValueError):
+                            self._last_execution_id = None
+                    self._last_code_hash = audit.get("code_sha256")
 
             # 格式化执行结果
             feedback = format_execution_result(result)
@@ -541,8 +606,21 @@ class DataAnalysisAgent:
         self.analysis_results = []
         self.current_round = 0
         self.task_id = self._provided_task_id or uuid4()
+        provided_registry = getattr(self, "_provided_evidence_registry", None)
+        if (
+            provided_registry is not None
+            and provided_registry.task_id == self.task_id
+        ):
+            self.evidence_registry = provided_registry
+        else:
+            self.evidence_registry = EvidenceRegistry(
+                task_id=self.task_id,
+                output_root=self.base_output_dir,
+            )
         self.artifact_records = []
         self.execution_audits = []
+        self._last_execution_id = None
+        self._last_code_hash = None
         self.storage_error = None
 
         if files is not None and dataset_ids is not None:
@@ -1080,6 +1158,13 @@ class DataAnalysisAgent:
         if structured_report_error is not None:
             raise structured_report_error
 
+        evidence_registry = self._get_evidence_registry()
+        evidence_snapshot = evidence_registry.snapshot(self.task_id)
+        evidence_validation = evidence_registry.validate_report(
+            final_report_content,
+            self.task_id,
+        )
+
         # 返回完整的分析结果
         return {
             'session_output_dir': self.session_output_dir,
@@ -1097,16 +1182,35 @@ class DataAnalysisAgent:
             'report_download_url': report_download_url,
             'word_report_download_url': word_report_download_url,
             'storage_error': getattr(self, "storage_error", None),
+            'metric_artifacts': [
+                item.model_dump(mode="json")
+                for item in evidence_snapshot["metrics"]
+            ],
+            'chart_artifacts': [
+                item.model_dump(mode="json")
+                for item in evidence_snapshot["charts"]
+            ],
+            'evidence_claims': [
+                item.model_dump(mode="json")
+                for item in evidence_snapshot["claims"]
+            ],
+            'evidence_validation': evidence_validation.model_dump(mode="json"),
         }
 
     def _build_final_report_prompt(self, all_figures: List[Dict[str, Any]]) -> str:
         """构建用于生成最终报告的提示词"""
 
+        report_figures = [
+            figure
+            for figure in all_figures
+            if figure.get("evidence_verified", True)
+        ]
+
         # 构建图片信息摘要，使用相对路径
         figures_summary = ""
-        if all_figures:
+        if report_figures:
             figures_summary = "\n生成的图片及分析:\n"
-            for i, figure in enumerate(all_figures, 1):
+            for i, figure in enumerate(report_figures, 1):
                 filename = figure.get('filename', '未知文件名')
                 # 使用相对路径格式，适合在报告中引用
                 relative_path = f"./{filename}"
@@ -1148,7 +1252,46 @@ class DataAnalysisAgent:
 - 这样可以确保报告在不同环境下都能正确显示图片
 """
 
+        prompt += self._build_verified_evidence_context()
+
         return prompt
+
+    def _build_verified_evidence_context(self) -> str:
+        """Return only provenance-backed evidence for the report model."""
+        snapshot = self._get_evidence_registry().snapshot(self.task_id)
+        lines = [
+            "\n结构化证据（只能引用以下已验证事实；未列出的数字不得写入报告）:",
+        ]
+        for metric in snapshot["metrics"]:
+            if metric.verification_status is not EvidenceVerificationStatus.VERIFIED:
+                continue
+            datasets = ",".join(str(item) for item in metric.source_dataset_ids)
+            lines.append(
+                "- metric_id={metric_id} name={name} value={value} unit={unit} "
+                "formula={formula} datasets={datasets} execution_id={execution_id} "
+                "code_hash={code_hash} status=VERIFIED".format(
+                    metric_id=metric.artifact_id,
+                    name=metric.name,
+                    value=metric.value,
+                    unit=metric.unit or "",
+                    formula=metric.formula or "",
+                    datasets=datasets,
+                    execution_id=metric.execution_id or "",
+                    code_hash=metric.code_hash or "",
+                )
+            )
+        for chart in snapshot["charts"]:
+            if chart.verification_status is not EvidenceVerificationStatus.VERIFIED:
+                continue
+            lines.append(
+                "- chart_id={chart_id} filename={filename} chart_type={chart_type} "
+                "status=VERIFIED".format(
+                    chart_id=chart.artifact_id,
+                    filename=chart.filename,
+                    chart_type=chart.chart_type or "",
+                )
+            )
+        return "\n".join(lines) + "\n"
 
     def reset(self):
         """重置智能体状态"""

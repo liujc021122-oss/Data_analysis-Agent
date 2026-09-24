@@ -7,7 +7,7 @@ import math
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import (
     AliasChoices,
@@ -300,6 +300,7 @@ class ExecutionResult(ExecutionModel):
 class ExecutionAudit(ExecutionModel):
     """Minimal, JSON-safe metadata retained for one code execution."""
 
+    execution_id: UUID = Field(default_factory=uuid4)
     task_id: UUID
     backend: StrictStr = Field(min_length=1)
     code_sha256: StrictStr
