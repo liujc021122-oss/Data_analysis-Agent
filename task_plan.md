@@ -47,3 +47,23 @@
 - 未验证指标不能进入报告数字上下文；无证据解释保留原文但标记为 `PENDING_CONFIRMATION`。
 - 图表路径只允许位于当前任务输出根目录内；不存在、目录或越界路径不能生成报告链接。
 - Agent 继续保留兼容结果字典，同时附加结构化指标、图表、claim 和 validation 快照。
+
+## M11 报告生成服务（2026-09-24）
+
+**状态：** 实施计划已完成，等待执行方式确认
+
+1. [ ] 报告格式与核心模型
+2. [ ] Markdown、链接、数字和图片安全过滤
+3. [ ] 版本化模板与 HTML renderer
+4. [ ] ReportService 编排、原子写入和格式失败隔离
+5. [ ] Word renderer 适配和公共导出
+6. [ ] DataAnalysisAgent 接入与兼容结果
+7. [ ] 文档、全量回归和最终复核
+
+## M11 Decisions
+
+- 采用 `ReportService + ReportDocument`，canonical Markdown 作为 HTML/DOCX 的共同内容基准。
+- 第一版实现 Markdown、HTML、DOCX；PDF 只保留未来 renderer 扩展点。
+- 结构化指标和当前任务图表由系统注入，模型只提供叙述草稿。
+- 各输出格式独立失败；Word 失败必须保留 Markdown，存储登记失败不删除本地产物。
+- 保留 `DataAnalysisAgent`、`quick_analysis` 和 `utils/word_report_generator.py` 兼容入口。

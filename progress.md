@@ -35,3 +35,5 @@
 - M10 Task 4 GREEN: added per-execution IDs, task-scoped Agent registry lifecycle, metric/chart registration, verified-only report evidence context, and legacy result evidence snapshots; Agent/execution/integration/storage regression passed `39 passed, 5 warnings` after fixing adapter-vs-Agent task ID separation.
 - M10 收尾初次全量回归发现 6 个旧报告兼容用例因 `object.__new__(DataAnalysisAgent)` 缺少 `task_id` 而失败；`_get_evidence_registry()` 已补充惰性 UUID 初始化，避免证据上下文破坏既有报告契约。
 - M10 文档、全量 M00-M09 回归和最终复核完成：`E:\anaconda\python.exe -m pytest -q` 为 `767 passed, 3 skipped, 18 warnings`；`compileall -q src`、`git diff --check` 和静态契约扫描均通过。
+- M11 设计已获确认，设计文档为 `docs/superpowers/specs/2026-09-24-report-generation-service-design.md`；实现计划为 `docs/superpowers/plans/2026-09-24-report-generation-service.md`。
+- M11 计划采用 `ReportService + ReportDocument`，先生成 canonical Markdown，再独立渲染 HTML/DOCX；PDF 暂不实现。

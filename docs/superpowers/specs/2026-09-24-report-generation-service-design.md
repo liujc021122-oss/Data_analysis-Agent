@@ -1,7 +1,7 @@
 # M11 报告生成服务设计
 
 **日期：** 2026-09-24
-**状态：** 设计已确认，等待书面规范审阅
+**状态：** 已批准，进入实现计划
 **范围：** Markdown、HTML、DOCX；PDF 仅保留扩展接口
 
 ## 目标
@@ -93,6 +93,7 @@ class ReportFormatResult(DomainModel):
     format: ReportFormat
     generated: StrictBool = False
     file_path: StrictStr | None = None
+    download_url: StrictStr | None = None
     artifact: ReportArtifact | None = None
     error: StrictStr | None = None
 ```
@@ -151,7 +152,7 @@ class ReportService:
         ...
 ```
 
-服务依赖通过构造函数注入：模板、renderer 映射、可选 `ArtifactStorageService`、可选 `EvidenceRegistry`。默认构造使用内置模板和 Markdown/HTML/DOCX renderer；测试可以注入 fake renderer 验证失败隔离。
+服务依赖通过构造函数注入：模板、renderer 映射、可选 `ArtifactStorageService`、可选 `Storage` 和可选 `EvidenceRegistry`。默认构造使用内置模板和 Markdown/HTML/DOCX renderer；测试可以注入 fake renderer 验证失败隔离。成功产物的 `download_url` 由存储后端生成，未配置存储时保持为空。
 
 ## 内容和安全规则
 
@@ -200,7 +201,7 @@ class ReportService:
 - `DataAnalysisAgent` 增加可选的内部 `report_service` 注入点，默认创建 `ReportService`；不改变已有公共位置参数和 `quick_analysis` 签名。
 - `_generate_final_report()` 保留 LLM 请求和日志，但删除直接写 Markdown、直接调用 `generate_word_report()` 和重复的存储登记逻辑，改为构造 `ReportDocument` 并消费 `ReportBundle`。
 - 继续返回 `final_report`、`report_file_path`、`word_report_file_path`、`word_report_generated`、`word_report_error`、`report_download_url` 和 `word_report_download_url`。
-- 新增 `html_report_file_path`、`html_report_generated`、`html_report_error`、`report_results` 和 `report_artifacts`，不改变旧字段含义。
+- 新增 `html_report_file_path`、`html_report_generated`、`html_report_error`、`html_report_download_url`、`report_results` 和 `report_artifacts`，不改变旧字段含义。
 - `utils/word_report_generator.py` 和 `data_analysis_agent.reports.word.generate_word_report()` 保留为兼容入口；新实现统一从 `data_analysis_agent.reports` 导入。
 - Agent 仍将分析结果、指标 Artifact、图表 Artifact 和 evidence validation 作为独立字段返回；Word 失败不会清除这些字段。
 
