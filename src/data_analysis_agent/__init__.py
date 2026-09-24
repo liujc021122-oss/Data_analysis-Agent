@@ -113,6 +113,7 @@ from .tools import (
     ValidateMetricOutput,
     build_builtin_registry,
 )
+from .services import EvidenceRegistry
 
 __all__ = [
     "CodeExecutor",
@@ -218,4 +219,5 @@ __all__ = [
     "ValidateMetricInput",
     "ValidateMetricOutput",
     "build_builtin_registry",
+    "EvidenceRegistry",
 ]
