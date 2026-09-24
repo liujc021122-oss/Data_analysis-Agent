@@ -24,3 +24,18 @@
 - 共同根因是旧测试夹具通过 `object.__new__(DataAnalysisAgent)` 构造对象，未初始化 `task_id`；M10 报告证据上下文首次访问该属性时提前抛出 `AttributeError`，遮蔽了 Markdown/Word 和 LLM 错误契约。
 - 修复位于 `DataAnalysisAgent._get_evidence_registry()`：通过 `getattr` 兼容缺失的 `task_id`，按需生成 UUID 并保存到 Agent，再创建任务级 `EvidenceRegistry`。正常构造路径仍复用已有任务 ID。
 - 修复后的模块方式全量验证为 `767 passed, 3 skipped, 18 warnings`。在 Windows 上直接调用 `Scripts\\pytest.exe` 会因启动器路径优先级导致 `tests.fixtures` 收集冲突；使用同一解释器的 `E:\\anaconda\\python.exe -m pytest -q` 可稳定复现项目验证结果。
+
+## M11 初步调研
+
+- `src/data_analysis_agent/reports/word.py` 已经是可复用的 Word 渲染实现；根目录 `utils/word_report_generator.py` 只是兼容导出，不应继续承载新的报告逻辑。
+- `DataAnalysisAgent._generate_final_report()` 仍同时负责模型请求、Markdown 文件写入、Word 转换、存储登记和兼容结果组装；M11 应把这些报告产物职责移入独立服务，保留 Agent 的兼容返回字段。
+- 当前 Word 渲染器已覆盖标题、段落、粗体/斜体、列表、代码块、图片和缺失图片占位，并限制图片位于当前会话输出目录；HTML 尚无统一渲染器或安全过滤入口。
+- M10 的 `MetricArtifact`、`ChartArtifact` 和报告数字校验可作为报告服务的结构化输入；报告服务不应重新从模型文本猜测数字，也不应接受任意宿主路径作为图片来源。
+- `ArtifactStorageService` 已能登记报告文件元数据和下载 URL；M11 可以复用该端口，不需要重新设计文件存储。
+
+## M11 已确认设计方向
+
+- 采用 `ReportService + ReportDocument`：Agent 保留模型叙述调用，报告服务负责结构化内容注入、模板渲染、Markdown/HTML/DOCX 产物和存储登记；PDF 只保留扩展点。
+- 报告服务只接受已验证指标和当前任务已登记的图表；模型叙述中的无证据数字标记为待确认，图片路径不直接信任模型输出。
+- 每种输出格式返回独立结果；Markdown/HTML/DOCX 失败互不回滚，Word 失败继续保留 Markdown，并复用现有 `ArtifactStorageService` 登记接口。
+- 测试将覆盖 ReportDocument 校验、Markdown/HTML/DOCX 内容一致性、图片边界和缺失占位、Markdown 安全过滤、格式失败隔离、可替换模板，以及 Agent 兼容字段；所有测试继续使用 fake LLM/renderer，不访问真实模型或网络。
