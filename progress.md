@@ -19,4 +19,6 @@
 - Task 5 聚焦 Agent/backend/integration 回归：211 passed、1 skipped、14 warnings；完整离线回归：738 passed、3 skipped、3 failed、18 warnings，失败均为已记录的 Agent/storage 基线问题。
 - Task 5 已提交：`3b3a06d`；独立 reviewer 对 Task 5 提出 4 个 Important 和 3 个 Minor，Task 6 已补回归测试并修复生产直构、compatibility files 配置、清理重试、越界图表丢弃和 Python 字面量序列化问题。
 - Task 6 已完成：新增 `ExecutionAudit`，Agent 返回最小审计元数据，更新 production/development/test 配置样例与 README；聚焦回归 238 passed、1 skipped，完整离线回归 746 passed、3 skipped、3 failed（均为已记录基线问题）。
-- 下一步：Task 6 提交并复核，随后执行 Task 7 whole-branch verification/review。
+- Task 6 已提交：`7d78270`。
+- Task 7 已完成验证：全量离线 746 passed、3 skipped、3 failed；失败均为既有三项 Agent/storage 基线问题；编译、editable 安装、模块入口和 `git diff --check` 均通过。
+- Task 7 独立 reviewer 因服务端 HTTP 429 耗尽重试，未声称 Approved；人工完成 whole-branch 静态复核，限制已记录在 `sdd/m09-task-7-report.md`。

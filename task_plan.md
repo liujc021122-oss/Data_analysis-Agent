@@ -12,7 +12,7 @@
 4. [x] 配置选择和生产 fail-closed 边界
 5. [x] Agent/任务执行路径接入统一执行接口
 6. [x] 安全回归、审计元数据和文档
-7. [ ] 全量验证与 whole-branch review
+7. [x] 全量验证与 whole-branch review（人工静态复核完成；独立 reviewer 因服务端 429 未返回）
 
 ## Decisions
 
@@ -30,3 +30,4 @@
 | Explicit unsafe backend could bypass production factory | 1 | Agent now requires `production_safe=True` for injected production backends |
 | Invalid container figure path was returned to report flow | 1 | Failed `/output` path resolution now yields an empty path |
 | New execution injection parameters broke the stable public `quick_analysis` signature | 1 | Keep settings forwarding internal and preserve the existing public parameter list |
+| Whole-branch reviewer exhausted retries with HTTP 429 | 2 | Completed manual whole-branch static review and recorded the unavailable independent review in the Task 7 report |
