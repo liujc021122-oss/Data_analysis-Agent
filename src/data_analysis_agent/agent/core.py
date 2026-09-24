@@ -348,8 +348,12 @@ class DataAnalysisAgent:
     def _get_evidence_registry(self) -> EvidenceRegistry:
         registry = getattr(self, "evidence_registry", None)
         if registry is None:
+            task_id = getattr(self, "task_id", None)
+            if task_id is None:
+                task_id = uuid4()
+                self.task_id = task_id
             registry = EvidenceRegistry(
-                task_id=self.task_id,
+                task_id=task_id,
                 output_root=getattr(self, "base_output_dir", None),
             )
             self.evidence_registry = registry
