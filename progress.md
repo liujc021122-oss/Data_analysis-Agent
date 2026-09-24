@@ -33,3 +33,5 @@
 - M10 Task 3 GREEN: registry now checks chart paths/files, classifies claims, and validates report numbers while ignoring code blocks, URLs, UUIDs, and image links; focused domain/service verification passed `74 passed, 5 warnings`.
 - Task 4 RED is next: add offline execution-audit and Agent evidence integration tests before modifying execution or Agent code.
 - M10 Task 4 GREEN: added per-execution IDs, task-scoped Agent registry lifecycle, metric/chart registration, verified-only report evidence context, and legacy result evidence snapshots; Agent/execution/integration/storage regression passed `39 passed, 5 warnings` after fixing adapter-vs-Agent task ID separation.
+- M10 收尾初次全量回归发现 6 个旧报告兼容用例因 `object.__new__(DataAnalysisAgent)` 缺少 `task_id` 而失败；`_get_evidence_registry()` 已补充惰性 UUID 初始化，避免证据上下文破坏既有报告契约。
+- M10 文档、全量 M00-M09 回归和最终复核完成：`E:\anaconda\python.exe -m pytest -q` 为 `767 passed, 3 skipped, 18 warnings`；`compileall -q src`、`git diff --check` 和静态契约扫描均通过。

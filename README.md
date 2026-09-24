@@ -297,6 +297,45 @@ python -m data_analysis_agent --help
 python -m pytest -q
 ```
 
+### M10 分析结果与证据链
+
+报告中的关键数字不应来自模型记忆或普通 stdout。结构化指标需要记录任务、数据集、
+执行记录和代码哈希，并在进入报告提示词前完成复算：
+
+```python
+from uuid import uuid4
+
+from data_analysis_agent import EvidenceRegistry
+from data_analysis_agent.domain.models import MetricArtifact
+
+task_id = uuid4()
+registry = EvidenceRegistry(task_id=task_id)
+metric = registry.register_metric(
+    MetricArtifact(
+        task_id=task_id,
+        name="revenue",
+        value=125.0,
+        unit="CNY",
+        formula="sum(revenue)",
+        source_columns=("revenue",),
+        source_dataset_ids=(uuid4(),),
+        execution_id=uuid4(),
+        code_hash="a" * 64,
+    )
+)
+verified_metric = registry.verify_metric(metric.artifact_id, 125.0)
+```
+
+只有 `VERIFIED` 指标和已检查存在的当前任务图表会进入最终报告的结构化证据上下文。
+模型不会从任意执行输出猜测指标；报告中的数字如果无法对应已验证指标，会在
+`evidence_validation` 中标记为 `UNSUPPORTED_NUMERIC_CLAIM`，并以 `PENDING_CONFIRMATION`
+（待确认）状态保留，而不是伪装成事实。`FACT`（事实）必须绑定已验证的指标或图表；
+`INTERPRETATION`（解释）没有证据时也会保留原文，但会标记为待确认。
+
+M10 的 `EvidenceRegistry` 目前是任务级内存服务，不新增数据库表。指标字段中的
+`source_dataset_ids`、`execution_id`、`code_hash` 和 `source_columns` 用于复现与追溯；
+图表路径会限制在当前任务输出目录内，越界、目录或缺失文件不会生成报告链接。
+
 ### 文件存储抽象
 
 数据集、图表和报告通过统一的 `Storage` 接口保存。开发和测试环境默认使用
@@ -427,6 +466,10 @@ result = agent.execute_tool("double_value", {"value": 4})
 | `word_report_generated` | Word 报告是否生成成功 |
 | `word_report_error` | Word 报告生成失败时的错误信息 |
 | `execution_audits` | 每次 typed 代码执行的最小安全审计元数据，不包含源代码或宿主路径 |
+| `metric_artifacts` | 带数据集、执行 ID、代码哈希和验证状态的结构化指标 |
+| `chart_artifacts` | 当前任务图表的来源、路径元数据和文件验证状态 |
+| `evidence_claims` | 事实/解释及其证据支持状态 |
+| `evidence_validation` | 报告数字、缺失图表和待确认 claim 的校验结果 |
 
 Word 转换处理报告 Markdown 中的标题、段落、列表、行内粗体/斜体、代码块和图片语法；识别 `【部分总结】` 与 `【分析要点】` 语义标记；图片会以当前会话输出目录为边界进行路径校验，并以带边框和阴影的板块嵌入。
 
