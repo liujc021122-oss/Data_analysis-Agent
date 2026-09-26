@@ -27,7 +27,7 @@ from ..config.llm import LLMConfig
 from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
 from ..domain.errors import EvidenceError
-from ..domain.enums import EvidenceVerificationStatus, TaskStatus
+from ..domain.enums import EvidenceVerificationStatus, ReportFormat, TaskStatus
 from ..domain.models import ChartArtifact, EvidenceClaim, MetricArtifact
 from ..execution import (
     AgentExecutionSession,
@@ -39,7 +39,7 @@ from ..execution import (
 )
 from ..execution.runtime import ContainerRuntime
 from ..llm import LLMStructuredOutputError
-from ..reports.word import generate_word_report
+from ..reports import ReportDocument, ReportService
 from ..services.llm import LLMHelper
 from ..services.errors import sanitize_exception
 from ..services.responses import extract_code_from_response, format_execution_result
@@ -167,6 +167,8 @@ class DataAnalysisAgent:
         execution_backend: CodeExecutionBackend | None = None,
         execution_runtime: ContainerRuntime | None = None,
         evidence_registry: EvidenceRegistry | None = None,
+        *,
+        report_service: ReportService | None = None,
     ):
         """
         初始化智能体
@@ -230,6 +232,8 @@ class DataAnalysisAgent:
             task_id=self.task_id,
             output_root=self.base_output_dir,
         )
+        self._report_service_is_injected = report_service is not None
+        self.report_service = report_service
         self.artifact_records: list[ArtifactRecord] = []
         self.execution_audits: list[dict[str, Any]] = []
         self._last_execution_id: UUID | None = None
@@ -358,6 +362,26 @@ class DataAnalysisAgent:
             )
             self.evidence_registry = registry
         return registry
+
+    def _get_report_service(self) -> ReportService:
+        service = getattr(self, "report_service", None)
+        is_injected = getattr(
+            self,
+            "_report_service_is_injected",
+            service is not None,
+        )
+        registry = self._get_evidence_registry()
+        if service is None or (
+            not is_injected
+            and getattr(service, "evidence_registry", None) is not registry
+        ):
+            service = ReportService(
+                artifact_storage=getattr(self, "artifact_storage", None),
+                storage=getattr(self, "storage", None),
+                evidence_registry=registry,
+            )
+            self.report_service = service
+        return service
 
     def register_metric(self, metric: MetricArtifact) -> MetricArtifact:
         """Register a structured metric without inferring values from stdout."""
@@ -966,6 +990,91 @@ class DataAnalysisAgent:
         self.storage_error = self._display_text(error)
         print(f"❌ 文件存储失败: {self.storage_error}")
 
+    def _report_result_download_url(self, result: object | None) -> str | None:
+        if result is None:
+            return None
+        download_url = getattr(result, "download_url", None)
+        if download_url:
+            return str(download_url)
+        artifact = getattr(result, "artifact", None)
+        storage_uri = getattr(artifact, "file_path", None)
+        storage = getattr(self, "storage", None)
+        if not storage_uri or storage is None:
+            return None
+        try:
+            return storage.create_download_url(storage_uri)
+        except Exception as exc:
+            self._record_storage_error(exc)
+            return None
+
+    @staticmethod
+    def _report_result_payload(result: object) -> dict[str, Any]:
+        model_dump = getattr(result, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+        artifact = getattr(result, "artifact", None)
+        artifact_dump = getattr(artifact, "model_dump", None)
+        return {
+            "format": getattr(getattr(result, "format", None), "value", None),
+            "generated": bool(getattr(result, "generated", False)),
+            "file_path": getattr(result, "file_path", None),
+            "download_url": getattr(result, "download_url", None),
+            "artifact": (
+                artifact_dump(mode="json") if callable(artifact_dump) else artifact
+            ),
+            "error": getattr(result, "error", None),
+        }
+
+    def _append_report_artifacts(self, results: Sequence[object]) -> list[object]:
+        records = getattr(self, "artifact_records", None)
+        if records is None:
+            records = []
+            self.artifact_records = records
+        existing_ids = {
+            getattr(record, "artifact_id", None)
+            for record in records
+        }
+        report_artifacts: list[object] = []
+        mime_types = {
+            ReportFormat.MARKDOWN: "text/markdown; charset=utf-8",
+            ReportFormat.HTML: "text/html; charset=utf-8",
+            ReportFormat.DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
+        for result in results:
+            artifact = getattr(result, "artifact", None)
+            if not getattr(result, "generated", False) or artifact is None:
+                continue
+            report_artifacts.append(artifact)
+            artifact_id = getattr(artifact, "artifact_id", None)
+            if artifact_id in existing_ids:
+                continue
+            if isinstance(artifact, ArtifactRecord):
+                record = artifact
+            else:
+                report_format = getattr(result, "format", getattr(artifact, "format", None))
+                local_path = getattr(result, "file_path", None)
+                record = ArtifactRecord(
+                    artifact_id=artifact_id,
+                    task_id=self.task_id,
+                    artifact_type="REPORT",
+                    name=(
+                        Path(local_path).name
+                        if local_path
+                        else f"report.{getattr(report_format, 'value', 'report').lower()}"
+                    ),
+                    file_path=getattr(artifact, "file_path", None),
+                    format=getattr(report_format, "value", str(report_format)),
+                    mime_type=mime_types.get(report_format),
+                    content_hash=getattr(artifact, "content_hash", None),
+                    created_at=getattr(artifact, "created_at"),
+                    size_bytes=getattr(artifact, "size_bytes", 0),
+                    title=getattr(artifact, "title", None),
+                    metadata_json=dict(getattr(artifact, "metadata", {})),
+                )
+            records.append(record)
+            existing_ids.add(artifact_id)
+        return report_artifacts
+
     def _display_text(self, value: object) -> str:
         """Redact private staging paths from storage-mode console output."""
         text = str(value)
@@ -1082,92 +1191,79 @@ class DataAnalysisAgent:
             print(f"❌ 生成最终报告时出错: {self._display_text(safe_error)}")
             final_report_content = f"报告生成失败: {safe_error}"
 
-        report_download_url = None
-        word_report_download_url = None
-
-        # 保存最终报告到文件
-        report_file_path = os.path.join(self.session_output_dir, "最终分析报告.md")
-        try:
-            with open(report_file_path, 'w', encoding='utf-8') as f:
-                f.write(final_report_content)
-            print(f"📄 最终报告已保存至: {self._display_text(report_file_path)}")
-
-            if getattr(self, "artifact_storage", None) is not None:
-                try:
-                    self._store_figure_artifacts(all_figures)
-                except Exception as e:
-                    self._record_storage_error(e)
-                try:
-                    report_download_url = self._store_report_artifact(
-                        report_file_path,
-                        filename="最终分析报告.md",
-                        mime_type="text/markdown; charset=utf-8",
-                        format="MARKDOWN",
-                    )
-                except Exception as e:
-                    self._record_storage_error(e)
-        except Exception as e:
-            print(
-                "❌ 保存报告文件失败: "
-                + self._display_text(
-                    sanitize_exception(
-                        e,
-                        secrets=(
-                            getattr(self.config, "api_key", None),
-                            getattr(self.config, "base_url", None),
-                        ),
-                    )
-                )
-            )
-
-        word_report_file_path = None
-        word_report_error = None
-        word_report_generated = False
+        evidence_registry = self._get_evidence_registry()
+        evidence_snapshot = evidence_registry.snapshot(self.task_id)
+        document = ReportDocument(
+            task_id=self.task_id,
+            output_root=str(self.session_output_dir),
+            narrative_markdown=final_report_content,
+            metric_artifacts=tuple(evidence_snapshot["metrics"]),
+            chart_artifacts=tuple(evidence_snapshot["charts"]),
+            evidence_validation=evidence_snapshot.get("validation"),
+        )
+        formats = {ReportFormat.MARKDOWN, ReportFormat.HTML}
         if self.generate_word_report:
-            word_report_file_path = os.path.join(self.session_output_dir, "最终分析报告.docx")
+            formats.add(ReportFormat.DOCX)
+
+        if getattr(self, "artifact_storage", None) is not None:
             try:
-                generate_word_report(
-                    markdown_content=final_report_content,
-                    output_path=word_report_file_path,
-                    session_output_dir=self.session_output_dir,
-                    figures=all_figures,
-                )
-                word_report_generated = True
-                print(f"📄 Word报告已保存至: {self._display_text(word_report_file_path)}")
-                if getattr(self, "artifact_storage", None) is not None:
-                    try:
-                        word_report_download_url = self._store_report_artifact(
-                            word_report_file_path,
-                            filename="最终分析报告.docx",
-                            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            format="DOCX",
-                        )
-                    except Exception as e:
-                        self._record_storage_error(e)
-            except Exception as e:
-                word_report_error = (
-                    "Word报告生成失败: "
-                    + self._display_text(
-                        sanitize_exception(
-                            e,
-                            secrets=(
-                                getattr(self.config, "api_key", None),
-                                getattr(self.config, "base_url", None),
-                            ),
-                        )
-                    )
-                )
-                print(f"❌ {word_report_error}")
+                self._store_figure_artifacts(all_figures)
+            except Exception as exc:
+                self._record_storage_error(exc)
+
+        bundle = self._get_report_service().generate(document, formats=formats)
+        results = tuple(bundle.results)
+        results_by_format = {result.format: result for result in results}
+        markdown_result = results_by_format.get(ReportFormat.MARKDOWN)
+        html_result = results_by_format.get(ReportFormat.HTML)
+        word_result = results_by_format.get(ReportFormat.DOCX)
+
+        final_report_content = bundle.markdown_content
+        report_file_path = getattr(markdown_result, "file_path", None)
+        report_download_url = self._report_result_download_url(markdown_result)
+        html_report_file_path = getattr(html_result, "file_path", None)
+        html_report_generated = bool(
+            getattr(html_result, "generated", False)
+        )
+        html_report_error = getattr(html_result, "error", None)
+        html_report_download_url = self._report_result_download_url(html_result)
+
+        word_report_generated = bool(
+            getattr(word_result, "generated", False)
+        )
+        word_report_error = getattr(word_result, "error", None)
+        word_report_file_path = getattr(word_result, "file_path", None)
+        if self.generate_word_report and not word_report_file_path:
+            word_report_file_path = str(
+                Path(self.session_output_dir) / "最终分析报告.docx"
+            )
+        word_report_download_url = self._report_result_download_url(word_result)
+
+        if report_file_path:
+            print(f"📄 最终报告已保存至: {self._display_text(report_file_path)}")
+        if html_report_file_path:
+            print(f"📄 HTML报告已保存至: {self._display_text(html_report_file_path)}")
+        if word_report_generated and word_report_file_path:
+            print(f"📄 Word报告已保存至: {self._display_text(word_report_file_path)}")
+        elif word_report_error:
+            print(f"❌ Word报告生成失败: {self._display_text(word_report_error)}")
+
+        storage_errors = tuple(getattr(bundle, "storage_errors", ()))
+        if storage_errors:
+            prior_error = getattr(self, "storage_error", None)
+            combined = "; ".join(str(error) for error in storage_errors)
+            self.storage_error = (
+                f"{prior_error}; {combined}" if prior_error else combined
+            )
+            print(f"❌ 文件存储失败: {self._display_text(combined)}")
+
+        report_artifact_models = self._append_report_artifacts(results)
 
         if structured_report_error is not None:
             raise structured_report_error
 
-        evidence_registry = self._get_evidence_registry()
         evidence_snapshot = evidence_registry.snapshot(self.task_id)
-        evidence_validation = evidence_registry.validate_report(
-            final_report_content,
-            self.task_id,
-        )
+        evidence_validation = bundle.evidence_validation
 
         # 返回完整的分析结果
         return {
@@ -1178,13 +1274,26 @@ class DataAnalysisAgent:
             'conversation_history': self.conversation_history,
             'final_report': final_report_content,
             'report_file_path': report_file_path,
+            'html_report_file_path': html_report_file_path,
+            'html_report_generated': html_report_generated,
+            'html_report_error': html_report_error,
             'word_report_file_path': word_report_file_path,
             'word_report_generated': word_report_generated,
             'word_report_error': word_report_error,
             'task_id': getattr(self, "task_id", None),
             'artifact_records': list(getattr(self, "artifact_records", [])),
             'report_download_url': report_download_url,
+            'html_report_download_url': html_report_download_url,
             'word_report_download_url': word_report_download_url,
+            'report_results': [
+                self._report_result_payload(result) for result in results
+            ],
+            'report_artifacts': [
+                artifact.model_dump(mode="json")
+                if callable(getattr(artifact, "model_dump", None))
+                else artifact
+                for artifact in report_artifact_models
+            ],
             'storage_error': getattr(self, "storage_error", None),
             'metric_artifacts': [
                 item.model_dump(mode="json")

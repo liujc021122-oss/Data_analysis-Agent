@@ -4,6 +4,9 @@ from types import SimpleNamespace
 from docx import Document
 
 from data_analysis_agent import DataAnalysisAgent
+from data_analysis_agent.domain.enums import ReportFormat
+from data_analysis_agent.reports.html import HtmlReportRenderer
+from data_analysis_agent.reports.service import ReportService
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
 from data_analysis_agent.reports.word import generate_word_report
 
@@ -42,14 +45,22 @@ def test_final_report_contract_writes_markdown_and_returns_paths(tmp_path):
     assert result["word_report_error"] is None
 
 
-def test_word_generation_failure_keeps_markdown_and_exposes_report_error(tmp_path, monkeypatch):
+def test_word_generation_failure_keeps_markdown_and_exposes_report_error(tmp_path):
     markdown = "# Word 失败兜底\n\nMarkdown 必须保留。"
-    agent, _ = make_report_agent(tmp_path, markdown, generate_word=True)
+    agent, session_dir = make_report_agent(tmp_path, markdown, generate_word=True)
 
-    def fail_word_generation(**kwargs):
-        raise RuntimeError("baseline Word failure")
+    class FailingDocxRenderer:
+        format = ReportFormat.DOCX
 
-    monkeypatch.setattr("data_analysis_agent.agent.core.generate_word_report", fail_word_generation)
+        def render(self, *, markdown, document, output_path):
+            raise RuntimeError("baseline Word failure")
+
+    agent.report_service = ReportService(
+        renderers={
+            ReportFormat.DOCX: FailingDocxRenderer(),
+            ReportFormat.HTML: HtmlReportRenderer(),
+        }
+    )
 
     result = agent._generate_final_report()
 
@@ -57,7 +68,7 @@ def test_word_generation_failure_keeps_markdown_and_exposes_report_error(tmp_pat
     assert report_path.exists()
     assert report_path.read_text(encoding="utf-8") == markdown
     assert result["word_report_generated"] is False
-    assert result["word_report_file_path"] is not None
+    assert result["word_report_file_path"] == str(session_dir / "最终分析报告.docx")
     assert "baseline Word failure" in result["word_report_error"]
 
 
