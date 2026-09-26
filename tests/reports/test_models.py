@@ -4,12 +4,18 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from data_analysis_agent.domain.enums import ReportFormat
+from data_analysis_agent.domain.enums import ReportFormat as DomainReportFormat
 from data_analysis_agent.domain.models import MetricArtifact
-from data_analysis_agent.reports import ReportBundle, ReportDocument, ReportFormatResult
+from data_analysis_agent.reports import (
+    ReportBundle,
+    ReportDocument,
+    ReportFormat,
+    ReportFormatResult,
+)
 
 
 def test_html_is_a_supported_report_format():
+    assert ReportFormat is DomainReportFormat
     assert ReportFormat.HTML.value == "HTML"
 
 

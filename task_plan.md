@@ -71,7 +71,7 @@
 ## M11 Verification
 
 - Task 1-6 的实现提交和独立复核均已完成；Task 6 的 legacy Word/storage seam 兼容修复包含在 `a07df38`。
-- 最终全量验证：`E:\anaconda\python.exe -m pytest -q` 为 `804 passed, 3 skipped, 18 warnings`；`E:\anaconda\python.exe -m compileall -q src` 和 `git diff --check` 均退出码 0。
+- 最终全量验证：`E:\anaconda\python.exe -m pytest -q` 为 `804 passed, 3 skipped, 18 warnings in 59.01s`；报告/Agent/Word 相关回归为 `57 passed, 5 warnings`；README 精确公共导入示例离线执行成功；`E:\anaconda\python.exe -m compileall -q src` 和 `git diff --check` 均退出码 0。
 - 3 个 skip 包含 2 个因当前环境未安装 async pytest 插件而跳过的 async 测试，以及 1 个当前环境不支持 symlink 的执行器测试；warnings 为既有 Pydantic、pytest async marker/coroutine 和 Python AST deprecation 警告。
 
 ## M11 Next Stage

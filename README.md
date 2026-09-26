@@ -345,8 +345,7 @@ M10 的 `EvidenceRegistry` 目前是任务级内存服务，不新增数据库�
 from pathlib import Path
 from uuid import uuid4
 
-from data_analysis_agent.domain.enums import ReportFormat
-from data_analysis_agent.reports import ReportDocument, ReportService
+from data_analysis_agent.reports import ReportDocument, ReportFormat, ReportService
 
 task_id = uuid4()
 session_dir = Path("outputs/offline-report")
