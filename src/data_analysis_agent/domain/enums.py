@@ -32,6 +32,7 @@ class ToolCallStatus(str, Enum):
 
 class ReportFormat(str, Enum):
     MARKDOWN = "MARKDOWN"
+    HTML = "HTML"
     DOCX = "DOCX"
 
 
