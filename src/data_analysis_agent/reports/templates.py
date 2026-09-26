@@ -1,6 +1,7 @@
 """Versioned Markdown templates for evidence-backed reports."""
 
 from math import isfinite
+import re
 
 from data_analysis_agent.domain.enums import (
     EvidenceClaimStatus,
@@ -84,7 +85,9 @@ class AnalysisReportTemplate:
         rows = ["## \u56fe\u8868", ""]
         for chart, reference in charts:
             description = chart.title or chart.description or chart.filename
-            rows.append(f"![{_markdown_text(description)}]({reference})")
+            rows.append(
+                f"![{_markdown_text(description)}]({_markdown_image_target(reference)})"
+            )
         return "\n".join(rows)
 
     @staticmethod
@@ -115,3 +118,8 @@ def _markdown_text(value: str) -> str:
 
 def _markdown_table_cell(value: str) -> str:
     return _markdown_text(value).replace("|", "\\|")
+
+
+def _markdown_image_target(value: str) -> str:
+    """Use an angle destination when Markdown delimiters need protection."""
+    return f"<{value}>" if re.search(r"[\s()]", value) else value

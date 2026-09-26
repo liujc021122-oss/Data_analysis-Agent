@@ -1,5 +1,8 @@
 from pathlib import Path
+import re
 from uuid import uuid4
+
+import pytest
 
 from data_analysis_agent.domain.enums import EvidenceVerificationStatus, ReportFormat
 from data_analysis_agent.domain.models import (
@@ -191,3 +194,67 @@ def test_html_renderer_accepts_only_safe_links_and_current_task_images(tmp_path:
     assert "file:///secret" not in html
     assert 'src="trend.png"' in html
     assert "[\u56fe\u7247\u4e0d\u53ef\u7528: \u4e22\u5931]" in html
+
+
+@pytest.mark.parametrize("filename", ("space chart.png", "chart)name.png"))
+def test_template_and_html_render_verified_chart_markdown_delimiters(
+    tmp_path: Path, filename: str
+):
+    task_id = uuid4()
+    chart = tmp_path / filename
+    chart.write_bytes(b"png")
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        chart_artifacts=(
+            ChartArtifact(
+                task_id=task_id,
+                filename=filename,
+                file_path=str(chart),
+                title="verified chart",
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+    output = tmp_path / "report.html"
+
+    markdown = AnalysisReportTemplate().render_markdown(document)
+    HtmlReportRenderer().render(markdown=markdown, document=document, output_path=output)
+
+    rendered = output.read_text(encoding="utf-8")
+    assert f'<img src="{filename}" alt="verified chart">' in rendered
+
+    HtmlReportRenderer().render(
+        markdown=f"![missing](<{filename}.missing>)",
+        document=document,
+        output_path=output,
+    )
+    assert "[\u56fe\u7247\u4e0d\u53ef\u7528: missing]" in output.read_text(encoding="utf-8")
+
+
+def test_html_metric_table_honors_escaped_pipes_and_preserves_value_column(tmp_path: Path):
+    task_id = uuid4()
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        metric_artifacts=(
+            MetricArtifact(
+                task_id=task_id,
+                name="left|right",
+                value=1.2345678901234567,
+                unit="USD|month",
+                source_columns=("source|column",),
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+    output = tmp_path / "report.html"
+
+    markdown = AnalysisReportTemplate().render_markdown(document)
+    HtmlReportRenderer().render(markdown=markdown, document=document, output_path=output)
+
+    rendered = output.read_text(encoding="utf-8")
+    row = re.search(r"<tbody><tr>(.*?)</tr></tbody>", rendered)
+    assert row is not None
+    cells = re.findall(r"<td>(.*?)</td>", row.group(1))
+    assert cells == ["left|right", "1.23456789012346", "USD|month", "source|column"]

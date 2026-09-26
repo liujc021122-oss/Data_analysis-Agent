@@ -13,7 +13,10 @@ from .sanitize import safe_chart_reference, safe_link_target
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
 _UNORDERED = re.compile(r"^\s*[-*+]\s+(.+)$")
 _ORDERED = re.compile(r"^\s*\d+[.)]\s+(.+)$")
-_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
+_IMAGE = re.compile(
+    r"!\[(?P<label>[^\]]*)\]\((?:<(?P<angle_target>[^>\r\n]*)>|"
+    r"(?P<plain_target>[^\s)]+))(?:\s+[^)]*)?\)"
+)
 _LINK = re.compile(r"(?<!!)\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
 
 
@@ -128,7 +131,28 @@ class HtmlReportRenderer:
 
     @staticmethod
     def _table_cells(line: str) -> list[str]:
-        return [cell.strip().replace("\\|", "|") for cell in line.strip().strip("|").split("|")]
+        content = line.strip()
+        if content.startswith("|"):
+            content = content[1:]
+        if content.endswith("|") and not content.endswith("\\|"):
+            content = content[:-1]
+
+        cells: list[str] = []
+        cell: list[str] = []
+        index = 0
+        while index < len(content):
+            if content[index : index + 2] == "\\|":
+                cell.append("|")
+                index += 2
+                continue
+            if content[index] == "|":
+                cells.append("".join(cell).strip())
+                cell.clear()
+            else:
+                cell.append(content[index])
+            index += 1
+        cells.append("".join(cell).strip())
+        return cells
 
     def _inline(self, text: str, document: ReportDocument) -> str:
         parts: list[str] = []
@@ -140,8 +164,12 @@ class HtmlReportRenderer:
             if match.start() < cursor:
                 continue
             parts.append(html.escape(text[cursor : match.start()], quote=True))
-            label, target = match.groups()
             if match.re is _IMAGE:
+                label = match.group("label")
+                angle_target = match.group("angle_target")
+                target = (
+                    angle_target if angle_target is not None else match.group("plain_target")
+                )
                 reference = safe_chart_reference(target, document=document)
                 if reference is None:
                     parts.append(html.escape(f"[\u56fe\u7247\u4e0d\u53ef\u7528: {label}]", quote=True))
@@ -151,6 +179,7 @@ class HtmlReportRenderer:
                         f'alt="{html.escape(label, quote=True)}">'
                     )
             else:
+                label, target = match.groups()
                 safe_target = safe_link_target(target)
                 if safe_target is None:
                     parts.append(html.escape(label, quote=True))
