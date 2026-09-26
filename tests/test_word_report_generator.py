@@ -1,4 +1,5 @@
 import base64
+import inspect
 from zipfile import ZipFile
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from docx import Document
 from docx.shared import RGBColor
 
 from data_analysis_agent.reports.word import generate_word_report
+from utils.word_report_generator import generate_word_report as compatibility_generate_word_report
 
 
 TINY_PNG = base64.b64decode(
@@ -16,6 +18,18 @@ TINY_PNG = base64.b64decode(
 
 def write_tiny_png(path: Path) -> None:
     path.write_bytes(TINY_PNG)
+
+
+def test_compatibility_export_keeps_generate_word_report_signature():
+    assert compatibility_generate_word_report is generate_word_report
+    signature = inspect.signature(generate_word_report)
+    assert list(signature.parameters) == [
+        "markdown_content",
+        "output_path",
+        "session_output_dir",
+        "figures",
+    ]
+    assert signature.parameters["figures"].default is None
 
 
 def test_generates_docx_with_markdown_structure_and_embedded_image(tmp_path):

@@ -16,7 +16,7 @@ from .html import HtmlReportRenderer
 from .models import ReportBundle, ReportDocument, ReportFormatResult
 from .sanitize import sanitize_markdown
 from .templates import AnalysisReportTemplate
-from .word import generate_word_report
+from .word import WordReportRenderer
 
 
 class ReportRenderer(Protocol):
@@ -40,23 +40,6 @@ class MarkdownReportRenderer:
     ) -> str:
         output_path.write_text(markdown, encoding="utf-8")
         return str(output_path)
-
-
-class WordReportRenderer:
-    """Local adapter around the legacy Word generator until a dedicated adapter exists."""
-
-    format = ReportFormat.DOCX
-
-    def render(
-        self, *, markdown: str, document: ReportDocument, output_path: Path
-    ) -> str:
-        figures = [chart.model_dump(mode="python") for chart in document.chart_artifacts]
-        return generate_word_report(
-            markdown_content=markdown,
-            output_path=output_path,
-            session_output_dir=document.output_root,
-            figures=figures,
-        )
 
 
 def default_renderers() -> dict[ReportFormat, ReportRenderer]:

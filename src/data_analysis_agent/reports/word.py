@@ -12,6 +12,10 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Mm, Pt, RGBColor
 
+from data_analysis_agent.domain.enums import ReportFormat
+
+from .models import ReportDocument
+
 
 PathLike = Union[str, Path]
 
@@ -514,3 +518,28 @@ def generate_word_report(
     """Generate a DOCX report from Markdown and return its output path."""
     generator = WordReportGenerator(session_output_dir=session_output_dir, figures=figures)
     return generator.generate(markdown_content=markdown_content, output_path=output_path)
+
+
+class WordReportRenderer:
+    """Adapt the legacy Word generator to the report renderer interface."""
+
+    format = ReportFormat.DOCX
+
+    def render(
+        self, *, markdown: str, document: ReportDocument, output_path: PathLike
+    ) -> str:
+        figures = [
+            {
+                "filename": chart.filename,
+                "file_path": chart.file_path,
+                "title": chart.title,
+                "description": chart.description,
+            }
+            for chart in document.chart_artifacts
+        ]
+        return generate_word_report(
+            markdown_content=markdown,
+            output_path=output_path,
+            session_output_dir=document.output_root,
+            figures=figures,
+        )
