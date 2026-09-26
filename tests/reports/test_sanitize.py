@@ -23,6 +23,14 @@ def test_sanitizer_escapes_raw_html_and_rejects_dangerous_links(tmp_path: Path):
     assert safe_link_target("file:///secret.txt") is None
 
 
+def test_sanitizer_removes_multiline_raw_html_outside_code_blocks(tmp_path: Path):
+    document = ReportDocument(task_id=uuid4(), output_root=str(tmp_path))
+
+    cleaned = sanitize_markdown("<script\n>alert(1)</script>", document=document)
+
+    assert "<script" not in cleaned.lower()
+
+
 def test_sanitizer_only_keeps_verified_current_task_chart(tmp_path: Path):
     task_id = uuid4()
     chart = tmp_path / "chart.png"
@@ -94,3 +102,27 @@ def test_safe_chart_reference_rejects_verified_directory(tmp_path: Path):
     )
 
     assert safe_chart_reference("directory.png", document=document) is None
+
+
+def test_sanitizer_rejects_chart_filenames_outside_output_root(tmp_path: Path):
+    task_id = uuid4()
+    chart = tmp_path / "actual.png"
+    chart.write_bytes(b"png")
+
+    for filename in ("../outside.png", r"C:\outside.png"):
+        document = ReportDocument(
+            task_id=task_id,
+            output_root=str(tmp_path),
+            chart_artifacts=(
+                ChartArtifact(
+                    task_id=task_id,
+                    filename=filename,
+                    file_path=str(chart),
+                    verification_status=EvidenceVerificationStatus.VERIFIED,
+                ),
+            ),
+        )
+
+        cleaned = sanitize_markdown(f"![chart]({filename})", document=document)
+
+        assert cleaned == "[图片不可用: chart]"

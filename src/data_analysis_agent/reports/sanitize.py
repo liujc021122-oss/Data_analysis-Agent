@@ -1,7 +1,7 @@
 """Deterministic safety filtering for report Markdown."""
 
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 from urllib.parse import urlparse
 
@@ -40,9 +40,20 @@ def safe_chart_reference(target: str, *, document: ReportDocument) -> str | None
             chart_path.relative_to(output_root)
             if not chart_path.is_file():
                 continue
+            filename_path = Path(chart.filename)
+            windows_filename = PureWindowsPath(chart.filename)
+            if (
+                filename_path.is_absolute()
+                or windows_filename.is_absolute()
+                or windows_filename.drive
+                or chart.filename.startswith(("/", "\\"))
+            ):
+                continue
+            safe_filename = (output_root / filename_path).resolve(strict=False)
+            relative_filename = safe_filename.relative_to(output_root)
         except (OSError, ValueError):
             continue
-        return chart.filename
+        return relative_filename.as_posix()
     return None
 
 
@@ -54,18 +65,29 @@ def sanitize_markdown(
 ) -> str:
     """Sanitize Markdown while preserving fenced code blocks unchanged."""
     sanitized_lines: list[str] = []
+    non_code_lines: list[str] = []
     in_code_block = False
+
+    def flush_non_code_lines() -> None:
+        if non_code_lines:
+            sanitized_lines.append(
+                _sanitize_non_code_line(
+                    "\n".join(non_code_lines), document, unsupported_numbers
+                )
+            )
+            non_code_lines.clear()
+
     for raw_line in markdown.replace("\r\n", "\n").split("\n"):
         if raw_line.strip().startswith("```"):
+            flush_non_code_lines()
             in_code_block = not in_code_block
             sanitized_lines.append(raw_line)
             continue
         if in_code_block:
             sanitized_lines.append(raw_line)
             continue
-        sanitized_lines.append(
-            _sanitize_non_code_line(raw_line, document, unsupported_numbers)
-        )
+        non_code_lines.append(raw_line)
+    flush_non_code_lines()
     return "\n".join(sanitized_lines)
 
 
