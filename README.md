@@ -336,6 +336,39 @@ M10 的 `EvidenceRegistry` 目前是任务级内存服务，不新增数据库�
 `source_dataset_ids`、`execution_id`、`code_hash` 和 `source_columns` 用于复现与追溯；
 图表路径会限制在当前任务输出目录内，越界、目录或缺失文件不会生成报告链接。
 
+### M11 报告生成服务
+
+`ReportService` 可以在不调用模型或网络的情况下，从已有分析叙述生成 Markdown、HTML
+和 DOCX。当前公开导入路径和最小离线示例如下；输出目录必须预先存在：
+
+```python
+from pathlib import Path
+from uuid import uuid4
+
+from data_analysis_agent.domain.enums import ReportFormat
+from data_analysis_agent.reports import ReportDocument, ReportService
+
+task_id = uuid4()
+session_dir = Path("outputs/offline-report")
+session_dir.mkdir(parents=True, exist_ok=True)
+
+document = ReportDocument(
+    task_id=task_id,
+    output_root=str(session_dir),
+    narrative_markdown="# 分析报告",
+)
+bundle = ReportService().generate(
+    document,
+    formats={ReportFormat.MARKDOWN, ReportFormat.HTML},
+)
+```
+
+M11 只实现 Markdown、HTML 和 DOCX；PDF 是未来 renderer 扩展项，不属于本阶段交付。
+各格式独立生成：DOCX 或 HTML 渲染失败会在对应结果中返回错误，不会删除已经生成的
+Markdown，也不会丢失 Agent 已有的分析结果。报告中的结构化指标和图表只接受当前任务
+范围内、已经验证的证据；未验证指标、跨任务图表、越界路径和不存在的图片不会作为事实
+证据进入输出。
+
 ### 文件存储抽象
 
 数据集、图表和报告通过统一的 `Storage` 接口保存。开发和测试环境默认使用

@@ -37,3 +37,13 @@
 - M10 文档、全量 M00-M09 回归和最终复核完成：`E:\anaconda\python.exe -m pytest -q` 为 `767 passed, 3 skipped, 18 warnings`；`compileall -q src`、`git diff --check` 和静态契约扫描均通过。
 - M11 设计已获确认，设计文档为 `docs/superpowers/specs/2026-09-24-report-generation-service-design.md`；实现计划为 `docs/superpowers/plans/2026-09-24-report-generation-service.md`。
 - M11 计划采用 `ReportService + ReportDocument`，先生成 canonical Markdown，再独立渲染 HTML/DOCX；PDF 暂不实现。
+- 2026-09-26：对 chart mapping 测试执行受控 RED 验证：临时移除 `description` 映射后目标测试按预期 `1 failed`；立即恢复原实现后映射与兼容签名聚焦验证为 `2 passed, 5 warnings in 5.02s`。
+- M11 Task 1 已完成：`7853d64 feat: add report service domain models`；聚焦 `89 passed, 5 warnings`。独立复核通过，提出的 chart 跨任务和 legacy Word 导出 Minor 覆盖项已由后续任务补齐。
+- M11 Task 2 已完成：`55be437 feat: sanitize report content and evidence references`、`298d98e fix: harden report sanitizer boundaries`；修复协议混淆、Markdown span 和图表文件名边界后，聚焦 `18 passed, 5 warnings`，独立复核 Approved。
+- M11 Task 3 已完成：`5e4486f feat: add versioned report template and html renderer`、`4528987 fix: harden report renderer parsing`；修复含空格/括号的安全图表引用和表格转义 pipe 解析后，聚焦 `19 passed, 5 warnings`，独立复核 Approved。
+- M11 Task 4 已完成：`658d7b9 feat: add isolated report generation service`；报告/存储聚焦 `73 passed, 5 warnings`，独立复核 Approved。
+- M11 Task 5 已完成：`3749112 feat: adapt word renderer to report service`；Word 聚焦 `14 passed, 5 warnings`，独立复核 Approved。
+- M11 Task 6 已完成：`b598e1f feat: route agent reports through report service`；初始聚焦 `91 passed, 5 warnings`。全量前发现旧 storage/Word 测试仍依赖 `core.generate_word_report` monkeypatch 且 artifact 数量未包含 HTML；`a07df38 fix: preserve legacy report seams` 恢复兼容符号并为 `WordReportRenderer` 增加 generator 注入，同时更新 canonical Markdown/HTML artifact 断言。修复后兼容回归 `10 passed, 5 warnings`、Task 6 聚焦 `91 passed, 5 warnings`、Word renderer/legacy generator 回归 `12 passed, 5 warnings`；独立复核 Approved。
+- M11 Task 7 已完成：README 记录离线 `ReportService` 用法、格式失败隔离、证据边界和 PDF 非 M11 范围；`task_plan.md` 已标记 Task 1-7 完成并保留 PDF 后续项。设计文档与实际实现一致，无需修改。
+- M11 最终全量验证（2026-09-26）：`E:\anaconda\python.exe -m pytest -q` 退出码 0，实际结果 `804 passed, 3 skipped, 18 warnings in 60.68s`；`E:\anaconda\python.exe -m compileall -q src` 与 `git diff --check` 均退出码 0。3 个 skip 为 2 个缺少 async pytest 插件的 async 测试和 1 个当前环境不支持 symlink 的测试；18 条 warning 为既有 Pydantic protected namespace、未知 asyncio marker/未处理 coroutine 和 AST deprecation 警告。
+- M11 后续：PDF renderer 留待未来阶段，不计入 M11 完成状态。

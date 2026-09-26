@@ -50,15 +50,15 @@
 
 ## M11 报告生成服务（2026-09-24）
 
-**状态：** 实施计划已完成，等待执行方式确认
+**状态：** 已完成（2026-09-26）
 
-1. [ ] 报告格式与核心模型
-2. [ ] Markdown、链接、数字和图片安全过滤
-3. [ ] 版本化模板与 HTML renderer
-4. [ ] ReportService 编排、原子写入和格式失败隔离
-5. [ ] Word renderer 适配和公共导出
-6. [ ] DataAnalysisAgent 接入与兼容结果
-7. [ ] 文档、全量回归和最终复核
+1. [x] 报告格式与核心模型
+2. [x] Markdown、链接、数字和图片安全过滤
+3. [x] 版本化模板与 HTML renderer
+4. [x] ReportService 编排、原子写入和格式失败隔离
+5. [x] Word renderer 适配和公共导出
+6. [x] DataAnalysisAgent 接入与兼容结果
+7. [x] 文档、全量回归和最终复核
 
 ## M11 Decisions
 
@@ -67,3 +67,13 @@
 - 结构化指标和当前任务图表由系统注入，模型只提供叙述草稿。
 - 各输出格式独立失败；Word 失败必须保留 Markdown，存储登记失败不删除本地产物。
 - 保留 `DataAnalysisAgent`、`quick_analysis` 和 `utils/word_report_generator.py` 兼容入口。
+
+## M11 Verification
+
+- Task 1-6 的实现提交和独立复核均已完成；Task 6 的 legacy Word/storage seam 兼容修复包含在 `a07df38`。
+- 最终全量验证：`E:\anaconda\python.exe -m pytest -q` 为 `804 passed, 3 skipped, 18 warnings`；`E:\anaconda\python.exe -m compileall -q src` 和 `git diff --check` 均退出码 0。
+- 3 个 skip 包含 2 个因当前环境未安装 async pytest 插件而跳过的 async 测试，以及 1 个当前环境不支持 symlink 的执行器测试；warnings 为既有 Pydantic、pytest async marker/coroutine 和 Python AST deprecation 警告。
+
+## M11 Next Stage
+
+- PDF 尚未实现；未来通过新增 renderer 接入，不计入 M11 完成范围。
