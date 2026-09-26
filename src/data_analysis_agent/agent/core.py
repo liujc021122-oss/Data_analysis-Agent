@@ -40,6 +40,8 @@ from ..execution import (
 from ..execution.runtime import ContainerRuntime
 from ..llm import LLMStructuredOutputError
 from ..reports import ReportDocument, ReportService
+from ..reports.service import default_renderers
+from ..reports.word import WordReportRenderer, generate_word_report
 from ..services.llm import LLMHelper
 from ..services.errors import sanitize_exception
 from ..services.responses import extract_code_from_response, format_execution_result
@@ -375,7 +377,12 @@ class DataAnalysisAgent:
             not is_injected
             and getattr(service, "evidence_registry", None) is not registry
         ):
+            renderers = default_renderers()
+            renderers[ReportFormat.DOCX] = WordReportRenderer(
+                generator=generate_word_report
+            )
             service = ReportService(
+                renderers=renderers,
                 artifact_storage=getattr(self, "artifact_storage", None),
                 storage=getattr(self, "storage", None),
                 evidence_registry=registry,

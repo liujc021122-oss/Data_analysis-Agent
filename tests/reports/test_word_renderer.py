@@ -71,6 +71,32 @@ def test_word_renderer_maps_charts_and_returns_legacy_result(tmp_path: Path, mon
     ]
 
 
+def test_word_renderer_uses_injected_legacy_generator(tmp_path: Path):
+    output = tmp_path / "report.docx"
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+    calls = []
+
+    def injected_generator(**kwargs):
+        calls.append(kwargs)
+        return "injected-result"
+
+    result = WordReportRenderer(generator=injected_generator).render(
+        markdown="# canonical", document=document, output_path=output
+    )
+
+    assert result == "injected-result"
+    assert calls == [
+        {
+            "markdown_content": "# canonical",
+            "output_path": output,
+            "session_output_dir": str(tmp_path),
+            "figures": [],
+        }
+    ]
+
+
 def test_word_renderer_is_public_and_used_by_default():
     assert ExportedWordReportRenderer is WordReportRenderer
     assert isinstance(default_renderers()[ReportFormat.DOCX], WordReportRenderer)

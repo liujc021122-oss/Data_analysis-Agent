@@ -146,7 +146,17 @@ def test_storage_backed_analysis_uploads_chart_and_markdown_without_local_downlo
     assert str(tmp_path) not in result["report_download_url"]
     assert result["word_report_download_url"] is None
     assert Path(result["report_file_path"]).exists()
-    assert len(result["artifact_records"]) == 2
+    assert len(result["artifact_records"]) == 3
+    report_records = [
+        record
+        for record in result["artifact_records"]
+        if record.artifact_type == "REPORT"
+    ]
+    assert {record.format for record in report_records} == {"MARKDOWN", "HTML"}
+    assert {artifact["format"] for artifact in result["report_artifacts"]} == {
+        "MARKDOWN",
+        "HTML",
+    }
     assert str(tmp_path) not in capsys.readouterr().out
 
 
@@ -172,7 +182,9 @@ def test_word_failure_keeps_markdown_storage_artifact_and_legacy_report(tmp_path
 
     assert result["report_download_url"].startswith("fake-download://")
     assert result["word_report_download_url"] is None
-    assert Path(result["report_file_path"]).read_text(encoding="utf-8") == "# Stored report"
+    markdown = Path(result["report_file_path"]).read_text(encoding="utf-8")
+    assert "# Stored report" in markdown
+    assert "![trend.png](trend.png)" in markdown
     assert result["word_report_generated"] is False
     assert "planned Word failure" in result["word_report_error"]
     assert any("/reports/" in key and key.endswith("_最终分析报告.md") for key, _ in storage.put_calls)

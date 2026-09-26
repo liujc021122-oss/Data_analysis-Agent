@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Union
 from urllib.parse import unquote
 
 from docx import Document
@@ -525,6 +525,12 @@ class WordReportRenderer:
 
     format = ReportFormat.DOCX
 
+    def __init__(
+        self,
+        generator: Callable[..., str] | None = None,
+    ) -> None:
+        self.generator = generate_word_report if generator is None else generator
+
     def render(
         self, *, markdown: str, document: ReportDocument, output_path: PathLike
     ) -> str:
@@ -537,7 +543,7 @@ class WordReportRenderer:
             }
             for chart in document.chart_artifacts
         ]
-        return generate_word_report(
+        return self.generator(
             markdown_content=markdown,
             output_path=output_path,
             session_output_dir=document.output_root,
