@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..config.settings import Settings, load_settings
+from ..persistence.database import Database
+from ..storage.factory import build_storage
 from ..storage import Storage
 from .auth import PrincipalProvider
 
@@ -22,3 +24,11 @@ class APIApplication:
     file_access: Any = None
     principal_provider: PrincipalProvider | None = None
 
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "APIApplication":
+        database = Database.from_settings(settings) if settings.database_url else None
+        return cls(
+            settings=settings,
+            database=database,
+            storage=build_storage(settings),
+        )

@@ -11,7 +11,6 @@ from ..config.settings import ConfigurationError, load_settings
 from .application import APIApplication
 from .auth import AuthenticationError
 from .errors import APIError
-from .pagination import PageResponse
 from .routers import artifacts_router, datasets_router, tasks_router
 from .schemas import ErrorResponse
 
@@ -41,9 +40,13 @@ def _error(request: Request, *, status: int, code: str, message: str, details=No
 
 
 def create_app(container: APIApplication | None = None) -> FastAPI:
-    application = container or APIApplication(settings=load_settings())
+    application = container or APIApplication.from_settings(load_settings())
     if application.settings.app_env == "production" and application.principal_provider is None:
         raise ConfigurationError("production requires an explicit authentication provider")
+    if application.settings.app_env == "production" and (
+        application.database is None or application.storage is None
+    ):
+        raise ConfigurationError("production requires configured database and storage")
 
     app = FastAPI(title="Data Analysis Agent API", version="1.0.0")
     app.state.api_application = application
@@ -54,7 +57,13 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError):
-        return _error(request, status=422, code="REQUEST_VALIDATION_ERROR", message="request validation failed", details={"errors": exc.errors()})
+        details = {
+            "errors": [
+                {"loc": list(error.get("loc", ())), "msg": error.get("msg", "invalid request"), "type": error.get("type", "")}
+                for error in exc.errors()
+            ]
+        }
+        return _error(request, status=422, code="REQUEST_VALIDATION_ERROR", message="request validation failed", details=details)
 
     @app.exception_handler(AuthenticationError)
     async def auth_handler(request: Request, exc: AuthenticationError):

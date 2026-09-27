@@ -32,3 +32,21 @@
 ## Self-review and concerns
 
 The default application factory creates a dependency container with development settings and no database-backed services; later API tasks replace these fields with configured service implementations. Route modules are intentionally empty until their corresponding tasks.
+
+## Review fix
+
+- Added `APIApplication.from_settings` to build the configured database when a URL is present and select the environment storage backend.
+- Production app creation now rejects missing configured database or storage dependencies.
+- Sanitized request validation details to include only location, message, and error type, excluding raw submitted input and context.
+
+Verification after the review fix:
+
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_app.py tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 16 passed in 7.39s.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m compileall -q src` — passed.
+- `git diff --check` — passed.
+
+## Review follow-up
+
+- Exported `create_app` from `data_analysis_agent.api` as the public factory entry point.
+- Added coverage for overlong request IDs being replaced and for the public factory export.
+- Review service attempts returned HTTP 429 twice; a targeted manual review confirmed the factory has no direct Agent, LLM, executor, or external-service calls. Focused verification after the follow-up: 16 passed, compileall passed, and `git diff --check` passed.
