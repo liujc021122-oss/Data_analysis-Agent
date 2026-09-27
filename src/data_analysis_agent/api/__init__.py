@@ -18,6 +18,7 @@ from .schemas import (
 from .auth import AuthenticationError, HeaderPrincipalProvider, Principal, PrincipalProvider
 from .auth import get_current_principal
 from .application import APIApplication
+from .app import create_app
 from .pagination import Page, PageResponse, PaginationParams
 
 # AnalysisTaskCreateRequest includes the idempotency contract used by the
@@ -48,4 +49,5 @@ __all__ = [
     "PaginationParams",
     "APIApplication",
     "get_current_principal",
+    "create_app",
 ]

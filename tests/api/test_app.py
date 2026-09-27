@@ -26,6 +26,17 @@ def test_supplied_request_id_is_echoed(fake_application):
     assert response.headers["X-Request-ID"] == "request-123"
 
 
+def test_invalid_request_id_is_replaced_and_public_factory_is_exported(fake_application):
+    from data_analysis_agent.api import create_app as exported_create_app
+
+    response = TestClient(exported_create_app(fake_application)).get(
+        "/openapi.json", headers={"X-Request-ID": "x" * 129}
+    )
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] != "x" * 129
+    assert len(response.headers["X-Request-ID"]) == 36
+
+
 def test_production_requires_explicit_principal_provider(fake_application):
     production = replace(fake_application, settings=load_settings(
         app_env="production",
@@ -38,4 +49,3 @@ def test_production_requires_explicit_principal_provider(fake_application):
     ), principal_provider=None)
     with pytest.raises(ConfigurationError, match="authentication provider"):
         create_app(production)
-
