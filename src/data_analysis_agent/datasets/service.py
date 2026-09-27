@@ -50,6 +50,41 @@ class UnitOfWorkDatasetStore:
         with self._uow_factory() as uow:
             return uow.datasets.get_for_user(dataset_id, user_id)
 
+    def list_for_user(self, user_id: UUID, *, offset: int = 0, limit: int | None = None):
+        with self._uow_factory() as uow:
+            return uow.datasets.list_for_user(user_id, offset=offset, limit=limit), uow.datasets.count_for_user(user_id)
+
+    def delete_for_user(self, dataset_id: UUID, user_id: UUID) -> bool:
+        with self._uow_factory() as uow:
+            deleted = uow.datasets.delete_for_user(dataset_id, user_id)
+            uow.commit()
+            return deleted
+
+
+class DatasetCatalogService:
+    def __init__(self, *, storage: Storage, uow_factory):
+        self._storage = storage
+        self._uow_factory = uow_factory
+
+    def list_for_user(self, user_id: UUID, offset: int, limit: int):
+        with self._uow_factory() as uow:
+            return uow.datasets.list_for_user(user_id, offset=offset, limit=limit), uow.datasets.count_for_user(user_id)
+
+    def get_for_user(self, user_id: UUID, dataset_id: UUID) -> DatasetRecord:
+        with self._uow_factory() as uow:
+            record = uow.datasets.get_for_user(dataset_id, user_id)
+        if record is None:
+            raise DatasetAccessDeniedError(DatasetErrorCode.DATASET_ACCESS_DENIED, "dataset is not available")
+        return record
+
+    def delete_for_user(self, user_id: UUID, dataset_id: UUID) -> None:
+        record = self.get_for_user(user_id, dataset_id)
+        self._storage.delete(record.source_uri)
+        with self._uow_factory() as uow:
+            if not uow.datasets.delete_for_user(dataset_id, user_id):
+                raise DatasetAccessDeniedError(DatasetErrorCode.DATASET_ACCESS_DENIED, "dataset is not available")
+            uow.commit()
+
 
 class InMemoryDatasetStore:
     """Offline quick_analysis adapter; it stores metadata only for one process."""

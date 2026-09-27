@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from uuid import UUID, uuid4
 
@@ -7,7 +8,7 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from ..domain.errors import PersistenceMappingError
-from ..domain.enums import ReportFormat, ToolCallStatus
+from ..domain.enums import ReportFormat, TaskStatus, ToolCallStatus
 from ..domain.models import AnalysisTask, ExecutionResult, TaskEvent, ToolCall, utc_now
 from .errors import EntityNotFoundError
 from .errors import IdempotencyConflictError
@@ -73,9 +74,24 @@ class DatasetRepository:
         )
         return dataset_orm_to_record(row) if row else None
 
-    def list_for_user(self, user_id: UUID) -> list[DatasetRecord]:
-        rows = self.session.scalars(select(DatasetORM).where(DatasetORM.user_id == user_id).order_by(DatasetORM.created_at, DatasetORM.dataset_id)).all()
+    def count_for_user(self, user_id: UUID) -> int:
+        from sqlalchemy import func
+        return int(self.session.scalar(select(func.count()).select_from(DatasetORM).where(DatasetORM.user_id == user_id)) or 0)
+
+    def list_for_user(self, user_id: UUID, *, offset: int = 0, limit: int | None = None) -> list[DatasetRecord]:
+        statement = select(DatasetORM).where(DatasetORM.user_id == user_id).order_by(DatasetORM.created_at, DatasetORM.dataset_id).offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+        rows = self.session.scalars(statement).all()
         return [dataset_orm_to_record(row) for row in rows]
+
+    def delete_for_user(self, dataset_id: UUID, user_id: UUID) -> bool:
+        row = self.session.scalar(select(DatasetORM).where(DatasetORM.dataset_id == dataset_id, DatasetORM.user_id == user_id))
+        if row is None:
+            return False
+        self.session.delete(row)
+        self.session.flush()
+        return True
 
 
 @dataclass(frozen=True)
@@ -168,6 +184,45 @@ class TaskRepository:
             )
         ).first()
         return (self._to_domain(row), row.request_hash) if row else None
+
+    def get_by_idempotency(
+        self, user_id: UUID, idempotency_key: str
+    ) -> AnalysisTask | None:
+        existing = self._get_by_idempotency(user_id, idempotency_key)
+        return existing[0] if existing is not None else None
+
+    def get_owner_id(self, task_id: UUID) -> UUID | None:
+        row = self.session.get(AnalysisTaskORM, task_id)
+        return row.user_id if row is not None else None
+
+    def claim_queued(self, task_id: UUID) -> AnalysisTask | None:
+        """Atomically move a queued task to RUNNING when this worker wins."""
+        statement = (
+            update(AnalysisTaskORM)
+            .where(
+                AnalysisTaskORM.task_id == task_id,
+                AnalysisTaskORM.status == TaskStatus.QUEUED,
+            )
+            .values(status=TaskStatus.RUNNING, updated_at=utc_now())
+        )
+        result = self.session.execute(statement)
+        if result.rowcount != 1:
+            return None
+        self.session.flush()
+        return self.get(task_id)
+
+    def list_status_before(
+        self, *, status, before: datetime
+    ) -> list[AnalysisTask]:
+        rows = self.session.scalars(
+            select(AnalysisTaskORM)
+            .where(
+                AnalysisTaskORM.status == status,
+                AnalysisTaskORM.updated_at < before,
+            )
+            .order_by(AnalysisTaskORM.updated_at, AnalysisTaskORM.task_id)
+        ).all()
+        return [self._to_domain(row) for row in rows]
 
     @staticmethod
     def _check_idempotency(

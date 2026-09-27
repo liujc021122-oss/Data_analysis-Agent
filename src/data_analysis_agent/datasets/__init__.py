@@ -22,6 +22,7 @@ from .service import (
     DatasetUploadService,
     InMemoryDatasetStore,
     UnitOfWorkDatasetStore,
+    DatasetCatalogService,
 )
 
 __all__ = [
@@ -46,4 +47,5 @@ __all__ = [
     "DatasetUploadService",
     "InMemoryDatasetStore",
     "UnitOfWorkDatasetStore",
+    "DatasetCatalogService",
 ]

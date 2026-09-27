@@ -1,4 +1,65 @@
-from fastapi import APIRouter
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, UploadFile, status, Request
+from fastapi.responses import Response
+
+from ...datasets import DatasetAccessDeniedError
+from ...datasets.models import DatasetProfile
+from ..auth import Principal, get_current_principal
+from ..errors import APIError
+from ..pagination import PaginationParams
+from ..schemas import DatasetListResponse, DatasetResponse, DatasetUploadResponse
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
+
+def _profile(record):
+    return DatasetProfile.model_validate(record.metadata_json.get("profile", {}))
+
+
+def _response(record) -> DatasetResponse:
+    return DatasetResponse(dataset_id=record.dataset_id, name=record.name, content_type=record.content_type, size_bytes=record.size_bytes, checksum=record.checksum, created_at=record.created_at, profile=_profile(record))
+
+
+@router.post("", response_model=DatasetUploadResponse, status_code=status.HTTP_201_CREATED)
+def upload_dataset(request: Request, file: UploadFile = File(...), principal: Principal = Depends(get_current_principal)):
+    application = request.app.state.api_application
+    if application.dataset_upload is None:
+        raise APIError("DATASET_SERVICE_UNAVAILABLE", "dataset service is unavailable", status_code=503)
+    try:
+        result = application.dataset_upload.upload(file.file, original_filename=file.filename or "upload.csv", owner_id=principal.user_id)
+    except DatasetAccessDeniedError as exc:
+        raise APIError(exc.code.value, exc.message, status_code=404) from exc
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            status_code = 413 if getattr(exc.code, "value", exc.code) == "FILE_TOO_LARGE" else 422
+            raise APIError(getattr(exc.code, "value", str(exc.code)), exc.message, status_code=status_code) from exc
+        raise
+    return DatasetUploadResponse(dataset_id=result.dataset_id, profile=result.profile)
+
+
+@router.get("", response_model=DatasetListResponse)
+def list_datasets(request: Request, page: int = 1, page_size: int = 20, principal: Principal = Depends(get_current_principal)):
+    params = PaginationParams(page=page, page_size=page_size)
+    service = request.app.state.api_application.dataset_catalog
+    if service is None:
+        raise APIError("DATASET_SERVICE_UNAVAILABLE", "dataset service is unavailable", status_code=503)
+    records, total = service.list_for_user(principal.user_id, params.offset, params.page_size)
+    return DatasetListResponse(items=[_response(record) for record in records], page=page, page_size=page_size, total=total, has_next=params.offset + len(records) < total)
+
+
+@router.get("/{dataset_id}", response_model=DatasetResponse)
+def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depends(get_current_principal)):
+    try:
+        return _response(request.app.state.api_application.dataset_catalog.get_for_user(principal.user_id, dataset_id))
+    except DatasetAccessDeniedError as exc:
+        raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
+
+
+@router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dataset(request: Request, dataset_id: UUID, principal: Principal = Depends(get_current_principal)):
+    try:
+        request.app.state.api_application.dataset_catalog.delete_for_user(principal.user_id, dataset_id)
+    except DatasetAccessDeniedError as exc:
+        raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

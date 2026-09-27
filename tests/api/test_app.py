@@ -18,7 +18,7 @@ def test_request_id_is_generated_and_openapi_is_available(fake_application):
     response = TestClient(create_app(fake_application)).get("/openapi.json")
     assert response.status_code == 200
     assert response.headers["X-Request-ID"]
-    assert "/api/datasets" not in response.json()["paths"]
+    assert "/api/datasets" in response.json()["paths"]
 
 
 def test_supplied_request_id_is_echoed(fake_application):
