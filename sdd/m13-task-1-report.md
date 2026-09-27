@@ -37,3 +37,15 @@ GREEN:
 ## Self-review and concerns
 
 The existing schema tests construct `ErrorResponse` without a request ID, so the field has a compatibility default. HTTP application handlers must populate it for every response in Task 2. Existing M12 changes in shared files remain in the worktree and were preserved.
+
+## Review fix
+
+- Made `ErrorResponse.request_id` required so every HTTP error handler must supply the request ID.
+- Removed `file_path` from the public `ArtifactResponse` DTO and updated schema coverage so serialized public artifacts cannot expose local paths.
+- Added explicit `AuthenticationError` assertions for both missing and malformed `X-User-ID` values.
+
+Verification after the review fix:
+
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 11 passed in 7.03s.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest -q` — 855 passed, 1 skipped in 65.32s.
+- `git diff --check` — passed.

@@ -65,7 +65,6 @@ def test_response_uses_the_domain_task_status_enum_and_is_not_a_domain_model():
                 artifact_id=uuid4(),
                 artifact_type="chart",
                 name="trend.png",
-                file_path="outputs/trend.png",
                 download_url="local-download://opaque-token",
                 mime_type="image/png",
             ),
@@ -100,6 +99,7 @@ def test_event_execution_and_error_dtos_are_json_serializable():
         code="EXECUTION_FAILED",
         message="代码执行失败",
         details={"retryable": True},
+        request_id="req-1",
     )
 
     for dto in (event, execution, error):
@@ -112,6 +112,9 @@ def test_event_execution_and_error_dtos_are_json_serializable():
 def test_api_models_forbid_unknown_fields():
     with pytest.raises(ValidationError):
         ErrorResponse(code="E", message="m", unexpected="x")
+
+    with pytest.raises(ValidationError):
+        ErrorResponse(code="E", message="m")
 
 
 def test_dataset_upload_response_serializes_result_without_source_uri():

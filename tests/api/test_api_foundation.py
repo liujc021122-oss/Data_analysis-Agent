@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from data_analysis_agent.api.auth import HeaderPrincipalProvider
+from data_analysis_agent.api.auth import AuthenticationError, HeaderPrincipalProvider
 from data_analysis_agent.api.pagination import PageResponse, PaginationParams
 from data_analysis_agent.api.schemas import ErrorResponse
 
@@ -33,8 +33,11 @@ def test_header_principal_requires_a_uuid_user_id():
     )
     assert isinstance(principal.user_id, UUID)
 
-    with pytest.raises(Exception, match="authentication"):
+    with pytest.raises(AuthenticationError, match="authentication"):
         HeaderPrincipalProvider().current_principal(_request({}))
+
+    with pytest.raises(AuthenticationError, match="authentication"):
+        HeaderPrincipalProvider().current_principal(_request({"X-User-ID": "not-a-uuid"}))
 
 
 def test_pagination_is_bounded_and_page_response_serializes():

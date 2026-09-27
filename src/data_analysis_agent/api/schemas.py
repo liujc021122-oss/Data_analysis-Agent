@@ -47,16 +47,13 @@ class ErrorResponse(APIModel):
     code: StrictStr
     message: StrictStr
     details: dict[str, Any] = Field(default_factory=dict)
-    # Existing callers may construct this DTO before an HTTP request exists;
-    # application handlers always populate the request ID.
-    request_id: StrictStr = ""
+    request_id: StrictStr
 
 
 class ArtifactResponse(APIModel):
     artifact_id: UUID = Field(default_factory=uuid4)
     artifact_type: StrictStr
     name: StrictStr
-    file_path: StrictStr | None = None
     download_url: StrictStr | None = None
     format: ReportFormat | None = None
     mime_type: StrictStr | None = None
