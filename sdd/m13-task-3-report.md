@@ -30,3 +30,16 @@ TDD evidence:
 Changed files: `src/data_analysis_agent/api/routers/datasets.py`, `src/data_analysis_agent/datasets/service.py`, `tests/api/test_datasets.py`, and this report.
 
 Concern: storage and SQL transactions cannot be atomic. If storage deletion succeeds and metadata deletion fails, the metadata remains with `reconciliation_required=True` in the raised error; an external reconciliation process must resolve that record. This task deliberately retains the storage-first order required by the brief.
+
+## Final exception normalization fix
+
+- Normalized canonical storage backend errors during deletion to `STORAGE_FAILURE`/503.
+- Normalized repository and SQLAlchemy failures in catalog list, detail, and delete operations to `DATASET_PERSISTENCE_FAILURE`/503 without exposing raw database text.
+- Added focused coverage for canonical storage deletion failures and catalog persistence failures across all three operations.
+
+Final verification:
+
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_datasets.py -q` — 15 passed in 9.47s.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_datasets.py tests/datasets tests/integration/test_database_lifecycle.py -q` — 78 passed in 5.56s.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest -q` — 879 passed, 1 skipped in 69.56s.
+- `git diff --check` — passed.

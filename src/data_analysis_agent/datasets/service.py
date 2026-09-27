@@ -4,8 +4,10 @@ from tempfile import SpooledTemporaryFile
 from typing import BinaryIO, Callable, Protocol
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from ..domain.models import utc_now
-from ..persistence.errors import TransactionError
+from ..persistence.errors import PersistenceError, TransactionError
 from ..persistence.models import DatasetRecord, UserRecord
 from ..persistence.unit_of_work import UnitOfWork
 from ..storage import Storage, dataset_key, normalize_filename
@@ -68,19 +70,41 @@ class DatasetCatalogService:
         self._uow_factory = uow_factory
 
     def list_for_user(self, user_id: UUID, offset: int, limit: int):
-        with self._uow_factory() as uow:
-            return uow.datasets.list_for_user(user_id, offset=offset, limit=limit), uow.datasets.count_for_user(user_id)
+        try:
+            with self._uow_factory() as uow:
+                return uow.datasets.list_for_user(user_id, offset=offset, limit=limit), uow.datasets.count_for_user(user_id)
+        except (DatasetPersistenceError, PersistenceError, SQLAlchemyError) as exc:
+            if isinstance(exc, DatasetPersistenceError):
+                raise
+            raise DatasetPersistenceError(
+                DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
+                "unable to read dataset metadata",
+            ) from exc
 
     def get_for_user(self, user_id: UUID, dataset_id: UUID) -> DatasetRecord:
-        with self._uow_factory() as uow:
-            record = uow.datasets.get_for_user(dataset_id, user_id)
+        try:
+            with self._uow_factory() as uow:
+                record = uow.datasets.get_for_user(dataset_id, user_id)
+        except (DatasetPersistenceError, PersistenceError, SQLAlchemyError) as exc:
+            if isinstance(exc, DatasetPersistenceError):
+                raise
+            raise DatasetPersistenceError(
+                DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
+                "unable to read dataset metadata",
+            ) from exc
         if record is None:
             raise DatasetAccessDeniedError(DatasetErrorCode.DATASET_ACCESS_DENIED, "dataset is not available")
         return record
 
     def delete_for_user(self, user_id: UUID, dataset_id: UUID) -> None:
         record = self.get_for_user(user_id, dataset_id)
-        self._storage.delete(record.source_uri)
+        try:
+            self._storage.delete(record.source_uri)
+        except CanonicalStorageError as exc:
+            raise StorageError(
+                DatasetErrorCode.STORAGE_FAILURE,
+                "unable to delete dataset object",
+            ) from exc
         try:
             with self._uow_factory() as uow:
                 if not uow.datasets.delete_for_user(dataset_id, user_id):
@@ -89,7 +113,9 @@ class DatasetCatalogService:
                         "dataset is not available",
                     )
                 uow.commit()
-        except TransactionError as exc:
+        except (DatasetAccessDeniedError, DatasetPersistenceError):
+            raise
+        except (TransactionError, PersistenceError, SQLAlchemyError) as exc:
             # The object was removed; retained metadata identifies the mismatch.
             raise DatasetPersistenceError(
                 DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,

@@ -13,8 +13,10 @@ from data_analysis_agent.datasets.errors import (
 )
 from data_analysis_agent.persistence.database import Database, init_database
 from data_analysis_agent.persistence.errors import TransactionError
+from data_analysis_agent.persistence.errors import PersistenceError
 from data_analysis_agent.persistence.repositories import DatasetRepository
 from data_analysis_agent.persistence.unit_of_work import UnitOfWork
+from data_analysis_agent.storage.errors import StorageError, StorageErrorCode
 
 
 @pytest.fixture
@@ -141,6 +143,40 @@ def test_storage_delete_failure_keeps_metadata(dataset_api, monkeypatch):
     _assert_error(owner.delete(f"/api/datasets/{dataset_id}"), 503, "STORAGE_FAILURE")
     with UnitOfWork(app.database.session_factory) as uow:
         assert uow.datasets.get_for_user(dataset_id, owner_id) is not None
+
+
+def test_canonical_storage_delete_failure_uses_stable_error(dataset_api, monkeypatch):
+    app, owner, _other, owner_id, *_ = dataset_api
+    dataset_id = _upload(owner).json()["dataset_id"]
+
+    def failure(uri):
+        raise StorageError(StorageErrorCode.BACKEND_UNAVAILABLE, "secret storage path")
+
+    monkeypatch.setattr(app.storage, "delete", failure)
+    response = owner.delete(f"/api/datasets/{dataset_id}")
+    _assert_error(response, 503, "STORAGE_FAILURE")
+    assert "secret storage path" not in response.text
+    with UnitOfWork(app.database.session_factory) as uow:
+        assert uow.datasets.get_for_user(dataset_id, owner_id) is not None
+
+
+@pytest.mark.parametrize("operation", ["list", "get", "delete"])
+def test_catalog_database_failure_uses_stable_error(dataset_api, monkeypatch, operation):
+    app, owner, _other, *_ = dataset_api
+    dataset_id = _upload(owner).json()["dataset_id"]
+
+    def failure(*args, **kwargs):
+        raise PersistenceError("secret SQL statement")
+
+    method = {"list": "list_for_user", "get": "get_for_user", "delete": "delete_for_user"}[operation]
+    monkeypatch.setattr(DatasetRepository, method, failure)
+    response = (
+        owner.get("/api/datasets") if operation == "list" else
+        owner.get(f"/api/datasets/{dataset_id}") if operation == "get" else
+        owner.delete(f"/api/datasets/{dataset_id}")
+    )
+    _assert_error(response, 503, "DATASET_PERSISTENCE_FAILURE")
+    assert "secret SQL statement" not in response.text
 
 
 def test_metadata_delete_failure_returns_stable_error(dataset_api, monkeypatch):

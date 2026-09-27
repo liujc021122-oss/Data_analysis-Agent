@@ -7,6 +7,8 @@ from pydantic import ValidationError
 from ...datasets import DatasetAccessDeniedError
 from ...datasets.errors import DatasetErrorCode, DatasetPersistenceError, StorageError, UploadValidationError
 from ...datasets.models import DatasetProfile
+from ...persistence.errors import PersistenceError
+from ...storage.errors import StorageError as CanonicalStorageError
 from ..auth import Principal, get_current_principal
 from ..errors import APIError
 from ..pagination import PaginationParams
@@ -57,7 +59,10 @@ def list_datasets(
 ):
     params = PaginationParams(page=page, page_size=page_size)
     service = _catalog(request)
-    records, total = service.list_for_user(principal.user_id, params.offset, params.page_size)
+    try:
+        records, total = service.list_for_user(principal.user_id, params.offset, params.page_size)
+    except (DatasetPersistenceError, PersistenceError) as exc:
+        raise APIError("DATASET_PERSISTENCE_FAILURE", "dataset metadata is unavailable", status_code=503) from exc
     return DatasetListResponse(items=[_response(record) for record in records], page=page, page_size=page_size, total=total, has_next=params.offset + len(records) < total)
 
 
@@ -67,6 +72,8 @@ def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depen
         return _response(_catalog(request).get_for_user(principal.user_id, dataset_id))
     except DatasetAccessDeniedError as exc:
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
+    except (DatasetPersistenceError, PersistenceError) as exc:
+        raise APIError("DATASET_PERSISTENCE_FAILURE", "dataset metadata is unavailable", status_code=503) from exc
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -75,6 +82,10 @@ def delete_dataset(request: Request, dataset_id: UUID, principal: Principal = De
         _catalog(request).delete_for_user(principal.user_id, dataset_id)
     except DatasetAccessDeniedError as exc:
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
-    except (StorageError, DatasetPersistenceError) as exc:
+    except StorageError as exc:
         raise APIError(exc.code.value, "dataset service is unavailable", status_code=503) from exc
+    except CanonicalStorageError as exc:
+        raise APIError("STORAGE_FAILURE", "dataset service is unavailable", status_code=503) from exc
+    except (DatasetPersistenceError, PersistenceError) as exc:
+        raise APIError("DATASET_PERSISTENCE_FAILURE", "dataset metadata is unavailable", status_code=503) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
