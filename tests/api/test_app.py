@@ -37,6 +37,14 @@ def test_invalid_request_id_is_replaced_and_public_factory_is_exported(fake_appl
     assert len(response.headers["X-Request-ID"]) == 36
 
 
+def test_default_test_application_uses_header_principal_provider():
+    application = APIApplication(settings=load_settings(
+        app_env="test", environ={"APP_ENV": "test", "DATABASE_URL": "sqlite://"}
+    ))
+    create_app(application)
+    assert isinstance(application.principal_provider, HeaderPrincipalProvider)
+
+
 def test_production_requires_explicit_principal_provider(fake_application):
     production = replace(fake_application, settings=load_settings(
         app_env="production",

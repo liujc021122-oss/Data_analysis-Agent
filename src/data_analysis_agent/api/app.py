@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from ..config.settings import ConfigurationError, load_settings
 from .application import APIApplication
-from .auth import AuthenticationError
+from .auth import AuthenticationError, HeaderPrincipalProvider
 from .errors import APIError
 from .routers import artifacts_router, datasets_router, tasks_router
 from .schemas import ErrorResponse
@@ -41,6 +41,8 @@ def _error(request: Request, *, status: int, code: str, message: str, details=No
 
 def create_app(container: APIApplication | None = None) -> FastAPI:
     application = container or APIApplication.from_settings(load_settings())
+    if application.settings.app_env in {"development", "test"} and application.principal_provider is None:
+        application.principal_provider = HeaderPrincipalProvider()
     if application.settings.app_env == "production" and application.principal_provider is None:
         raise ConfigurationError("production requires an explicit authentication provider")
     if application.settings.app_env == "production" and (
