@@ -20,6 +20,18 @@ GREEN:
 - `python -m pytest tests/api/test_schemas.py -q` — 8 passed.
 - `python -m compileall -q src` — passed.
 - `git diff --check` — passed.
+
+## Final metadata boundary fix
+
+- Added recursive public metadata sanitization for dictionaries, lists, and tuples.
+- Reserved `file_path`, `source_uri`, and `storage_uri` keys are removed from Artifact, Task, and public Event metadata while ordinary metadata remains available.
+- Added model dump coverage for nested metadata and verified that forbidden keys do not appear in serialized Task or Event responses.
+
+Verification:
+
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 12 passed in 7.01s.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest -q` — 859 passed, 1 skipped in 67.33s.
+- `git diff --check` — passed.
 - `python -m pytest -q` — 855 passed, 1 skipped (environmental symlink skip).
 
 ## Files changed

@@ -82,6 +82,58 @@ def test_response_uses_the_domain_task_status_enum_and_is_not_a_domain_model():
     assert response.__class__.__name__ == "AnalysisTaskResponse"
 
 
+def test_public_metadata_recursively_filters_storage_paths():
+    task_id = uuid4()
+    response = AnalysisTaskResponse(
+        task_id=task_id,
+        query="分析销售数据",
+        status=TaskStatus.REPORTING,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metadata={
+            "owner": "analytics",
+            "nested": {
+                "file_path": "C:/private/chart.png",
+                "label": "kept",
+                "items": [
+                    {"source_uri": "s3://private/data.csv", "value": 3},
+                    {"storage_uri": "local://private/report.md", "value": 4},
+                ],
+            },
+        },
+        artifacts=(
+            ArtifactResponse(
+                artifact_type="chart",
+                name="trend.png",
+                metadata={
+                    "storage_uri": "s3://private/chart.png",
+                    "details": {"source_uri": "local://private/data.csv", "ok": True},
+                },
+            ),
+        ),
+    )
+    event = TaskEventResponse(
+        task_id=task_id,
+        event_type=TaskEventType.STATUS_CHANGED,
+        to_status=TaskStatus.REPORTING,
+        occurred_at=datetime.now(timezone.utc),
+        metadata={"nested": {"file_path": "private", "stage": "reporting"}},
+    )
+
+    payload = {
+        "task": response.model_dump(mode="json"),
+        "event": event.model_dump(mode="json"),
+    }
+    serialized = json.dumps(payload)
+    assert "file_path" not in serialized
+    assert "source_uri" not in serialized
+    assert "storage_uri" not in serialized
+    assert payload["task"]["metadata"]["owner"] == "analytics"
+    assert payload["task"]["metadata"]["nested"]["label"] == "kept"
+    assert payload["task"]["artifacts"][0]["metadata"]["details"]["ok"] is True
+    assert payload["event"]["metadata"]["nested"]["stage"] == "reporting"
+
+
 def test_event_execution_and_error_dtos_are_json_serializable():
     now = datetime.now(timezone.utc)
     event = TaskEventResponse(

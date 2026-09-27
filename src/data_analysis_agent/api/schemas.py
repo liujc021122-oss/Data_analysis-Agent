@@ -17,6 +17,9 @@ from ..datasets.models import DatasetProfile
 from .pagination import PageResponse
 
 
+_BLOCKED_PUBLIC_METADATA_KEYS = frozenset({"file_path", "source_uri", "storage_uri"})
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -28,8 +31,27 @@ def _nonblank(value: str) -> str:
     return value
 
 
+def _sanitize_public_metadata(value: Any) -> Any:
+    """Remove storage and local path fields from nested public metadata."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_public_metadata(item)
+            for key, item in value.items()
+            if key not in _BLOCKED_PUBLIC_METADATA_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_public_metadata(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_public_metadata(item) for item in value)
+    return value
+
+
 class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    _sanitize_metadata = field_validator(
+        "metadata", mode="before", check_fields=False
+    )(_sanitize_public_metadata)
 
 
 class AnalysisTaskCreateRequest(APIModel):
