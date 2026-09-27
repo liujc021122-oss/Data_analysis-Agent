@@ -51,7 +51,8 @@ def test_sanitizer_only_keeps_verified_current_task_chart(tmp_path: Path):
         "![合法](trend.png) ![越界](../outside.png) ![外部](https://x.test/a.png)",
         document=document,
     )
-    assert "trend.png" in cleaned
+    assert "chart.png" in cleaned
+    assert "trend.png" not in cleaned
     assert "https://x.test/a.png" not in cleaned
     assert "图片不可用" in cleaned
 
@@ -109,6 +110,7 @@ def test_sanitizer_rejects_chart_filenames_outside_output_root(tmp_path: Path):
     chart = tmp_path / "actual.png"
     chart.write_bytes(b"png")
 
+    outside = tmp_path.parent / "outside.png"
     for filename in ("../outside.png", r"C:\outside.png"):
         document = ReportDocument(
             task_id=task_id,
@@ -117,7 +119,7 @@ def test_sanitizer_rejects_chart_filenames_outside_output_root(tmp_path: Path):
                 ChartArtifact(
                     task_id=task_id,
                     filename=filename,
-                    file_path=str(chart),
+                    file_path=str(outside),
                     verification_status=EvidenceVerificationStatus.VERIFIED,
                 ),
             ),
@@ -126,3 +128,57 @@ def test_sanitizer_rejects_chart_filenames_outside_output_root(tmp_path: Path):
         cleaned = sanitize_markdown(f"![chart]({filename})", document=document)
 
         assert cleaned == "[图片不可用: chart]"
+
+
+def test_chart_reference_uses_verified_nested_file_path_not_display_name(tmp_path: Path):
+    task_id = uuid4()
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    actual = nested / "actual chart (final).png"
+    actual.write_bytes(b"png")
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        chart_artifacts=(
+            ChartArtifact(
+                task_id=task_id,
+                filename="display-name.png",
+                file_path=str(actual),
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+
+    assert safe_chart_reference("display-name.png", document=document) == (
+        "nested/actual chart (final).png"
+    )
+    cleaned = sanitize_markdown(
+        "![display](display-name.png)", document=document
+    )
+    assert "nested/actual chart (final).png" in cleaned
+    assert "![display](display-name.png)" not in cleaned
+
+
+def test_chart_reference_rejects_unknown_target_when_a_verified_chart_exists(
+    tmp_path: Path,
+):
+    task_id = uuid4()
+    chart = tmp_path / "actual.png"
+    chart.write_bytes(b"png")
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        chart_artifacts=(
+            ChartArtifact(
+                task_id=task_id,
+                filename="display.png",
+                file_path=str(chart),
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+
+    assert safe_chart_reference("unknown.png", document=document) is None
+    assert sanitize_markdown("![unknown](unknown.png)", document=document) == (
+        "[图片不可用: unknown]"
+    )

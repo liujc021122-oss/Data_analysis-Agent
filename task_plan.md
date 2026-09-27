@@ -77,3 +77,15 @@
 ## M11 Next Stage
 
 - PDF 尚未实现；未来通过新增 renderer 接入，不计入 M11 完成范围。
+
+## M11 Final-Review Repair (2026-09-26)
+
+**状态：** 进行中
+
+Authoritative findings: `sdd/final-review.md` (7 Important, 2 Minor). PDF remains out of scope.
+
+1. [x] Reproduce findings and map existing interfaces/tests without changing `sdd/task-3-review.md`
+2. [x] Add failing regression tests for numeric evidence, chart paths, escaping, storage URLs, cleanup, error redaction, output roots, HTML emphasis, and template versions
+3. [x] Implement compatible fixes in ReportService, sanitizers/renderers, Agent wiring, and template validation
+4. [x] Run focused and broader verification; inspect diff and compatibility seams
+5. [x] Commit production/tests/docs changes after the independent final review

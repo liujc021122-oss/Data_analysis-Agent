@@ -48,3 +48,16 @@
 - M11 Task 7 公共 API 兼容修复：brief 要求 `ReportFormat` 与 `ReportDocument`、`ReportService` 一并从 `data_analysis_agent.reports` 导入；新增契约断言后 RED 为收集阶段 `ImportError`（`5 warnings, 1 error`），在 `reports.__init__` 重导出并加入 `__all__` 后 GREEN 为 `4 passed, 5 warnings`。README 已改为精确单行导入；离线示例实际生成 HTML/Markdown。报告、Agent、storage、Word 相关回归为 `57 passed, 5 warnings`。
 - M11 最终全量验证（2026-09-26，公共导出修复后）：`E:\anaconda\python.exe -m pytest -q` 退出码 0，实际结果 `804 passed, 3 skipped, 18 warnings in 59.01s`；`E:\anaconda\python.exe -m compileall -q src` 与 `git diff --check` 均退出码 0。3 个 skip 为 2 个缺少 async pytest 插件的 async 测试和 1 个当前环境不支持 symlink 的测试；18 条 warning 为既有 Pydantic protected namespace、未知 asyncio marker/未处理 coroutine 和 AST deprecation 警告。
 - M11 后续：PDF renderer 留待未来阶段，不计入 M11 完成状态。
+
+## 2026-09-26: M11 Final-Review Repair
+
+- Verified the target worktree, branch, HEAD, and protected untracked review fixture before editing.
+- Read the authoritative `sdd/final-review.md`; repair scope is 7 Important and 2 Minor findings, with PDF excluded.
+- Next: trace the existing report, storage, Agent, and template interfaces, then add regression tests before production fixes.
+- The prepared final-review regression suite produced the expected RED result: `29 failed, 28 passed, 5 warnings` before production changes.
+- Existing tracked test edits were preserved; added missing regression seams for storage-only dependency handling, Agent trusted-root wiring, and unversioned templates.
+- Final-review repair implementation is complete across ReportService, sanitizers, Markdown/HTML/DOCX renderers, shared error redaction, Agent trusted-root wiring, and template validation.
+- Focused repair regression passed: 281 passed, 2 skipped, 9 warnings.
+- Full offline verification passed: 835 passed, 3 skipped, 18 warnings; compileall and git diff --check also passed.
+- Added `sdd/final-review-fix-report.md`; independent read-only whole-branch review reported zero Critical, Important, or Minor findings.
+- Final-review repair is committed; the protected `sdd/task-3-review.md` remains untracked and untouched.

@@ -1,6 +1,7 @@
 """Deterministic safety filtering for report Markdown."""
 
 from collections.abc import Sequence
+from html import unescape as html_unescape
 from pathlib import Path, PureWindowsPath
 import re
 from urllib.parse import urlparse
@@ -13,6 +14,26 @@ from .models import ReportDocument
 _HTML_TAG_PATTERN = re.compile(r"<[^>]*>")
 _IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
 _LINK_PATTERN = re.compile(r"(?<!!)\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
+_MARKDOWN_ESCAPED_CHARACTERS = frozenset(r"\`*_[]()#+-.!<>|~")
+
+
+def unescape_markdown(value: str) -> str:
+    """Decode the limited escapes and entities emitted for structured fields."""
+    characters: list[str] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if (
+            character == "\\"
+            and index + 1 < len(value)
+            and value[index + 1] in _MARKDOWN_ESCAPED_CHARACTERS
+        ):
+            characters.append(value[index + 1])
+            index += 2
+            continue
+        characters.append(character)
+        index += 1
+    return html_unescape("".join(characters))
 
 
 def safe_link_target(target: str) -> str | None:
@@ -30,13 +51,15 @@ def safe_chart_reference(target: str, *, document: ReportDocument) -> str | None
     output_root = Path(document.output_root).resolve()
     for chart in document.chart_artifacts:
         if (
-            chart.filename != target
-            or chart.task_id != document.task_id
+            chart.task_id != document.task_id
             or chart.verification_status is not EvidenceVerificationStatus.VERIFIED
         ):
             continue
         try:
-            chart_path = Path(chart.file_path).resolve(strict=False)
+            chart_candidate = Path(chart.file_path)
+            if not chart_candidate.is_absolute():
+                chart_candidate = output_root / chart_candidate
+            chart_path = chart_candidate.resolve(strict=False)
             chart_path.relative_to(output_root)
             if not chart_path.is_file():
                 continue
@@ -49,11 +72,14 @@ def safe_chart_reference(target: str, *, document: ReportDocument) -> str | None
                 or chart.filename.startswith(("/", "\\"))
             ):
                 continue
-            safe_filename = (output_root / filename_path).resolve(strict=False)
-            relative_filename = safe_filename.relative_to(output_root)
+            relative_filename = chart_path.relative_to(output_root)
+            relative_reference = relative_filename.as_posix()
+            normalized_target = target.strip().replace("\\", "/")
+            if chart.filename != target and normalized_target != relative_reference:
+                continue
         except (OSError, ValueError):
             continue
-        return relative_filename.as_posix()
+        return relative_reference
     return None
 
 
@@ -109,7 +135,9 @@ def _sanitize_non_code_line(
         chart_reference = safe_chart_reference(target, document=document)
         if chart_reference is None:
             return protect(f"[图片不可用: {description}]")
-        return protect(f"![{description}]({chart_reference})")
+        return protect(
+            f"![{description}]({_markdown_image_target(chart_reference)})"
+        )
 
     def sanitize_link(match: re.Match[str]) -> str:
         text, target = match.groups()
@@ -126,3 +154,7 @@ def _sanitize_non_code_line(
     for index, value in enumerate(protected_spans):
         line = line.replace(f"\x00{index}\x00", value)
     return line
+
+
+def _markdown_image_target(value: str) -> str:
+    return f"<{value}>" if re.search(r"[\s()\[\]<>\\]", value) else value

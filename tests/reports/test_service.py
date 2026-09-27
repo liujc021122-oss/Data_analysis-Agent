@@ -3,8 +3,12 @@ from uuid import uuid4
 
 import pytest
 
-from data_analysis_agent.domain.enums import ReportFormat
-from data_analysis_agent.domain.models import EvidenceValidation, ReportArtifact
+from data_analysis_agent.domain.enums import EvidenceVerificationStatus, ReportFormat
+from data_analysis_agent.domain.models import (
+    EvidenceValidation,
+    MetricArtifact,
+    ReportArtifact,
+)
 from data_analysis_agent.reports.models import ReportDocument
 from data_analysis_agent.reports.service import ReportService
 
@@ -24,7 +28,10 @@ def test_service_generates_markdown_and_html_from_one_canonical_content(tmp_path
     document = ReportDocument(task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告")
     renderer = RecordingRenderer(ReportFormat.HTML)
 
-    bundle = ReportService(renderers={ReportFormat.HTML: renderer}).generate(
+    bundle = ReportService(
+        allowed_output_root=tmp_path,
+        renderers={ReportFormat.HTML: renderer},
+    ).generate(
         document, formats={ReportFormat.MARKDOWN, ReportFormat.HTML}
     )
 
@@ -48,7 +55,10 @@ def test_service_registers_successful_file_with_artifact_storage(tmp_path: Path)
     document = ReportDocument(task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告")
     storage = FakeArtifactStorage()
 
-    bundle = ReportService(artifact_storage=storage).generate(
+    bundle = ReportService(
+        allowed_output_root=tmp_path,
+        artifact_storage=storage,
+    ).generate(
         document, formats={ReportFormat.MARKDOWN}
     )
 
@@ -71,7 +81,10 @@ def test_service_uses_evidence_registry_before_canonical_rendering(tmp_path: Pat
         task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="结论是 999"
     )
 
-    bundle = ReportService(evidence_registry=EvidenceRegistry()).generate(
+    bundle = ReportService(
+        allowed_output_root=tmp_path,
+        evidence_registry=EvidenceRegistry(),
+    ).generate(
         document, formats={ReportFormat.MARKDOWN}
     )
 
@@ -85,4 +98,258 @@ def test_service_rejects_missing_output_root_before_rendering(tmp_path: Path):
     )
 
     with pytest.raises(ValueError, match="output root"):
+        ReportService(allowed_output_root=tmp_path).generate(
+            document, formats={ReportFormat.MARKDOWN}
+        )
+
+
+def test_service_requires_an_explicit_trusted_output_root(tmp_path: Path):
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    with pytest.raises(ValueError, match="trusted output root"):
         ReportService().generate(document, formats={ReportFormat.MARKDOWN})
+
+
+def test_service_marks_numeric_narrative_pending_without_evidence(tmp_path: Path):
+    document = ReportDocument(
+        task_id=uuid4(),
+        output_root=str(tmp_path),
+        narrative_markdown="Revenue is 999.",
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is False
+    assert bundle.evidence_validation.unsupported_numeric_claims == ("999",)
+    assert "999" not in bundle.markdown_content
+    assert "待确认" in bundle.markdown_content
+
+
+def test_service_preserves_numeric_fact_when_verified_metric_matches(tmp_path: Path):
+    task_id = uuid4()
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        narrative_markdown="Revenue is 999.",
+        metric_artifacts=(
+            MetricArtifact(
+                task_id=task_id,
+                name="revenue",
+                value=999.0,
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is True
+    assert bundle.evidence_validation.unsupported_numeric_claims == ()
+    assert "Revenue is 999." in bundle.markdown_content
+
+
+def test_service_marks_unsupported_percentage_pending(tmp_path: Path):
+    document = ReportDocument(
+        task_id=uuid4(),
+        output_root=str(tmp_path),
+        narrative_markdown="Conversion increased by 12.5%.",
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is False
+    assert bundle.evidence_validation.unsupported_numeric_claims == ("12.5%",)
+    assert "12.5%" not in bundle.markdown_content
+
+
+def test_service_does_not_convert_ratio_metrics_into_unstated_percentages(
+    tmp_path: Path,
+):
+    task_id = uuid4()
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        narrative_markdown="Conversion increased by 12.5%.",
+        metric_artifacts=(
+            MetricArtifact(
+                task_id=task_id,
+                name="conversion_ratio",
+                value=0.125,
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is False
+    assert bundle.evidence_validation.unsupported_numeric_claims == ("12.5%",)
+
+
+def test_service_honors_supplied_evidence_validation(tmp_path: Path):
+    task_id = uuid4()
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        narrative_markdown="Revenue is 999.",
+        evidence_validation=EvidenceValidation(task_id=task_id, valid=True),
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is True
+    assert "Revenue is 999." in bundle.markdown_content
+
+
+def test_service_keeps_storage_dependencies_separate_and_returns_download_url(
+    tmp_path: Path,
+):
+    class FakeArtifactStorage:
+        def store_report(self, **kwargs):
+            return ReportArtifact(
+                format=ReportFormat.MARKDOWN,
+                file_path="memory://report.md",
+            )
+
+    class FakeStorage:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def create_download_url(self, uri: str, *, expires_in: int = 300) -> str:
+            self.calls.append(uri)
+            return f"download://{uri.removeprefix('memory://')}"
+
+    storage = FakeStorage()
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    bundle = ReportService(
+        allowed_output_root=tmp_path,
+        artifact_storage=FakeArtifactStorage(),
+        storage=storage,
+    ).generate(document, formats={ReportFormat.MARKDOWN})
+
+    assert bundle.results[0].download_url == "download://report.md"
+    assert storage.calls == ["memory://report.md"]
+
+
+def test_service_does_not_treat_storage_as_artifact_registry(tmp_path: Path):
+    class StorageOnly:
+        def store_report(self, **kwargs):
+            raise AssertionError("storage was incorrectly used as artifact storage")
+
+        def create_download_url(self, uri: str, *, expires_in: int = 300) -> str:
+            raise AssertionError("no artifact should mean no download URL request")
+
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    bundle = ReportService(
+        allowed_output_root=tmp_path, storage=StorageOnly()
+    ).generate(document, formats={ReportFormat.MARKDOWN})
+
+    assert bundle.results[0].generated is True
+    assert bundle.results[0].artifact is None
+    assert bundle.results[0].download_url is None
+
+
+def test_service_does_not_treat_storage_as_artifact_storage(tmp_path: Path):
+    class StorageOnly:
+        def create_download_url(self, uri: str, *, expires_in: int = 300) -> str:
+            return f"download://{uri}"
+
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    bundle = ReportService(
+        allowed_output_root=tmp_path, storage=StorageOnly()
+    ).generate(document, formats={ReportFormat.MARKDOWN})
+
+    assert bundle.results[0].generated is True
+    assert bundle.results[0].artifact is None
+    assert bundle.storage_errors == ()
+
+
+def test_service_rejects_output_root_outside_trusted_base(tmp_path: Path):
+    trusted = tmp_path / "tasks"
+    external = tmp_path / "external"
+    trusted.mkdir()
+    external.mkdir()
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(external), narrative_markdown="# 报告"
+    )
+
+    with pytest.raises(ValueError, match="trusted output root"):
+        ReportService(allowed_output_root=trusted).generate(
+            document, formats={ReportFormat.MARKDOWN}
+        )
+
+
+def test_service_bundle_uses_validated_template_version(tmp_path: Path):
+    class CustomTemplate:
+        version = "custom-v2"
+
+        def render_markdown(self, document):
+            return document.narrative_markdown
+
+    document = ReportDocument(
+        task_id=uuid4(),
+        template_version="custom-v2",
+        output_root=str(tmp_path),
+        narrative_markdown="# 报告",
+    )
+
+    bundle = ReportService(
+        allowed_output_root=tmp_path, template=CustomTemplate()
+    ).generate(document, formats={ReportFormat.MARKDOWN})
+
+    assert bundle.template_version == "custom-v2"
+
+
+def test_service_rejects_template_version_mismatch(tmp_path: Path):
+    class CustomTemplate:
+        version = "custom-v2"
+
+        def render_markdown(self, document):
+            return document.narrative_markdown
+
+    document = ReportDocument(
+        task_id=uuid4(),
+        output_root=str(tmp_path),
+        narrative_markdown="# 报告",
+    )
+
+    with pytest.raises(ValueError, match="template version"):
+        ReportService(
+            allowed_output_root=tmp_path, template=CustomTemplate()
+        ).generate(document, formats={ReportFormat.MARKDOWN})
+
+
+def test_service_rejects_template_without_validated_version(tmp_path: Path):
+    class UnversionedTemplate:
+        def render_markdown(self, document):
+            return document.narrative_markdown
+
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    with pytest.raises(ValueError, match="template version"):
+        ReportService(
+            allowed_output_root=tmp_path, template=UnversionedTemplate()
+        ).generate(document, formats={ReportFormat.MARKDOWN})

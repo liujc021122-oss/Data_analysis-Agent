@@ -7,17 +7,20 @@ import re
 from data_analysis_agent.domain.enums import ReportFormat
 
 from .models import ReportDocument
-from .sanitize import safe_chart_reference, safe_link_target
+from .sanitize import safe_chart_reference, safe_link_target, unescape_markdown
 
 
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
 _UNORDERED = re.compile(r"^\s*[-*+]\s+(.+)$")
 _ORDERED = re.compile(r"^\s*\d+[.)]\s+(.+)$")
-_IMAGE = re.compile(
-    r"!\[(?P<label>[^\]]*)\]\((?:<(?P<angle_target>[^>\r\n]*)>|"
-    r"(?P<plain_target>[^\s)]+))(?:\s+[^)]*)?\)"
+_INLINE_TOKEN = re.compile(
+    r"!\[(?P<image_label>(?:\\.|[^\]])*)\]\((?:<(?P<image_angle_target>[^>\r\n]*)>|"
+    r"(?P<image_plain_target>[^\s)]+))(?:\s+[^)]*)?\)"
+    r"|(?<!!)\[(?P<link_label>(?:\\.|[^\]])*)\]\((?P<link_target>[^\s)]+)"
+    r"(?:\s+[^)]*)?\)"
+    r"|(?P<strong>(?<!\\)(?:\*\*(?:\\.|[^*\n])+?\*\*|__(?:\\.|[^_\n])+?__))"
+    r"|(?P<em>(?<!\\)(?:\*(?:\\.|[^*\n])+?\*|_(?:\\.|[^_\n])+?_))"
 )
-_LINK = re.compile(r"(?<!!)\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
 
 
 class HtmlReportRenderer:
@@ -155,39 +158,51 @@ class HtmlReportRenderer:
         return cells
 
     def _inline(self, text: str, document: ReportDocument) -> str:
+        def render_text(value: str) -> str:
+            return html.escape(unescape_markdown(value), quote=True)
+
         parts: list[str] = []
         cursor = 0
-        matches = sorted(
-            [*(_IMAGE.finditer(text)), *(_LINK.finditer(text))], key=lambda match: match.start()
-        )
-        for match in matches:
+        for match in _INLINE_TOKEN.finditer(text):
             if match.start() < cursor:
                 continue
-            parts.append(html.escape(text[cursor : match.start()], quote=True))
-            if match.re is _IMAGE:
-                label = match.group("label")
-                angle_target = match.group("angle_target")
+            parts.append(render_text(text[cursor : match.start()]))
+            if match.group("image_label") is not None:
+                label = match.group("image_label")
+                angle_target = match.group("image_angle_target")
                 target = (
-                    angle_target if angle_target is not None else match.group("plain_target")
+                    angle_target
+                    if angle_target is not None
+                    else match.group("image_plain_target")
                 )
+                target = unescape_markdown(target)
                 reference = safe_chart_reference(target, document=document)
                 if reference is None:
-                    parts.append(html.escape(f"[\u56fe\u7247\u4e0d\u53ef\u7528: {label}]", quote=True))
+                    parts.append(
+                        render_text(f"[\u56fe\u7247\u4e0d\u53ef\u7528: {label}]")
+                    )
                 else:
                     parts.append(
                         f'<img src="{html.escape(reference, quote=True)}" '
-                        f'alt="{html.escape(label, quote=True)}">'
+                        f'alt="{render_text(label)}">'
                     )
-            else:
-                label, target = match.groups()
+            elif match.group("link_label") is not None:
+                label = match.group("link_label")
+                target = unescape_markdown(match.group("link_target"))
                 safe_target = safe_link_target(target)
                 if safe_target is None:
-                    parts.append(html.escape(label, quote=True))
+                    parts.append(render_text(label))
                 else:
                     parts.append(
                         f'<a href="{html.escape(safe_target, quote=True)}">'
-                        f"{html.escape(label, quote=True)}</a>"
+                        f"{self._inline(label, document)}</a>"
                     )
+            elif match.group("strong") is not None:
+                token = match.group("strong")
+                parts.append(f"<strong>{self._inline(token[2:-2], document)}</strong>")
+            else:
+                token = match.group("em")
+                parts.append(f"<em>{self._inline(token[1:-1], document)}</em>")
             cursor = match.end()
-        parts.append(html.escape(text[cursor:], quote=True))
+        parts.append(render_text(text[cursor:]))
         return "".join(parts)

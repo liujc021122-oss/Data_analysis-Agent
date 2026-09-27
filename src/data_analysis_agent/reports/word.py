@@ -15,6 +15,7 @@ from docx.shared import Inches, Mm, Pt, RGBColor
 from data_analysis_agent.domain.enums import ReportFormat
 
 from .models import ReportDocument
+from .sanitize import unescape_markdown
 
 
 PathLike = Union[str, Path]
@@ -30,7 +31,7 @@ _POINTS_HEADER_PATTERN = re.compile(
     r"^\s*(?:\*\*)?【分析要点】(?:\*\*)?\s*(?:(?:：|:)\s*)?$"
 )
 _INLINE_PATTERN = re.compile(
-    r"(\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)"
+    r"(?<!\\)(\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)"
 )
 
 _BLACK = RGBColor(0x00, 0x00, 0x00)
@@ -372,21 +373,23 @@ class WordReportGenerator:
         cursor = 0
         for match in _INLINE_PATTERN.finditer(text):
             if match.start() > cursor:
-                run = paragraph.add_run(text[cursor : match.start()])
+                run = paragraph.add_run(
+                    unescape_markdown(text[cursor : match.start()])
+                )
 
             token = match.group(0)
             if token.startswith(("**", "__")):
-                content = token[2:-2]
+                content = unescape_markdown(token[2:-2])
                 run = paragraph.add_run(content)
                 run.bold = True
             else:
-                content = token[1:-1]
+                content = unescape_markdown(token[1:-1])
                 run = paragraph.add_run(content)
                 run.italic = True
             cursor = match.end()
 
         if cursor < len(text):
-            paragraph.add_run(text[cursor:])
+            paragraph.add_run(unescape_markdown(text[cursor:]))
 
         for run in paragraph.runs[first_new_run:]:
             if font_size is not None:
@@ -404,7 +407,7 @@ class WordReportGenerator:
                 run.italic = True
 
     def _resolve_image_path(self, reference: str) -> Optional[Path]:
-        reference = unquote(reference.strip())
+        reference = unescape_markdown(unquote(reference.strip()))
         if reference.startswith("<") and reference.endswith(">"):
             reference = reference[1:-1]
         reference = reference.strip().strip('"').strip("'")
@@ -431,7 +434,7 @@ class WordReportGenerator:
         image_path = self._resolve_image_path(reference)
         if image_path is None:
             paragraph = self.document.add_paragraph(style="Caption")
-            label = alt_text.strip() or reference.strip()
+            label = unescape_markdown(alt_text.strip()) or reference.strip()
             run = paragraph.add_run(f"[图片不可用: {label}]")
             _set_run_font(run, 9, _MUTED)
             run.italic = True
@@ -445,10 +448,10 @@ class WordReportGenerator:
             self._add_picture_effects(run)
             if alt_text.strip():
                 caption = self.document.add_paragraph(style="Caption")
-                caption.add_run(alt_text.strip())
+                caption.add_run(unescape_markdown(alt_text.strip()))
         except Exception:
             paragraph = self.document.add_paragraph(style="Caption")
-            label = alt_text.strip() or reference.strip()
+            label = unescape_markdown(alt_text.strip()) or reference.strip()
             run = paragraph.add_run(f"[图片不可用: {label}]")
             _set_run_font(run, 9, _MUTED)
             run.italic = True

@@ -91,6 +91,14 @@ def test_agent_delegates_formats_to_report_service_and_keeps_legacy_fields(tmp_p
     assert len(result["report_artifacts"]) == 2
 
 
+def test_agent_wires_trusted_session_root_into_report_service(tmp_path):
+    agent = make_compatibility_agent(tmp_path, generate_word_report=False)
+
+    service = agent._get_report_service()
+
+    assert Path(service.allowed_output_root).resolve() == tmp_path.resolve()
+
+
 def test_report_service_constructor_parameter_is_keyword_only_and_last():
     parameters = list(inspect.signature(DataAnalysisAgent).parameters.values())
 
@@ -107,6 +115,7 @@ def test_word_failure_preserves_markdown_and_exposes_legacy_error(tmp_path):
 
     agent = make_compatibility_agent(tmp_path, generate_word_report=True)
     agent.report_service = ReportService(
+        allowed_output_root=tmp_path,
         renderers={
             ReportFormat.DOCX: FailingDocxRenderer(),
             ReportFormat.HTML: HtmlReportRenderer(),

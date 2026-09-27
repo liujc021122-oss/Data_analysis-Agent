@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
+import math
 import os
 from pathlib import Path
 import re
 from typing import Any, Protocol
 from uuid import uuid4
 
-from data_analysis_agent.domain.enums import ReportFormat
-from data_analysis_agent.domain.models import EvidenceValidation, ReportArtifact
+from data_analysis_agent.domain.errors import EvidenceErrorCode
+from data_analysis_agent.domain.enums import EvidenceVerificationStatus, ReportFormat
+from data_analysis_agent.domain.models import (
+    EvidenceValidation,
+    ReportArtifact,
+)
+from data_analysis_agent.services.errors import sanitize_exception
 
 from .html import HtmlReportRenderer
 from .models import ReportBundle, ReportDocument, ReportFormatResult
 from .sanitize import sanitize_markdown
 from .templates import AnalysisReportTemplate
 from .word import WordReportRenderer
+
+
+_NUMERIC_CLAIM_PATTERN = re.compile(r"(?<![\w.])-?(?:\d+(?:\.\d+)?|\.\d+)%?")
 
 
 class ReportRenderer(Protocol):
@@ -73,15 +82,23 @@ class ReportService:
         artifact_storage: Any | None = None,
         storage: Any | None = None,
         evidence_registry: Any | None = None,
+        allowed_output_root: str | Path | None = None,
     ) -> None:
-        self.template = template or AnalysisReportTemplate()
+        self.template = template if template is not None else AnalysisReportTemplate()
         self.renderers = dict(default_renderers() if renderers is None else renderers)
-        self.artifact_storage = artifact_storage or storage
+        self.artifact_storage = artifact_storage
+        self.storage = storage
         self.evidence_registry = evidence_registry
+        self.allowed_output_root = (
+            Path(allowed_output_root).resolve(strict=False)
+            if allowed_output_root is not None
+            else None
+        )
 
     def generate(
         self, document: ReportDocument, *, formats: Collection[ReportFormat]
     ) -> ReportBundle:
+        template_version = self._validate_template_version(document)
         root = self._validate_output_root(document.output_root)
         validation = self._validate_evidence(document)
         safe_document = document.model_copy(
@@ -110,7 +127,7 @@ class ReportService:
                 )
                 os.replace(temporary, target)
             except Exception as exc:
-                temporary.unlink(missing_ok=True)
+                self._cleanup_temporary(temporary)
                 results.append(self._failed_result(report_format, exc))
                 continue
             results.append(
@@ -119,7 +136,7 @@ class ReportService:
 
         return ReportBundle(
             task_id=document.task_id,
-            template_version=document.template_version,
+            template_version=template_version,
             markdown_content=markdown,
             results=tuple(results),
             evidence_validation=validation,
@@ -152,6 +169,7 @@ class ReportService:
         storage_errors: list[str],
     ) -> ReportFormatResult:
         artifact = None
+        download_url = None
         if self.artifact_storage is not None:
             try:
                 stored = self.artifact_storage.store_report(
@@ -163,12 +181,16 @@ class ReportService:
                     title=document.title,
                 )
                 artifact = self._report_artifact(stored, report_format, target, document)
+                if artifact is not None and self.storage is not None:
+                    storage_uri = artifact.file_path
+                    download_url = self.storage.create_download_url(storage_uri)
             except Exception as exc:
                 storage_errors.append(self._safe_error(exc))
         return ReportFormatResult(
             format=report_format,
             generated=True,
             file_path=str(target),
+            download_url=download_url,
             artifact=artifact,
         )
 
@@ -196,20 +218,108 @@ class ReportService:
             validation = self.evidence_registry.validate_report(
                 document.narrative_markdown, document.task_id
             )
-        validation = validation or EvidenceValidation(task_id=document.task_id, valid=True)
+        elif validation is None:
+            validation = self._validate_document_evidence(document)
         if not isinstance(validation, EvidenceValidation) or validation.task_id != document.task_id:
             raise ValueError("evidence validation task does not match document task")
         return validation
 
+    @classmethod
+    def _validate_document_evidence(cls, document: ReportDocument) -> EvidenceValidation:
+        text = cls._report_text_without_nonclaims(document.narrative_markdown)
+        claims = tuple(cls._numeric_claims(text))
+        verified_values = tuple(
+            metric.value
+            for metric in document.metric_artifacts
+            if metric.verification_status is EvidenceVerificationStatus.VERIFIED
+        )
+        unsupported = tuple(
+            token
+            for token in claims
+            if not cls._matches_verified_value(token, verified_values)
+        )
+        missing_charts = tuple(
+            chart.artifact_id
+            for chart in document.chart_artifacts
+            if chart.verification_status is not EvidenceVerificationStatus.VERIFIED
+        )
+        error_codes: list[str] = []
+        if unsupported:
+            error_codes.append(EvidenceErrorCode.UNSUPPORTED_NUMERIC_CLAIM.value)
+        if missing_charts:
+            error_codes.append(EvidenceErrorCode.CHART_PATH_INVALID.value)
+        return EvidenceValidation(
+            task_id=document.task_id,
+            valid=not unsupported and not missing_charts,
+            unsupported_numeric_claims=unsupported,
+            missing_chart_ids=missing_charts,
+            error_codes=tuple(error_codes),
+        )
+
     @staticmethod
-    def _validate_output_root(output_root: str) -> Path:
+    def _report_text_without_nonclaims(markdown: str) -> str:
+        text = re.sub(r"```.*?```", "", markdown, flags=re.DOTALL)
+        text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+        text = re.sub(r"https?://\S+|www\.\S+", "", text)
+        return re.sub(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+            "",
+            text,
+        )
+
+    @staticmethod
+    def _numeric_claims(text: str) -> tuple[str, ...]:
+        seen: list[str] = []
+        for match in _NUMERIC_CLAIM_PATTERN.finditer(text):
+            token = match.group(0)
+            if token not in seen:
+                seen.append(token)
+        return tuple(seen)
+
+    @staticmethod
+    def _matches_verified_value(token: str, verified_values: tuple[float, ...]) -> bool:
+        try:
+            value = float(token.rstrip("%"))
+        except ValueError:
+            return False
+        for verified_value in verified_values:
+            if math.isclose(value, verified_value, rel_tol=1e-6, abs_tol=1e-9):
+                return True
+        return False
+
+    def _validate_output_root(self, output_root: str) -> Path:
+        if self.allowed_output_root is None:
+            raise ValueError("trusted output root is required")
         try:
             root = Path(output_root).resolve(strict=True)
+            allowed = self.allowed_output_root.resolve(strict=False)
         except (OSError, RuntimeError) as exc:
             raise ValueError("output root is unavailable") from exc
         if not root.is_dir():
             raise ValueError("output root must be an existing directory")
+        if not allowed.is_dir():
+            raise ValueError("trusted output root must be an existing directory")
+        if allowed.parent == allowed:
+            raise ValueError("trusted output root must be a task-owned directory")
+        try:
+            root.relative_to(allowed)
+        except ValueError as exc:
+            raise ValueError("output root is outside the trusted output root") from exc
+        if root.parent == root:
+            raise ValueError("output root must be a task-owned directory")
+        if any((root / marker).exists() for marker in (".git", "pyproject.toml", "setup.py")):
+            raise ValueError("output root must be a task-owned directory")
         return root
+
+    @staticmethod
+    def _cleanup_temporary(temporary: Path) -> None:
+        """Remove only a temporary file; never recurse into an unexpected directory."""
+        try:
+            if temporary.is_file() or temporary.is_symlink():
+                temporary.unlink(missing_ok=True)
+        except Exception:
+            # The renderer error is the actionable format failure. Cleanup is best effort.
+            return
 
     @classmethod
     def _requested_formats(cls, formats: Collection[ReportFormat]) -> list[ReportFormat]:
@@ -231,16 +341,19 @@ class ReportService:
         return ReportFormatResult(format=report_format, generated=False, error=error)
 
     @staticmethod
-    def _safe_error(exc: Exception) -> str:
-        message = str(exc).strip()
-        message = re.sub(
-            r"(?i)\b(api[_-]?key|access[_-]?token|token|password|secret)\s*[:=]\s*\S+",
-            r"\1=[redacted]",
-            message,
-        )
-        message = re.sub(r"(?<!\w)[A-Za-z]:\\[^\s'\"]+", "[path]", message)
-        message = re.sub(r"(?<!\w)/(?:[^\s'\"]+/)+[^\s'\"]*", "[path]", message)
+    def _safe_error(exc: BaseException) -> str:
+        message = sanitize_exception(exc)
         return message[:240] or "report generation failed"
+
+    def _validate_template_version(self, document: ReportDocument) -> str:
+        template_version = getattr(self.template, "version", None)
+        if not isinstance(template_version, str) or not template_version.strip():
+            raise ValueError("template version is unavailable")
+        if document.template_version != template_version:
+            raise ValueError(
+                "document template version does not match renderer template version"
+            )
+        return template_version
 
 
 class _UnsupportedFormatError(Exception):

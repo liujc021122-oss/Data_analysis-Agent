@@ -39,3 +39,20 @@
 - 报告服务只接受已验证指标和当前任务已登记的图表；模型叙述中的无证据数字标记为待确认，图片路径不直接信任模型输出。
 - 每种输出格式返回独立结果；Markdown/HTML/DOCX 失败互不回滚，Word 失败继续保留 Markdown，并复用现有 `ArtifactStorageService` 登记接口。
 - 测试将覆盖 ReportDocument 校验、Markdown/HTML/DOCX 内容一致性、图片边界和缺失占位、Markdown 安全过滤、格式失败隔离、可替换模板，以及 Agent 兼容字段；所有测试继续使用 fake LLM/renderer，不访问真实模型或网络。
+
+## M11 Final-Review Repair Findings
+
+- Authoritative review is `sdd/final-review.md`: 7 Important and 2 Minor findings; PDF is explicitly out of scope.
+- Worktree baseline is `b2942e2` with only the protected untracked `sdd/task-3-review.md`; no existing changes may be reverted.
+- The repair must preserve `object.__new__` Agent fixtures, public exports, `quick_analysis`, legacy Word/storage seams, and independent per-format failure isolation.
+
+### Root-cause map
+
+- `ReportService._validate_evidence()` synthesizes `EvidenceValidation(valid=True)` when no registry or caller validation exists, so direct service calls accept unsupported numbers.
+- `safe_chart_reference()` validates `chart.file_path` but returns a path derived from `chart.filename`, breaking display-name versus real-file mappings.
+- Template helpers flatten text and escape only table pipes; title, metric metadata, chart labels, claims, and error codes are appended after narrative filtering.
+- `ReportService.__init__()` aliases `storage` into `artifact_storage`, while `_store_success()` never creates a download URL from a registered artifact.
+- The format exception handler calls `unlink()` directly, so a renderer-created directory at the temp path can replace the original failure.
+- ReportService keeps a narrower private error regex instead of the shared service sanitizer, which lacks host-path redaction.
+- `_validate_output_root()` only checks existence; the Agent does not pass its trusted session root to the service.
+- HTML `_inline()` recognizes only images and links, and `ReportBundle` copies `document.template_version` without validating the active template.

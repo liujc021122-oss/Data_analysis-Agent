@@ -1,6 +1,8 @@
 from pathlib import Path
 from uuid import uuid4
 
+from docx import Document
+
 from data_analysis_agent.domain.enums import ReportFormat
 from data_analysis_agent.domain.models import ChartArtifact
 from data_analysis_agent.reports import WordReportRenderer as ExportedWordReportRenderer
@@ -100,3 +102,23 @@ def test_word_renderer_uses_injected_legacy_generator(tmp_path: Path):
 def test_word_renderer_is_public_and_used_by_default():
     assert ExportedWordReportRenderer is WordReportRenderer
     assert isinstance(default_renderers()[ReportFormat.DOCX], WordReportRenderer)
+
+
+def test_word_renderer_decodes_safe_markdown_escapes_as_literal_text(tmp_path: Path):
+    output = tmp_path / "report.docx"
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    WordReportRenderer().render(
+        markdown="# &lt;img src=x&gt; \\[label\\] \\*literal\\*",
+        document=document,
+        output_path=output,
+    )
+
+    rendered = Document(output)
+    text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert "<img src=x>" in text
+    assert "[label]" in text
+    assert "*literal*" in text
+    assert "\\" not in text

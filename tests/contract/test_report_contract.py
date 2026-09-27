@@ -56,6 +56,7 @@ def test_word_generation_failure_keeps_markdown_and_exposes_report_error(tmp_pat
             raise RuntimeError("baseline Word failure")
 
     agent.report_service = ReportService(
+        allowed_output_root=session_dir,
         renderers={
             ReportFormat.DOCX: FailingDocxRenderer(),
             ReportFormat.HTML: HtmlReportRenderer(),

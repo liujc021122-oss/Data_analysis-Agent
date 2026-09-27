@@ -113,7 +113,15 @@ class AnalysisReportTemplate:
 
 def _markdown_text(value: str) -> str:
     """Keep generated Markdown on one line without allowing block injection."""
-    return " ".join(value.replace("\r", "\n").splitlines()).strip()
+    flattened = " ".join(value.replace("\r", "\n").splitlines()).strip()
+    # Entities keep angle brackets from becoming raw HTML; backslash escapes
+    # keep structured values from becoming Markdown links, emphasis, or blocks.
+    escaped = (
+        flattened.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return re.sub(r"([\\`*_\[\]()#!])", r"\\\1", escaped)
 
 
 def _markdown_table_cell(value: str) -> str:
@@ -122,4 +130,4 @@ def _markdown_table_cell(value: str) -> str:
 
 def _markdown_image_target(value: str) -> str:
     """Use an angle destination when Markdown delimiters need protection."""
-    return f"<{value}>" if re.search(r"[\s()]", value) else value
+    return f"<{value}>" if re.search(r"[\s()\[\]<>\\]", value) else value

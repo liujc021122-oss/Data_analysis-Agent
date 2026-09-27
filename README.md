@@ -356,11 +356,13 @@ document = ReportDocument(
     output_root=str(session_dir),
     narrative_markdown="# 分析报告",
 )
-bundle = ReportService().generate(
+bundle = ReportService(allowed_output_root=session_dir).generate(
     document,
     formats={ReportFormat.MARKDOWN, ReportFormat.HTML},
 )
 ```
+
+`ReportService` 要求调用方显式提供受信任的任务输出根目录，报告目录必须位于该根目录内。
 
 M11 只实现 Markdown、HTML 和 DOCX；PDF 是未来 renderer 扩展项，不属于本阶段交付。
 各格式独立生成：DOCX 或 HTML 渲染失败会在对应结果中返回错误，不会删除已经生成的

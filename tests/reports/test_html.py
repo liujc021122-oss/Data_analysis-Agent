@@ -7,6 +7,8 @@ import pytest
 from data_analysis_agent.domain.enums import EvidenceVerificationStatus, ReportFormat
 from data_analysis_agent.domain.models import (
     ChartArtifact,
+    EvidenceClaim,
+    EvidenceClaimKind,
     EvidenceValidation,
     MetricArtifact,
 )
@@ -133,7 +135,7 @@ def test_template_adds_evidence_status_for_invalid_validation(tmp_path: Path):
 
     assert "\u3010\u5f85\u786e\u8ba4\u6570\u5b57\u3011" in markdown
     assert "## \u8bc1\u636e\u72b6\u6001" in markdown
-    assert "UNSUPPORTED_NUMERIC_CLAIM" in markdown
+    assert "UNSUPPORTED\\_NUMERIC\\_CLAIM" in markdown
 
 
 def test_html_renderer_escapes_text_and_preserves_report_structure(tmp_path: Path):
@@ -232,6 +234,39 @@ def test_template_and_html_render_verified_chart_markdown_delimiters(
     assert "[\u56fe\u7247\u4e0d\u53ef\u7528: missing]" in output.read_text(encoding="utf-8")
 
 
+def test_template_and_html_use_verified_chart_file_path_when_display_name_differs(
+    tmp_path: Path,
+):
+    task_id = uuid4()
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    actual = nested / "actual chart (final).png"
+    actual.write_bytes(b"png")
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        chart_artifacts=(
+            ChartArtifact(
+                task_id=task_id,
+                filename="display-name.png",
+                file_path=str(actual),
+                title="verified chart",
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+    )
+    output = tmp_path / "report.html"
+
+    markdown = AnalysisReportTemplate().render_markdown(document)
+    HtmlReportRenderer().render(markdown=markdown, document=document, output_path=output)
+
+    assert "nested/actual chart (final).png" in markdown
+    assert "display-name.png" not in markdown
+    assert 'src="nested/actual chart (final).png"' in output.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_html_metric_table_honors_escaped_pipes_and_preserves_value_column(tmp_path: Path):
     task_id = uuid4()
     document = ReportDocument(
@@ -258,3 +293,70 @@ def test_html_metric_table_honors_escaped_pipes_and_preserves_value_column(tmp_p
     assert row is not None
     cells = re.findall(r"<td>(.*?)</td>", row.group(1))
     assert cells == ["left|right", "1.23456789012346", "USD|month", "source|column"]
+
+
+def test_template_escapes_structured_metadata_before_markdown_is_published(tmp_path: Path):
+    task_id = uuid4()
+    chart = tmp_path / "safe.png"
+    chart.write_bytes(b"png")
+    document = ReportDocument(
+        task_id=task_id,
+        title='<img src=x onerror="alert(1)"> [title](javascript:bad)',
+        output_root=str(tmp_path),
+        metric_artifacts=(
+            MetricArtifact(
+                task_id=task_id,
+                name='<img src=x onerror="metric"> [metric](javascript:bad) **bold**',
+                value=10.0,
+                unit="USD (unsafe) *unit*",
+                source_columns=("amount] (javascript:bad)",),
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+        chart_artifacts=(
+            ChartArtifact(
+                task_id=task_id,
+                filename="safe.png",
+                file_path=str(chart),
+                title='<img src=x onerror="chart"> [chart](javascript:bad)',
+                verification_status=EvidenceVerificationStatus.VERIFIED,
+            ),
+        ),
+        evidence_validation=EvidenceValidation(
+            task_id=task_id,
+            valid=False,
+            claims=(
+                EvidenceClaim(
+                    task_id=task_id,
+                    text='<img src=x onerror="claim"> [claim](javascript:bad)',
+                    kind=EvidenceClaimKind.INTERPRETATION,
+                ),
+            ),
+            error_codes=("<img src=x onerror=alert(1)>",),
+        ),
+    )
+
+    markdown = AnalysisReportTemplate().render_markdown(document)
+
+    assert "<img" not in markdown.lower()
+    assert "<script" not in markdown.lower()
+    assert r"\(javascript:" in markdown.lower()
+    assert "\\[metric\\]" in markdown
+
+
+def test_html_renderer_supports_safe_emphasis_subset(tmp_path: Path):
+    output = tmp_path / "report.html"
+    document = ReportDocument(task_id=uuid4(), output_root=str(tmp_path))
+
+    HtmlReportRenderer().render(
+        markdown="**bold** __strong__ *italic* _emphasis_ [**linked**](https://example.com)",
+        document=document,
+        output_path=output,
+    )
+
+    html = output.read_text(encoding="utf-8")
+    assert "<strong>bold</strong>" in html
+    assert "<strong>strong</strong>" in html
+    assert "<em>italic</em>" in html
+    assert "<em>emphasis</em>" in html
+    assert '<a href="https://example.com"><strong>linked</strong></a>' in html

@@ -386,6 +386,10 @@ class DataAnalysisAgent:
                 artifact_storage=getattr(self, "artifact_storage", None),
                 storage=getattr(self, "storage", None),
                 evidence_registry=registry,
+                allowed_output_root=(
+                    getattr(self, "session_output_dir", None)
+                    or getattr(self, "base_output_dir", None)
+                ),
             )
             self.report_service = service
         return service

@@ -71,6 +71,21 @@ def test_sanitize_text_redacts_json_and_common_query_credentials(text):
     assert "[REDACTED]" in sanitized
 
 
+@pytest.mark.parametrize(
+    "text, secret",
+    (
+        (r"\\private-server\secret-share\report.txt", "private-server"),
+        (r"C:\private\secret.txt", "secret.txt"),
+        ("/var/private/report.txt", "report.txt"),
+    ),
+)
+def test_sanitize_text_redacts_host_specific_paths(text, secret):
+    sanitized = sanitize_text(text)
+
+    assert secret not in sanitized
+    assert "[path]" in sanitized
+
+
 @pytest.mark.asyncio
 async def test_fallback_diagnostic_redacts_configured_fallback_secret(monkeypatch, capsys):
     class FakeAPIError(Exception):
