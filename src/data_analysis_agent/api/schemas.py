@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -33,7 +34,7 @@ def _nonblank(value: str) -> str:
 
 def _sanitize_public_metadata(value: Any) -> Any:
     """Remove storage and local path fields from nested public metadata."""
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {
             key: _sanitize_public_metadata(item)
             for key, item in value.items()
@@ -79,6 +80,7 @@ class ArtifactResponse(PublicAPIModel):
     artifact_type: StrictStr
     name: StrictStr
     download_url: StrictStr | None = None
+    content_url: StrictStr | None = None
     format: ReportFormat | None = None
     mime_type: StrictStr | None = None
     description: StrictStr | None = None
@@ -105,6 +107,12 @@ class TaskSubmissionResponse(APIModel):
     task_id: UUID
     status: TaskStatus
     created: StrictBool
+    enqueued: StrictBool
+
+
+class TaskRetryResponse(APIModel):
+    task_id: UUID
+    status: TaskStatus
     enqueued: StrictBool
 
 
@@ -160,4 +168,5 @@ class TaskEventListResponse(PageResponse[TaskEventResponse]):
 class ArtifactDownloadResponse(APIModel):
     artifact_id: UUID
     download_url: StrictStr
+    content_url: StrictStr | None = None
     expires_in: StrictInt = Field(gt=0)

@@ -56,3 +56,25 @@
 - ReportService keeps a narrower private error regex instead of the shared service sanitizer, which lacks host-path redaction.
 - `_validate_output_root()` only checks existence; the Agent does not pass its trusted session root to the service.
 - HTML `_inline()` recognizes only images and links, and `ReportBundle` copies `document.template_version` without validating the active template.
+
+## M12 Worker Findings
+
+- `TaskPersistenceService.create_task()` already performs user-scoped idempotent creation and writes the initial `PENDING` event, but it discards the repository `created` flag; M12 needs a result-returning variant so duplicate requests do not enqueue again.
+- `TaskRepository` and `UnitOfWork` already provide transactional task updates and `get_for_update`; worker status transitions should use those boundaries rather than mutating ORM rows directly.
+- `AnalysisTask` currently lacks the task owner in the business model even though `AnalysisTaskRecord` and the ORM retain `user_id`; a worker-side Agent factory needs an explicit owner dependency or a typed owner field before resolving datasets.
+- `AgentOrchestrator` already has cooperative `cancel()` and the container execution backend has hard time limits; the Worker should connect cancellation to both orchestration cancellation and Celery revoke/worker termination.
+- The current environment has no `celery`, `redis`, or `fastapi` package. Celery imports must therefore be lazy and all contract tests must use a fake broker.
+
+## M12 Decisions and Verification
+
+- `load_settings()` parses `REDIS_URL` and Worker retry settings but does not make Redis mandatory for unrelated production API startup; `build_celery_app()` is the explicit Worker fail-fast boundary.
+- `TaskPersistenceService` owns transaction boundaries for claim, failure, cancellation, retry requeue and stale recovery. Worker code never mutates ORM rows directly.
+- Retryable task errors are explicit (`RetryableTaskError`, LLM errors with `retryable=True`, or result payloads marked retryable); authentication and schema failures are not retried by default.
+- Cancellation registry callbacks are cleared after execution so task IDs do not accumulate in process memory. Agent-level `cancel()` is preferred, with orchestrator/executor stop fallbacks.
+- The protected untracked `sdd/task-3-review.md` remains untouched.
+
+## M13 独立复核待修复问题
+
+- `TaskSubmissionService.submit()` 先提交任务状态再发布 broker 消息；进程若在两步之间退出，`PENDING` 或 `QUEUED` 任务不会被当前只扫描 `RUNNING` 的恢复逻辑补发。
+- 开发/测试应用默认使用 `InMemoryTaskBroker`；只启动 API 时没有消费者，配置 Redis 的开发环境应能切换到 Celery broker，并在 README 明确 API、Redis、Worker 的启动关系。
+- 本地 Artifact 下载 URL 当前为 `local-download://...`，但缺少把受保护令牌解析为 HTTP 文件响应的 API 端点；需要沿用 owner、签名、过期、文件大小和哈希校验。

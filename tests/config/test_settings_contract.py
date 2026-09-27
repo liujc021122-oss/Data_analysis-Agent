@@ -162,6 +162,7 @@ def test_production_factory_accepts_provider_default_credentials(tmp_path, monke
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"
             ),
+            "REDIS_URL": "redis://redis.example.invalid:6379/0",
             "STORAGE_ENDPOINT": "https://storage.example.invalid",
             "STORAGE_BUCKET": "data-analysis",
         },
@@ -185,6 +186,7 @@ def test_production_whitespace_database_url_is_missing(tmp_path):
                 "OPENAI_BASE_URL": "https://offline.invalid",
                 "OPENAI_MODEL": "offline-model",
                 "DATABASE_URL": " \t\n",
+                "REDIS_URL": "redis://redis.example.invalid:6379/0",
             },
             dotenv_dir=tmp_path,
         )
@@ -199,6 +201,7 @@ def test_production_sqlite_database_url_is_rejected_at_settings_boundary(tmp_pat
                 "OPENAI_BASE_URL": "https://offline.invalid",
                 "OPENAI_MODEL": "offline-model",
                 "DATABASE_URL": f"sqlite:///{tmp_path / 'production.sqlite3'}",
+                "REDIS_URL": "redis://redis.example.invalid:6379/0",
                 "STORAGE_ENDPOINT": "https://storage.example.invalid",
                 "STORAGE_BUCKET": "data-analysis",
             },
@@ -213,6 +216,8 @@ def test_production_sqlite_database_url_is_rejected_at_settings_boundary(tmp_pat
         ("MAX_TASK_RUNTIME", "not-an-int"),
         ("MAX_UPLOAD_SIZE", "-1"),
         ("LOG_LEVEL", "verbose"),
+        ("WORKER_RETRY_BACKOFF_SECONDS", "nan"),
+        ("WORKER_RETRY_BACKOFF_SECONDS", "inf"),
     ],
 )
 def test_invalid_values_name_their_configuration_key(tmp_path, key, value):
@@ -224,6 +229,7 @@ def test_invalid_values_name_their_configuration_key(tmp_path, key, value):
             "mysql+pymysql://user:password@db.example.invalid:3306/"
             "data_analysis"
         ),
+        "REDIS_URL": "redis://redis.example.invalid:6379/0",
         key: value,
     }
 
@@ -249,6 +255,7 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"
             ),
+            "REDIS_URL": "redis://redis.example.invalid:6379/0",
             "STORAGE_ENDPOINT": "https://storage.example.invalid",
             "STORAGE_BUCKET": "data-analysis",
         },

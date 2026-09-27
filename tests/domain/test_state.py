@@ -25,7 +25,9 @@ def test_legal_transition_matrix_contains_the_declared_lifecycle():
         TaskStatus.FAILED,
         TaskStatus.CANCELLED,
     ):
-        assert LEGAL_STATUS_TRANSITIONS[terminal] == frozenset()
+        assert LEGAL_STATUS_TRANSITIONS[terminal] == (
+            frozenset({TaskStatus.QUEUED}) if terminal is TaskStatus.FAILED else frozenset()
+        )
 
 
 @pytest.mark.parametrize(
@@ -51,7 +53,6 @@ def test_declared_lifecycle_transitions_are_allowed(current, target):
     [
         (TaskStatus.PENDING, TaskStatus.RUNNING),
         (TaskStatus.COMPLETED, TaskStatus.RUNNING),
-        (TaskStatus.FAILED, TaskStatus.QUEUED),
         (TaskStatus.CANCELLED, TaskStatus.PENDING),
     ],
 )

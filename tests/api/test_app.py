@@ -7,6 +7,7 @@ from data_analysis_agent.api.application import APIApplication
 from data_analysis_agent.api.auth import HeaderPrincipalProvider
 from data_analysis_agent.api.auth import PrincipalProvider
 from data_analysis_agent.config.settings import ConfigurationError, load_settings
+from data_analysis_agent.worker.broker import InMemoryTaskBroker
 
 
 @pytest.fixture
@@ -20,6 +21,31 @@ def test_request_id_is_generated_and_openapi_is_available(fake_application):
     assert response.status_code == 200
     assert response.headers["X-Request-ID"]
     assert "/api/datasets" in response.json()["paths"]
+
+
+def test_openapi_lists_the_complete_m13_api_surface(fake_application):
+    paths = TestClient(create_app(fake_application)).get("/openapi.json").json()["paths"]
+
+    assert {
+        "/api/datasets",
+        "/api/datasets/{dataset_id}",
+        "/api/analysis-tasks",
+        "/api/analysis-tasks/{task_id}",
+        "/api/analysis-tasks/{task_id}/cancel",
+        "/api/analysis-tasks/{task_id}/retry",
+        "/api/analysis-tasks/{task_id}/events",
+        "/api/artifacts/{artifact_id}",
+        "/api/artifacts/{artifact_id}/download",
+        "/api/artifacts/{artifact_id}/content",
+    } <= paths.keys()
+
+
+def test_missing_identity_uses_uniform_error_shape(fake_application):
+    response = TestClient(create_app(fake_application)).get("/api/datasets")
+
+    assert response.status_code == 401
+    assert set(response.json()) == {"code", "message", "details", "request_id"}
+    assert response.headers["X-Request-ID"] == response.json()["request_id"]
 
 
 def test_supplied_request_id_is_echoed(fake_application):
@@ -44,6 +70,28 @@ def test_default_test_application_uses_header_principal_provider():
     ))
     create_app(application)
     assert isinstance(application.principal_provider, HeaderPrincipalProvider)
+
+
+def test_development_uses_celery_broker_when_redis_is_configured(monkeypatch, tmp_path):
+    settings = load_settings(
+        app_env="development",
+        environ={
+            "APP_ENV": "development",
+            "DATABASE_URL": f"sqlite:///{tmp_path / 'development.sqlite3'}",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "STORAGE_LOCAL_ROOT": str(tmp_path / "objects"),
+        },
+    )
+    broker = object()
+    monkeypatch.setattr(
+        "data_analysis_agent.worker.celery_app.build_celery_broker",
+        lambda configured: broker,
+    )
+
+    application = APIApplication.from_settings(settings)
+
+    assert application.task_submission.broker is broker
+    assert not isinstance(application.task_submission.broker, InMemoryTaskBroker)
 
 
 def test_production_requires_explicit_principal_provider(fake_application):

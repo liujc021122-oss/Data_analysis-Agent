@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field, fields
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Dict, Literal, Mapping, Optional
@@ -19,6 +20,9 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_MAX_TASK_RUNTIME = 900
 DEFAULT_MAX_UPLOAD_SIZE = 104857600
+DEFAULT_WORKER_MAX_RETRIES = 3
+DEFAULT_WORKER_RETRY_BACKOFF_SECONDS = 5.0
+DEFAULT_WORKER_STALE_AFTER_SECONDS = 1800
 LOGGER_NAME = "data_analysis_agent"
 
 
@@ -56,6 +60,9 @@ class Settings:
     execution_backend: Literal["local", "container"] = "local"
     execution_image: Optional[str] = None
     execution_network_mode: Literal["none", "bridge"] = "none"
+    worker_max_retries: int = DEFAULT_WORKER_MAX_RETRIES
+    worker_retry_backoff_seconds: float = DEFAULT_WORKER_RETRY_BACKOFF_SECONDS
+    worker_stale_after_seconds: int = DEFAULT_WORKER_STALE_AFTER_SECONDS
 
     def llm_config(self) -> LLMConfig:
         return LLMConfig(
@@ -101,6 +108,30 @@ def _positive_int(values: Mapping[str, str], key: str, default: int) -> int:
         raise ConfigurationError(f"{key} must be a positive integer") from exc
     if parsed <= 0:
         raise ConfigurationError(f"{key} must be a positive integer")
+    return parsed
+
+
+def _nonnegative_int(values: Mapping[str, str], key: str, default: int) -> int:
+    raw_value = values.get(key, str(default))
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{key} must be a non-negative integer") from exc
+    if parsed < 0:
+        raise ConfigurationError(f"{key} must be a non-negative integer")
+    return parsed
+
+
+def _nonnegative_float(
+    values: Mapping[str, str], key: str, default: float
+) -> float:
+    raw_value = values.get(key, str(default))
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{key} must be a non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ConfigurationError(f"{key} must be a non-negative number")
     return parsed
 
 
@@ -196,7 +227,7 @@ def load_settings(
     settings = Settings(
         app_env=environment,
         database_url=_nonblank(values.get("DATABASE_URL")),
-        redis_url=values.get("REDIS_URL"),
+        redis_url=_nonblank(values.get("REDIS_URL")),
         storage_endpoint=_nonblank(values.get("STORAGE_ENDPOINT")),
         storage_bucket=_nonblank(values.get("STORAGE_BUCKET")),
         storage_region=_nonblank(values.get("STORAGE_REGION")),
@@ -229,6 +260,19 @@ def load_settings(
         execution_backend=execution_backend,
         execution_image=_nonblank(values.get("EXECUTION_IMAGE")),
         execution_network_mode=execution_network_mode,
+        worker_max_retries=_nonnegative_int(
+            values, "WORKER_MAX_RETRIES", DEFAULT_WORKER_MAX_RETRIES
+        ),
+        worker_retry_backoff_seconds=_nonnegative_float(
+            values,
+            "WORKER_RETRY_BACKOFF_SECONDS",
+            DEFAULT_WORKER_RETRY_BACKOFF_SECONDS,
+        ),
+        worker_stale_after_seconds=_positive_int(
+            values,
+            "WORKER_STALE_AFTER_SECONDS",
+            DEFAULT_WORKER_STALE_AFTER_SECONDS,
+        ),
     )
     if settings.log_level not in VALID_LOG_LEVELS:
         raise ConfigurationError(

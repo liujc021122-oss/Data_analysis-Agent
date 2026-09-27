@@ -3,7 +3,7 @@ import inspect
 import json
 from threading import Event
 from time import monotonic
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from ..domain.enums import TaskEventType, TaskStatus, ToolCallStatus
@@ -53,6 +53,7 @@ STAGE_ALLOWED_TOOLS = {
 }
 
 ToolContextFactory = Callable[[], ToolContext] | Callable[[UUID], ToolContext]
+TransitionCallback = Callable[[AnalysisTask, TaskEvent], None]
 
 
 class AgentOrchestrator:
@@ -70,6 +71,7 @@ class AgentOrchestrator:
         tool_executor: Any = None,
         tool_context_factory: ToolContextFactory | None = None,
         initial_state: AgentState | None = None,
+        transition_callback: TransitionCallback | None = None,
     ) -> None:
         state = (
             initial_state
@@ -91,6 +93,7 @@ class AgentOrchestrator:
         self._limits = limits or OrchestratorLimits()
         self._tool_executor = tool_executor
         self._tool_context_factory = tool_context_factory or self._default_tool_context
+        self._transition_callback = transition_callback
         self._step_number = 0
         self._stage_attempts: dict[str, int] = {}
         self._context = dict(state.context)
@@ -410,6 +413,8 @@ class AgentOrchestrator:
                 "updated_at": event.occurred_at,
             }
         )
+        if self._transition_callback is not None:
+            self._transition_callback(self._task, event)
 
     def _refresh_runtime(self) -> None:
         current = monotonic()

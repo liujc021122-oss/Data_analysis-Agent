@@ -80,7 +80,7 @@
 
 ## M11 Final-Review Repair (2026-09-26)
 
-**状态：** 进行中
+**状态：** 已完成（2026-09-26）
 
 Authoritative findings: `sdd/final-review.md` (7 Important, 2 Minor). PDF remains out of scope.
 
@@ -89,3 +89,53 @@ Authoritative findings: `sdd/final-review.md` (7 Important, 2 Minor). PDF remain
 3. [x] Implement compatible fixes in ReportService, sanitizers/renderers, Agent wiring, and template validation
 4. [x] Run focused and broader verification; inspect diff and compatibility seams
 5. [x] Commit production/tests/docs changes after the independent final review
+
+## M12 后台任务 Worker（2026-09-27）
+
+**状态：** 已完成（2026-09-27）
+
+### Goal
+
+将长时间分析从同步调用拆为可持久化、可恢复、可取消的后台任务；生产环境使用 Celery + Redis，测试环境使用内存 fake broker，不依赖真实外部服务。
+
+1. [x] 任务提交服务、幂等入队和 API DTO 契约
+2. [x] Broker 抽象、Celery/Redis 适配和配置校验
+3. [x] Worker 执行、状态事件、阶段计时和失败重试
+4. [x] 取消、恢复、重复执行保护和执行器停止
+5. [x] worker CLI、文档、迁移/配置和兼容性回归
+6. [x] 全量验证、人工审查（本轮未创建 commit）
+
+### M12 Decisions
+
+- 数据库任务记录是执行事实来源；消息只携带 `task_id`，不携带用户输入、文件路径或密钥。
+- 同一用户的相同幂等请求只创建并入队一次；重复提交直接返回原任务，不重复发送消息。
+- Celery 使用 late acknowledgement、prefetch=1 和 worker-lost rejection；Redis URL 从 `Settings.redis_url` 读取。
+- 重试只在 worker 明确判定为可重试时发生；耗尽后任务进入 `FAILED` 并持久化安全错误码/消息。
+- 取消同时更新数据库、撤销 Celery 消息，并在活动 worker 中请求 orchestrator/执行器停止；任务不会在取消后启动新阶段。
+- worker 重启恢复 stale `RUNNING` 任务为 `QUEUED`，追加恢复事件，然后重新入队；终态任务永不重复执行。
+
+## M13 后端 API 收尾复核（2026-09-27）
+
+**状态：** 已完成（2026-09-27）
+
+### 目标
+
+处理 M13 独立复核发现的队列崩溃窗口、开发环境消费者缺失和本地 Artifact 下载链路缺口；保留已有 API、Worker、数据库和存储兼容契约。
+
+1. [x] 为 PENDING/QUEUED 入队崩溃窗口增加失败回归测试并定位恢复边界
+2. [x] 修复 stale recovery 与幂等入队，验证重复消息不会重复执行
+3. [x] 让 development 在配置 Redis 时可使用 Celery/Worker，并补齐启动文档
+4. [x] 增加受保护的本地 Artifact HTTP 下载端点，校验权限、签名、过期、大小和哈希
+5. [x] 运行聚焦回归、全量测试、编译、迁移和 diff 检查，更新本计划与进度
+
+### M13 Verification
+
+- 聚焦 Worker/API/配置回归：`59 passed`；安全补充回归：`22 passed`。
+- 全量验证：`901 passed, 1 skipped`；唯一 skip 是当前环境不支持 symlink 的既有执行器测试。
+- `compileall -q src`、editable install、重复 `alembic upgrade head`、Worker `--help` 和 `git diff --check` 均退出码 0。
+
+### M12 Verification Notes
+
+- Worker 聚焦测试覆盖提交幂等、入队失败、取消、原子认领、阶段事件、可重试失败、重试耗尽、stale 恢复、活动执行器停止和 Celery payload；全程使用 SQLite 与 fake broker。
+- `Celery`/`Redis` 采用延迟导入；缺失 `REDIS_URL` 或 Worker extra 时在 Celery 启动边界给出明确错误，普通 API/执行器配置不被 Worker 依赖污染。
+- 数据库迁移 `20260927_0004_worker_retry_transitions` 更新活动阶段重试的合法状态约束；消息永远只携带 `task_id`。

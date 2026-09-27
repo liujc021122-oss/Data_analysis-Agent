@@ -18,7 +18,7 @@ import asyncio
 import inspect
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -28,7 +28,7 @@ from ..config import build_storage
 from ..config.settings import ConfigurationError, Settings, load_settings
 from ..domain.errors import EvidenceError
 from ..domain.enums import EvidenceVerificationStatus, ReportFormat, TaskStatus
-from ..domain.models import ChartArtifact, EvidenceClaim, MetricArtifact
+from ..domain.models import AnalysisTask, ChartArtifact, EvidenceClaim, MetricArtifact, TaskEvent
 from ..execution import (
     AgentExecutionSession,
     CodeExecutionBackend,
@@ -170,6 +170,7 @@ class DataAnalysisAgent:
         execution_runtime: ContainerRuntime | None = None,
         evidence_registry: EvidenceRegistry | None = None,
         *,
+        transition_callback: Callable[[AnalysisTask, TaskEvent], None] | None = None,
         report_service: ReportService | None = None,
     ):
         """
@@ -201,6 +202,7 @@ class DataAnalysisAgent:
         self.settings = settings or load_settings()
         self._provided_execution_backend = execution_backend
         self._execution_runtime = execution_runtime
+        self._transition_callback = transition_callback
         self._provided_evidence_registry = evidence_registry
         self.max_rounds = max_rounds
         self.generate_word_report = generate_word_report
@@ -803,6 +805,7 @@ class DataAnalysisAgent:
                 task_id=task_id,
                 user_id=self.dataset_owner_id,
             ),
+            transition_callback=getattr(self, "_transition_callback", None),
         )
         orchestration_result = self.orchestrator.run()
         if orchestration_result.status is not TaskStatus.COMPLETED:
@@ -1423,6 +1426,22 @@ class DataAnalysisAgent:
         self.analysis_results = []
         self.current_round = 0
         self.executor.reset_environment()
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation and stop an active executor when possible."""
+        orchestrator = getattr(self, "orchestrator", None)
+        if orchestrator is not None:
+            cancel = getattr(orchestrator, "cancel", None)
+            if callable(cancel):
+                cancel()
+        executor = getattr(self, "executor", None)
+        for name in ("cancel", "stop", "terminate", "kill"):
+            callback = getattr(executor, name, None) if executor is not None else None
+            if callable(callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
 
 
 def quick_analysis(

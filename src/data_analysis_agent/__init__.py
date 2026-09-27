@@ -30,7 +30,7 @@ from .execution import (
     ExecutionAudit,
     build_execution_backend,
 )
-from .api.schemas import DatasetUploadResponse
+from .api.schemas import DatasetUploadResponse, TaskSubmissionResponse
 from .llm import (
     CallRecorder,
     ChatMessage,
@@ -114,6 +114,12 @@ from .tools import (
     build_builtin_registry,
 )
 from .services import EvidenceRegistry
+from .worker import (
+    AnalysisTaskWorker,
+    CancellationRegistry,
+    InMemoryTaskBroker,
+    TaskSubmissionService,
+)
 
 __all__ = [
     "CodeExecutor",
@@ -137,6 +143,10 @@ __all__ = [
     "StageInput",
     "StageResult",
     "TaskStatus",
+    "AnalysisTaskWorker",
+    "CancellationRegistry",
+    "InMemoryTaskBroker",
+    "TaskSubmissionService",
     "ToolUnavailableError",
     "DatasetAccessDeniedError",
     "DatasetError",
@@ -150,6 +160,7 @@ __all__ = [
     "InMemoryDatasetStore",
     "LocalStorageBackend",
     "DatasetUploadResponse",
+    "TaskSubmissionResponse",
     "LLMConfig",
     "Settings",
     "SensitiveField",

@@ -108,12 +108,13 @@ class TaskEventORM(Base):
             "(from_status IS NULL AND to_status = 'PENDING') OR "
             "(from_status = 'PENDING' AND to_status IN ('QUEUED', 'FAILED', 'CANCELLED')) OR "
             "(from_status = 'QUEUED' AND to_status IN ('RUNNING', 'FAILED', 'CANCELLED')) OR "
-            "(from_status = 'RUNNING' AND to_status IN ('EXPLORING', 'CLEANING', 'ANALYZING', 'VALIDATING', 'REPORTING', 'FAILED', 'CANCELLED')) OR "
-            "(from_status = 'EXPLORING' AND to_status IN ('CLEANING', 'ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
-            "(from_status = 'CLEANING' AND to_status IN ('ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
-            "(from_status = 'ANALYZING' AND to_status IN ('EXPLORING', 'CLEANING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
-            "(from_status = 'VALIDATING' AND to_status IN ('ANALYZING', 'REPORTING', 'FAILED', 'CANCELLED')) OR "
-            "(from_status = 'REPORTING' AND to_status IN ('COMPLETED', 'FAILED', 'CANCELLED'))",
+            "(from_status = 'RUNNING' AND to_status IN ('QUEUED', 'EXPLORING', 'CLEANING', 'ANALYZING', 'VALIDATING', 'REPORTING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'EXPLORING' AND to_status IN ('QUEUED', 'CLEANING', 'ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'CLEANING' AND to_status IN ('QUEUED', 'ANALYZING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'ANALYZING' AND to_status IN ('QUEUED', 'EXPLORING', 'CLEANING', 'VALIDATING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'VALIDATING' AND to_status IN ('QUEUED', 'ANALYZING', 'REPORTING', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'REPORTING' AND to_status IN ('COMPLETED', 'FAILED', 'CANCELLED')) OR "
+            "(from_status = 'FAILED' AND to_status = 'QUEUED')",
             name="ck_task_events_legal_status_transition",
         ),
     )

@@ -61,3 +61,27 @@
 - Full offline verification passed: 835 passed, 3 skipped, 18 warnings; compileall and git diff --check also passed.
 - Added `sdd/final-review-fix-report.md`; independent read-only whole-branch review reported zero Critical, Important, or Minor findings.
 - Final-review repair is committed; the protected `sdd/task-3-review.md` remains untracked and untouched.
+
+## 2026-09-27: M12 Worker
+
+- Reused the completed M11 worktree `codex/m09-secure-execution`; the only pre-existing untracked file remains `sdd/task-3-review.md`.
+- Existing domain status transitions, SQLAlchemy task/event repositories, idempotency hashing, and AgentOrchestrator are the integration seams for M12.
+- Celery and Redis are not installed in the current test environment, so the implementation will lazy-load those adapters and keep all tests on an in-memory fake broker.
+- Planned layers: TaskSubmissionService, TaskBroker, AnalysisTaskWorker, Celery application adapter, cancellation/recovery service, and worker CLI.
+
+- M12 Task 1 RED：新增 Worker 提交契约测试，首次收集因 `data_analysis_agent.worker` 尚不存在而失败；失败原因与测试目标一致。
+- M12 Task 1-2 GREEN：新增 `TaskSubmissionService`、`TaskMessage`、`TaskSubmissionResponse`、`InMemoryTaskBroker`、`CeleryTaskBroker`；同一用户相同幂等请求只入队一次，入队失败持久化为 `TASK_ENQUEUE_FAILED`。
+- M12 Task 3 GREEN：`AnalysisTaskWorker` 原子认领 `QUEUED` 任务，记录阶段状态/开始结束时间，支持明确可重试错误的指数退避与重试耗尽；`AgentOrchestrator`/`DataAnalysisAgent` 增加可选状态回调。
+- M12 Task 4 GREEN：取消同时更新数据库、撤销 broker 消息并调用活动 Agent/执行器停止回调；stale `RUNNING` 任务可恢复为 `QUEUED`，重复 delivery 不会再次构造 Agent。
+- M12 Task 5 GREEN：新增延迟导入的 Celery app、Worker CLI、`20260927_0004` Alembic 迁移、环境模板与 README 使用说明；`python -m data_analysis_agent.worker --help` 和 SQLite migration upgrade head 已验证。
+- M12 聚焦验证：Worker/配置/数据库/状态/Agent 回归通过；最终全量 `E:\anaconda\python.exe -m pytest -q`、compileall 和 diff check 已纳入收尾验证。
+- M12 最终验证：`E:\anaconda\python.exe -m pytest -q` 为 `850 passed, 3 skipped, 18 warnings`；editable 安装、`compileall -q src`、SQLite `alembic upgrade head`、Worker 模块帮助和 `git diff --check` 均退出码 0。
+
+## 2026-09-27: M13 收尾复核
+
+- 当前工作树包含 M13 API/Worker/存储实现及其未提交测试改动；复核发现 3 个待修复问题：PENDING/QUEUED 入队崩溃窗口、开发环境没有真实消费者、本地 Artifact 下载 URL 缺少 HTTP 解析端点。
+- 本轮按 TDD 和系统化调试处理：先复现并记录失败，再逐个修复，最后重新执行完整验证。
+- M13 修复阶段 1-2：新增 PENDING/QUEUED 崩溃窗口回归测试；stale recovery 现在覆盖 PENDING、QUEUED、RUNNING，并在发布前刷新任务时间；聚焦恢复测试 3 passed。
+- M13 修复阶段 3：development 配置 `REDIS_URL` 时选择 Celery broker，无 Redis 时保留 InMemory broker；README 已补充 API、Redis、Worker 启动关系。
+- M13 修复阶段 4：新增受保护的本地 Artifact `/content` HTTP 端点和 `content_url` 字段，复核 owner、签名、过期、大小、哈希和路径匹配；Worker/API 局部回归 59 passed，安全补充回归 22 passed。
+- M13 最终验证完成：全量 `pytest -q` 为 `901 passed, 1 skipped`；`compileall`、editable install、重复 Alembic upgrade、Worker help 和 `git diff --check` 均通过。验证用 SQLite 文件留在 Git 忽略的 `outputs/` 下，清理命令被执行策略拒绝，未影响源码或测试。

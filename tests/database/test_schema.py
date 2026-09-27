@@ -162,6 +162,63 @@ def test_migration_is_repeatable_and_downgrade_removes_schema(tmp_path: Path):
         migration_engine.dispose()
 
 
+def test_manual_retry_migration_allows_failed_to_queued_event(tmp_path: Path):
+    db_url = f"sqlite:///{tmp_path / 'manual-retry.sqlite3'}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", db_url)
+    command.upgrade(config, "head")
+    engine = create_engine(db_url)
+    now = datetime.now(timezone.utc)
+    user_id, task_id = uuid4(), uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(insert(UserORM).values(user_id=user_id, created_at=now))
+            connection.execute(insert(AnalysisTaskORM).values(
+                task_id=task_id, user_id=user_id, idempotency_key="retry",
+                request_hash="retry", query="retry", status=TaskStatus.FAILED,
+                max_rounds=1, created_at=now, updated_at=now, metadata_json={},
+                model_call_count=0, model_duration_ms=0,
+            ))
+            connection.execute(insert(TaskEventORM).values(
+                event_id=uuid4(), task_id=task_id,
+                event_type=TaskEventType.STATUS_CHANGED,
+                from_status=TaskStatus.FAILED, to_status=TaskStatus.QUEUED,
+                occurred_at=now, metadata_json={},
+            ))
+    finally:
+        engine.dispose()
+
+
+def test_manual_retry_migration_downgrade_rejects_existing_retry_events(tmp_path: Path):
+    db_url = f"sqlite:///{tmp_path / 'manual-retry-downgrade.sqlite3'}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", db_url)
+    command.upgrade(config, "head")
+    engine = create_engine(db_url)
+    now = datetime.now(timezone.utc)
+    user_id, task_id = uuid4(), uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(insert(UserORM).values(user_id=user_id, created_at=now))
+            connection.execute(insert(AnalysisTaskORM).values(
+                task_id=task_id, user_id=user_id, idempotency_key="retry-downgrade",
+                request_hash="retry-downgrade", query="retry", status=TaskStatus.FAILED,
+                max_rounds=1, created_at=now, updated_at=now, metadata_json={},
+                model_call_count=0, model_duration_ms=0,
+            ))
+            connection.execute(insert(TaskEventORM).values(
+                event_id=uuid4(), task_id=task_id,
+                event_type=TaskEventType.STATUS_CHANGED,
+                from_status=TaskStatus.FAILED, to_status=TaskStatus.QUEUED,
+                occurred_at=now, metadata_json={},
+            ))
+
+        with pytest.raises(RuntimeError, match="FAILED.*QUEUED"):
+            command.downgrade(config, "20260927_0004")
+    finally:
+        engine.dispose()
+
+
 def test_production_alembic_rejects_sqlite_url_without_llm_settings(
     monkeypatch, tmp_path: Path
 ):

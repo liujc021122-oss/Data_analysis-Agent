@@ -365,10 +365,82 @@ bundle = ReportService(allowed_output_root=session_dir).generate(
 `ReportService` 要求调用方显式提供受信任的任务输出根目录，报告目录必须位于该根目录内。
 
 M11 只实现 Markdown、HTML 和 DOCX；PDF 是未来 renderer 扩展项，不属于本阶段交付。
+
+### M12 后台任务 Worker
+
+长时间分析通过 `TaskSubmissionService` 创建持久化任务，再将只含 `task_id` 的消息发送到
+Celery/Redis。提交接口可以立即返回任务 ID；Worker 独立认领 `QUEUED` 任务并更新数据库状态、
+阶段事件和错误信息。相同用户的相同幂等请求只入队一次，数据库认领也会阻止重复执行。
+
+生产 Worker 依赖单独安装，当前测试不要求 Celery 或 Redis：
+
+```bash
+pip install -e ".[worker]"
+data-analysis-agent-worker --env production --loglevel INFO
+```
+
+Worker 配置项为 `REDIS_URL`、`WORKER_MAX_RETRIES`、`WORKER_RETRY_BACKOFF_SECONDS` 和
+`WORKER_STALE_AFTER_SECONDS`。Celery 使用 late acknowledgement、单条预取和 worker-lost
+拒绝；网络错误等明确可重试错误使用指数退避，认证或协议错误不会无限重试。
+
+取消任务会同时更新数据库、撤销 Celery 消息，并调用活动 Agent/执行器的停止回调。Worker
+启动恢复时会把超过 `WORKER_STALE_AFTER_SECONDS` 的 `PENDING`、`QUEUED` 或 `RUNNING` 任务重新排队；
+任务认领使用数据库条件更新，因此恢复产生的重复消息不会重复执行终态任务。数据库迁移
+`20260927_0004` 为活动阶段重试增加了合法的 `QUEUED` 回退转换。
 各格式独立生成：DOCX 或 HTML 渲染失败会在对应结果中返回错误，不会删除已经生成的
 Markdown，也不会丢失 Agent 已有的分析结果。报告中的结构化指标和图表只接受当前任务
 范围内、已经验证的证据；未验证指标、跨任务图表、越界路径和不存在的图片不会作为事实
 证据进入输出。
+
+### M13 后端 API
+
+安装 API 依赖并启动本地服务：
+
+```powershell
+pip install -e ".[dev,api]"
+Copy-Item .env.development.example .env
+# 编辑 .env，至少设置：
+# DATABASE_URL=sqlite:///./data_analysis_agent.sqlite3
+# STORAGE_LOCAL_ROOT=./outputs/datasets
+# Alembic does not load .env automatically; pass the same URL explicitly.
+python -m alembic -x db_url=sqlite:///./data_analysis_agent.sqlite3 upgrade head
+uvicorn data_analysis_agent.api.app:create_app --factory --reload
+```
+
+development 环境的空 `REDIS_URL` 会使用内存 broker，适合 API 契约测试，但只启动 API
+不会有消费者处理任务。要运行完整的异步分析流程，请安装 Worker 依赖并配置 Redis：
+
+```powershell
+pip install -e ".[dev,api,worker]"
+# 在 .env 中设置 REDIS_URL=redis://127.0.0.1:6379/0
+docker run -d --rm -p 6379:6379 redis:7
+python -m alembic -x db_url=sqlite:///./data_analysis_agent.sqlite3 upgrade head
+data-analysis-agent-worker --env development --recover-stale --loglevel INFO
+# 另一个终端启动 API
+uvicorn data_analysis_agent.api.app:create_app --factory --reload
+```
+
+本地对象存储返回的 `download_url` 是后端签名令牌；前端应使用同一响应中的
+`content_url` 访问受保护的 HTTP 内容端点。端点会再次校验当前用户、令牌有效期、
+对象路径、大小和哈希，不会暴露宿主机文件路径。
+
+服务提供 `/docs` 和 `/openapi.json`。数据集上传使用 `multipart/form-data`，分析任务使用
+JSON；两者都会返回不透明的 ID：
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/api/datasets `
+  -H "X-User-ID: 00000000-0000-0000-0000-000000000001" `
+  -F "file=@sales.csv"
+
+curl.exe -X POST http://127.0.0.1:8000/api/analysis-tasks `
+  -H "Content-Type: application/json" `
+  -H "X-User-ID: 00000000-0000-0000-0000-000000000001" `
+  -d '{"query":"分析销售趋势","idempotency_key":"sales-2026-09"}'
+```
+
+`X-User-ID` 只用于开发和测试环境。生产环境必须注入 JWT/OIDC 等正式身份提供器，服务
+不会回退到请求头身份。任务、事件、图表和报告读取都会按当前用户授权；错误响应统一
+包含 `code`、`message`、`details` 和 `request_id`。
 
 ### 文件存储抽象
 

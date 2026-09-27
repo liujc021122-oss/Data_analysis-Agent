@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -172,6 +172,29 @@ def test_transition_uses_domain_rules_and_persists_event(uow_factory):
     assert event.from_status is TaskStatus.PENDING
     with uow_factory() as uow:
         assert len(uow.task_events.list_for_task(task.task_id)) == 2
+
+
+def test_transition_event_is_after_latest_event_when_clock_ties(uow_factory, monkeypatch):
+    service = TaskPersistenceService(uow_factory)
+    user_id = uuid4()
+    task = service.create_task(user_id=user_id, request=_request("clock-tie"))
+    latest_event_time = task.updated_at + timedelta(microseconds=1)
+
+    with uow_factory() as uow:
+        pending = uow.task_events.list_for_task(task.task_id)[0]
+        row = uow.session.get(TaskEventORM, pending.event_id)
+        row.occurred_at = latest_event_time
+        uow.commit()
+
+    monkeypatch.setattr(
+        "data_analysis_agent.services.persistence.utc_now",
+        lambda: latest_event_time,
+    )
+    _updated, queued_event = service.transition_task(
+        task_id=task.task_id, target=TaskStatus.QUEUED, message="queued"
+    )
+
+    assert queued_event.occurred_at > latest_event_time
 
 
 def test_invalid_transition_leaves_status_and_event_count_unchanged(uow_factory):

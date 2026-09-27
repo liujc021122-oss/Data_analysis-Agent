@@ -20,6 +20,7 @@ from data_analysis_agent.datasets.models import (
     DatasetUploadResult,
 )
 from data_analysis_agent.domain.enums import ReportFormat, TaskEventType, TaskStatus
+from data_analysis_agent.domain.models import AnalysisTask, TaskEvent
 
 
 def test_create_request_validates_and_serializes_without_a_dataset():
@@ -142,6 +143,33 @@ def test_public_metadata_recursively_filters_storage_paths():
     assert payload["event"]["metadata"]["nested"]["stage"] == "reporting"
     assert payload["task"]["metadata"]["tuple_values"][0]["kept"] is True
     assert request.model_dump()["metadata"]["file_path"] == "keep-in-request"
+
+
+def test_public_metadata_filters_domain_frozen_mappings():
+    task = AnalysisTask(
+        query="分析销售数据",
+        metadata={
+            "source_uri": "s3://private/data.csv",
+            "nested": {"file_path": "C:/private/chart.png", "kept": True},
+        },
+    )
+    response = AnalysisTaskResponse.model_validate(task)
+    event = TaskEvent(
+        task_id=task.task_id,
+        event_type=TaskEventType.STATUS_CHANGED,
+        to_status=TaskStatus.PENDING,
+        metadata={"storage_uri": "local://private/report.md", "kept": True},
+    )
+    event_response = TaskEventResponse.model_validate(event)
+
+    task_payload = response.model_dump(mode="json")
+    event_payload = event_response.model_dump(mode="json")
+
+    assert "source_uri" not in task_payload["metadata"]
+    assert "file_path" not in task_payload["metadata"]["nested"]
+    assert task_payload["metadata"]["nested"]["kept"] is True
+    assert "storage_uri" not in event_payload["metadata"]
+    assert event_payload["metadata"]["kept"] is True
 
 
 def test_event_execution_and_error_dtos_are_json_serializable():

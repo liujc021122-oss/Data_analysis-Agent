@@ -12,6 +12,7 @@ from .schemas import (
     DatasetResponse,
     DatasetListResponse,
     TaskListResponse,
+    TaskRetryResponse,
     TaskEventListResponse,
     ArtifactDownloadResponse,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "DatasetResponse",
     "DatasetListResponse",
     "TaskListResponse",
+    "TaskRetryResponse",
     "TaskEventListResponse",
     "ArtifactDownloadResponse",
     "AuthenticationError",

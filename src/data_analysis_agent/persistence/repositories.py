@@ -270,6 +270,32 @@ class TaskRepository:
     def get_for_update(self, task_id: UUID) -> AnalysisTask | None:
         return self._read(task_id, for_update=True)
 
+    def get_for_user(self, task_id: UUID, user_id: UUID, *, for_update: bool = False) -> AnalysisTask | None:
+        query = select(AnalysisTaskORM).where(
+            AnalysisTaskORM.task_id == task_id, AnalysisTaskORM.user_id == user_id
+        )
+        if for_update:
+            query = query.with_for_update()
+        row = self.session.scalar(query)
+        return self._to_domain(row) if row is not None else None
+
+    def list_for_user(
+        self, user_id: UUID, *, status: TaskStatus | None = None,
+        offset: int = 0, limit: int = 20,
+    ) -> tuple[list[AnalysisTask], int]:
+        condition = [AnalysisTaskORM.user_id == user_id]
+        if status is not None:
+            condition.append(AnalysisTaskORM.status == status)
+        total = int(self.session.scalar(
+            select(func.count()).select_from(AnalysisTaskORM).where(*condition)
+        ) or 0)
+        rows = self.session.scalars(
+            select(AnalysisTaskORM).where(*condition)
+            .order_by(AnalysisTaskORM.created_at, AnalysisTaskORM.task_id)
+            .offset(offset).limit(limit)
+        ).all()
+        return [self._to_domain(row) for row in rows], total
+
     def update(self, task: AnalysisTask) -> AnalysisTask:
         row = self.session.get(AnalysisTaskORM, task.task_id)
         if row is None:
@@ -287,6 +313,22 @@ class TaskRepository:
         row.model_duration_ms = record.model_duration_ms
         self.session.flush()
         return self._to_domain(row)
+
+    def update_if_status(self, task: AnalysisTask, *, expected: TaskStatus) -> bool:
+        """Atomically claim a status transition, including on SQLite."""
+        record = task_to_record(task)
+        result = self.session.execute(
+            update(AnalysisTaskORM)
+            .where(AnalysisTaskORM.task_id == task.task_id,
+                   AnalysisTaskORM.status == expected)
+            .values(
+                status=record.status, updated_at=record.updated_at,
+                error_code=record.error_code, error_message=record.error_message,
+                metadata_json=record.metadata_json,
+            )
+        )
+        self.session.flush()
+        return result.rowcount == 1
 
     def attach_dataset(
         self, *, task_id: UUID, dataset_id: UUID, position: int | None = None
@@ -359,6 +401,24 @@ class TaskEventRepository:
             return [record_to_event(event_orm_to_record(row)) for row in rows]
         except LookupError as exc:
             raise PersistenceMappingError("Invalid event field in persistence record") from exc
+
+    def page_for_task(self, task_id: UUID, *, offset: int, limit: int) -> tuple[list[TaskEvent], int]:
+        total = int(self.session.scalar(
+            select(func.count()).select_from(TaskEventORM).where(TaskEventORM.task_id == task_id)
+        ) or 0)
+        rows = self.session.scalars(
+            select(TaskEventORM).where(TaskEventORM.task_id == task_id)
+            .order_by(TaskEventORM.occurred_at, TaskEventORM.event_id)
+            .offset(offset).limit(limit)
+        ).all()
+        return [record_to_event(event_orm_to_record(row)) for row in rows], total
+
+    def latest_occurred_at(self, task_id: UUID):
+        return self.session.scalar(
+            select(func.max(TaskEventORM.occurred_at)).where(
+                TaskEventORM.task_id == task_id
+            )
+        )
 
 
 class ToolCallRepository:

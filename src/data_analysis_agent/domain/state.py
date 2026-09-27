@@ -15,6 +15,7 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     ),
     TaskStatus.RUNNING: frozenset(
         {
+            TaskStatus.QUEUED,
             TaskStatus.EXPLORING,
             TaskStatus.CLEANING,
             TaskStatus.ANALYZING,
@@ -26,6 +27,7 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     ),
     TaskStatus.EXPLORING: frozenset(
         {
+            TaskStatus.QUEUED,
             TaskStatus.CLEANING,
             TaskStatus.ANALYZING,
             TaskStatus.VALIDATING,
@@ -35,6 +37,7 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     ),
     TaskStatus.CLEANING: frozenset(
         {
+            TaskStatus.QUEUED,
             TaskStatus.ANALYZING,
             TaskStatus.VALIDATING,
             TaskStatus.FAILED,
@@ -43,6 +46,7 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     ),
     TaskStatus.ANALYZING: frozenset(
         {
+            TaskStatus.QUEUED,
             TaskStatus.EXPLORING,
             TaskStatus.CLEANING,
             TaskStatus.VALIDATING,
@@ -52,6 +56,7 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     ),
     TaskStatus.VALIDATING: frozenset(
         {
+            TaskStatus.QUEUED,
             TaskStatus.ANALYZING,
             TaskStatus.REPORTING,
             TaskStatus.FAILED,
@@ -59,10 +64,14 @@ LEGAL_STATUS_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
         }
     ),
     TaskStatus.REPORTING: frozenset(
-        {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        {
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }
     ),
     TaskStatus.COMPLETED: frozenset(),
-    TaskStatus.FAILED: frozenset(),
+    TaskStatus.FAILED: frozenset({TaskStatus.QUEUED}),
     TaskStatus.CANCELLED: frozenset(),
 }
 
