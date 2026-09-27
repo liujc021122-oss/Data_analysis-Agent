@@ -75,6 +75,10 @@ def test_response_uses_the_domain_task_status_enum_and_is_not_a_domain_model():
     assert response.status is TaskStatus.REPORTING
     assert json.loads(response.model_dump_json())["status"] == "REPORTING"
     assert response.artifacts[0].download_url == "local-download://opaque-token"
+    public_payload = response.model_dump(mode="json")
+    assert "file_path" not in public_payload["artifacts"][0]
+    assert "source_uri" not in public_payload["artifacts"][0]
+    assert "storage_uri" not in public_payload["artifacts"][0]
     assert response.__class__.__name__ == "AnalysisTaskResponse"
 
 
