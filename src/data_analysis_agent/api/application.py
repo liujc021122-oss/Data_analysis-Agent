@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
-
+from typing import TYPE_CHECKING
 from ..config.settings import Settings, load_settings
+from ..datasets import DatasetCatalogService, DatasetUploadService
 from ..persistence.database import Database
 from ..persistence.unit_of_work import UnitOfWork
-from ..datasets import CsvInspector, DatasetCatalogService, DatasetUploadService, UnitOfWorkDatasetStore
+from ..datasets import CsvInspector, UnitOfWorkDatasetStore
 from ..storage.factory import build_storage
 from ..storage import Storage
+
+if TYPE_CHECKING:
+    from ..services.persistence import TaskPersistenceService
+    from ..storage import FileAccessService
+    from ..worker import TaskSubmissionService
 from .auth import PrincipalProvider
 
 
@@ -17,13 +22,13 @@ class APIApplication:
     """Dependencies shared by API routes for one application instance."""
 
     settings: Settings = field(default_factory=load_settings)
-    database: Any = None
+    database: Database | None = None
     storage: Storage | None = None
-    dataset_upload: Any = None
-    dataset_catalog: Any = None
-    task_persistence: Any = None
-    task_submission: Any = None
-    file_access: Any = None
+    dataset_upload: DatasetUploadService | None = None
+    dataset_catalog: DatasetCatalogService | None = None
+    task_persistence: TaskPersistenceService | None = None
+    task_submission: TaskSubmissionService | None = None
+    file_access: FileAccessService | None = None
     principal_provider: PrincipalProvider | None = None
 
     @classmethod

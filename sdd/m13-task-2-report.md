@@ -57,3 +57,16 @@ Verification after the review fix:
 - Exported `create_app` from `data_analysis_agent.api` as the public factory entry point.
 - Added coverage for overlong request IDs being replaced and for the public factory export.
 - Review service attempts returned HTTP 429 twice; a targeted manual review confirmed the factory has no direct Agent, LLM, executor, or external-service calls. Focused verification after the follow-up: 16 passed, compileall passed, and `git diff --check` passed.
+
+## Review fixes
+
+- Production now rejects `HeaderPrincipalProvider`, including subclasses.
+- Request validation details use a fixed public message and never echo submitted values or raw Pydantic context.
+- API application service fields use explicit database, storage, service, and provider types instead of `Any`.
+- Added focused coverage for all three review findings.
+
+Verification:
+
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_app.py tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 20 passed.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest -q` — 864 passed, 1 skipped.
+- `git diff --check` — passed.

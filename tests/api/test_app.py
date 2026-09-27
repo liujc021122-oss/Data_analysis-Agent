@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from data_analysis_agent.api.app import create_app
 from data_analysis_agent.api.application import APIApplication
 from data_analysis_agent.api.auth import HeaderPrincipalProvider
+from data_analysis_agent.api.auth import PrincipalProvider
 from data_analysis_agent.config.settings import ConfigurationError, load_settings
 
 
@@ -57,3 +58,37 @@ def test_production_requires_explicit_principal_provider(fake_application):
     ), principal_provider=None)
     with pytest.raises(ConfigurationError, match="authentication provider"):
         create_app(production)
+
+
+def test_production_rejects_header_principal_provider(fake_application):
+    production = replace(fake_application, settings=load_settings(
+        app_env="production",
+        environ={
+            "APP_ENV": "production", "OPENAI_API_KEY": "key",
+            "OPENAI_BASE_URL": "https://api.example", "OPENAI_MODEL": "model",
+            "DATABASE_URL": "mysql+pymysql://u:p@localhost/db",
+            "STORAGE_ENDPOINT": "http://storage", "STORAGE_BUCKET": "bucket",
+        },
+    ), principal_provider=HeaderPrincipalProvider())
+    with pytest.raises(ConfigurationError, match="non-header"):
+        create_app(production)
+
+
+def test_validation_errors_do_not_echo_submitted_values(fake_application):
+    client = TestClient(create_app(fake_application))
+    response = client.post(
+        "/api/datasets",
+        data={"sensitive": "SECRET_VALUE"},
+        headers={"X-Request-ID": "validation-test", "X-User-ID": "00000000-0000-0000-0000-000000000001"},
+    )
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["details"]["errors"][0]["msg"] == "invalid request"
+    assert "SECRET_VALUE" not in response.text
+
+
+def test_api_application_service_annotations_are_explicit():
+    annotations = APIApplication.__annotations__
+    assert annotations["database"] != "Any"
+    for name in ("dataset_upload", "dataset_catalog", "task_persistence", "task_submission", "file_access"):
+        assert annotations[name] != "Any"

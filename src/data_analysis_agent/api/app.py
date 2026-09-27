@@ -43,8 +43,11 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
     application = container or APIApplication.from_settings(load_settings())
     if application.settings.app_env in {"development", "test"} and application.principal_provider is None:
         application.principal_provider = HeaderPrincipalProvider()
-    if application.settings.app_env == "production" and application.principal_provider is None:
-        raise ConfigurationError("production requires an explicit authentication provider")
+    if application.settings.app_env == "production" and (
+        application.principal_provider is None
+        or isinstance(application.principal_provider, HeaderPrincipalProvider)
+    ):
+        raise ConfigurationError("production requires an explicit non-header authentication provider")
     if application.settings.app_env == "production" and (
         application.database is None or application.storage is None
     ):
@@ -61,7 +64,7 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
     async def validation_handler(request: Request, exc: RequestValidationError):
         details = {
             "errors": [
-                {"loc": list(error.get("loc", ())), "msg": error.get("msg", "invalid request"), "type": error.get("type", "")}
+                {"loc": list(error.get("loc", ())), "msg": "invalid request", "type": error.get("type", "")}
                 for error in exc.errors()
             ]
         }
