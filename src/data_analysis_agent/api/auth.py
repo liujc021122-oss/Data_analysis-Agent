@@ -1,8 +1,17 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
 from fastapi import Request
+
+
+def get_current_principal(request: Request) -> Principal:
+    provider = getattr(request.app.state.api_application, "principal_provider", None)
+    if provider is None:
+        raise AuthenticationError("authentication is required")
+    return provider.current_principal(request)
 
 
 class AuthenticationError(ValueError):

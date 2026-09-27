@@ -16,6 +16,8 @@ from .schemas import (
     ArtifactDownloadResponse,
 )
 from .auth import AuthenticationError, HeaderPrincipalProvider, Principal, PrincipalProvider
+from .auth import get_current_principal
+from .application import APIApplication
 from .pagination import Page, PageResponse, PaginationParams
 
 # AnalysisTaskCreateRequest includes the idempotency contract used by the
@@ -44,4 +46,6 @@ __all__ = [
     "Page",
     "PageResponse",
     "PaginationParams",
+    "APIApplication",
+    "get_current_principal",
 ]
