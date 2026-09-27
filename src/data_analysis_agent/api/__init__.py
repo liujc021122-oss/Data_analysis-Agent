@@ -1,13 +1,22 @@
 from .schemas import (
     APIModel,
+    AnalysisTaskSubmissionResponse,
     AnalysisTaskCreateRequest,
     AnalysisTaskResponse,
     ArtifactResponse,
     DatasetUploadResponse,
     ErrorResponse,
     ExecutionResultResponse,
+    TaskSubmissionResponse,
     TaskEventResponse,
+    DatasetResponse,
+    DatasetListResponse,
+    TaskListResponse,
+    TaskEventListResponse,
+    ArtifactDownloadResponse,
 )
+from .auth import AuthenticationError, HeaderPrincipalProvider, Principal, PrincipalProvider
+from .pagination import Page, PageResponse, PaginationParams
 
 # AnalysisTaskCreateRequest includes the idempotency contract used by the
 # persistence service; keep it available from the public API package.
@@ -20,5 +29,19 @@ __all__ = [
     "DatasetUploadResponse",
     "ErrorResponse",
     "ExecutionResultResponse",
+    "TaskSubmissionResponse",
+    "AnalysisTaskSubmissionResponse",
     "TaskEventResponse",
+    "DatasetResponse",
+    "DatasetListResponse",
+    "TaskListResponse",
+    "TaskEventListResponse",
+    "ArtifactDownloadResponse",
+    "AuthenticationError",
+    "HeaderPrincipalProvider",
+    "Principal",
+    "PrincipalProvider",
+    "Page",
+    "PageResponse",
+    "PaginationParams",
 ]

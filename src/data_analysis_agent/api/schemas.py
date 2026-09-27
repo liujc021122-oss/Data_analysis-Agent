@@ -14,6 +14,7 @@ from pydantic import (
 
 from ..domain.enums import ReportFormat, TaskEventType, TaskStatus
 from ..datasets.models import DatasetProfile
+from .pagination import PageResponse
 
 
 def _utc_now() -> datetime:
@@ -46,6 +47,9 @@ class ErrorResponse(APIModel):
     code: StrictStr
     message: StrictStr
     details: dict[str, Any] = Field(default_factory=dict)
+    # Existing callers may construct this DTO before an HTTP request exists;
+    # application handlers always populate the request ID.
+    request_id: StrictStr = ""
 
 
 class ArtifactResponse(APIModel):
@@ -76,6 +80,16 @@ class AnalysisTaskResponse(APIModel):
     _validate_query = field_validator("query")(_nonblank)
 
 
+class TaskSubmissionResponse(APIModel):
+    task_id: UUID
+    status: TaskStatus
+    created: StrictBool
+    enqueued: StrictBool
+
+
+AnalysisTaskSubmissionResponse = TaskSubmissionResponse
+
+
 class TaskEventResponse(APIModel):
     event_id: UUID = Field(default_factory=uuid4)
     task_id: UUID
@@ -98,3 +112,31 @@ class ExecutionResultResponse(APIModel):
 class DatasetUploadResponse(APIModel):
     dataset_id: UUID
     profile: DatasetProfile
+
+
+class DatasetResponse(APIModel):
+    dataset_id: UUID
+    name: StrictStr
+    content_type: StrictStr
+    size_bytes: StrictInt = Field(ge=0)
+    checksum: StrictStr | None = None
+    created_at: datetime
+    profile: DatasetProfile
+
+
+class DatasetListResponse(PageResponse[DatasetResponse]):
+    pass
+
+
+class TaskListResponse(PageResponse[AnalysisTaskResponse]):
+    pass
+
+
+class TaskEventListResponse(PageResponse[TaskEventResponse]):
+    pass
+
+
+class ArtifactDownloadResponse(APIModel):
+    artifact_id: UUID
+    download_url: StrictStr
+    expires_in: StrictInt = Field(gt=0)
