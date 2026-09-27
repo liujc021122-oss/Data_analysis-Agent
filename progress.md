@@ -77,11 +77,12 @@
 - M12 聚焦验证：Worker/配置/数据库/状态/Agent 回归通过；最终全量 `E:\anaconda\python.exe -m pytest -q`、compileall 和 diff check 已纳入收尾验证。
 - M12 最终验证：`E:\anaconda\python.exe -m pytest -q` 为 `850 passed, 3 skipped, 18 warnings`；editable 安装、`compileall -q src`、SQLite `alembic upgrade head`、Worker 模块帮助和 `git diff --check` 均退出码 0。
 
-## 2026-09-27: M13 收尾复核
+## 2026-09-27: M13 收尾复核与交付
 
-- 当前工作树包含 M13 API/Worker/存储实现及其未提交测试改动；复核发现 3 个待修复问题：PENDING/QUEUED 入队崩溃窗口、开发环境没有真实消费者、本地 Artifact 下载 URL 缺少 HTTP 解析端点。
+- 收尾复核阶段发现 3 个待修复问题：PENDING/QUEUED 入队崩溃窗口、开发环境没有真实消费者、本地 Artifact 下载 URL 缺少 HTTP 解析端点。
 - 本轮按 TDD 和系统化调试处理：先复现并记录失败，再逐个修复，最后重新执行完整验证。
 - M13 修复阶段 1-2：新增 PENDING/QUEUED 崩溃窗口回归测试；stale recovery 现在覆盖 PENDING、QUEUED、RUNNING，并在发布前刷新任务时间；聚焦恢复测试 3 passed。
 - M13 修复阶段 3：development 配置 `REDIS_URL` 时选择 Celery broker，无 Redis 时保留 InMemory broker；README 已补充 API、Redis、Worker 启动关系。
 - M13 修复阶段 4：新增受保护的本地 Artifact `/content` HTTP 端点和 `content_url` 字段，复核 owner、签名、过期、大小、哈希和路径匹配；Worker/API 局部回归 59 passed，安全补充回归 22 passed。
-- M13 最终验证完成：全量 `pytest -q` 为 `901 passed, 1 skipped`；`compileall`、editable install、重复 Alembic upgrade、Worker help 和 `git diff --check` 均通过。验证用 SQLite 文件留在 Git 忽略的 `outputs/` 下，清理命令被执行策略拒绝，未影响源码或测试。
+- M13 最终验证完成：全量 `pytest -q` 为 `901 passed, 1 skipped`；`compileall`、editable install、重复 Alembic upgrade、Worker help 和 `git diff --check` 均通过。验证用 SQLite 文件留在 Git 忽略的 `outputs/` 下，未影响源码或测试。
+- 最终集成提交为 `b9ab562 feat: finalize M12 worker and M13 API integration`，已通过 fast-forward 合并到 `main`。M13 Task 5/6 报告、进度记录和启动文档已纳入该提交；预存的 `sdd/task-3-review.md` 未纳入提交。

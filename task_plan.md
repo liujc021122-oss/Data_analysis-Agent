@@ -133,6 +133,7 @@ Authoritative findings: `sdd/final-review.md` (7 Important, 2 Minor). PDF remain
 - 聚焦 Worker/API/配置回归：`59 passed`；安全补充回归：`22 passed`。
 - 全量验证：`901 passed, 1 skipped`；唯一 skip 是当前环境不支持 symlink 的既有执行器测试。
 - `compileall -q src`、editable install、重复 `alembic upgrade head`、Worker `--help` 和 `git diff --check` 均退出码 0。
+- 最终集成提交：`b9ab562 feat: finalize M12 worker and M13 API integration`，已 fast-forward 合并至 `main`；合并后主分支复验仍为 `901 passed, 1 skipped`。
 
 ### M12 Verification Notes
 
