@@ -12,6 +12,7 @@ from ..storage import Storage, dataset_key, normalize_filename
 from ..storage.errors import StorageError as CanonicalStorageError
 from ..storage.errors import StorageErrorCode as CanonicalStorageErrorCode
 from .errors import (
+    DatasetAccessDeniedError,
     DatasetErrorCode,
     DatasetPersistenceError,
     StorageError,
@@ -80,10 +81,21 @@ class DatasetCatalogService:
     def delete_for_user(self, user_id: UUID, dataset_id: UUID) -> None:
         record = self.get_for_user(user_id, dataset_id)
         self._storage.delete(record.source_uri)
-        with self._uow_factory() as uow:
-            if not uow.datasets.delete_for_user(dataset_id, user_id):
-                raise DatasetAccessDeniedError(DatasetErrorCode.DATASET_ACCESS_DENIED, "dataset is not available")
-            uow.commit()
+        try:
+            with self._uow_factory() as uow:
+                if not uow.datasets.delete_for_user(dataset_id, user_id):
+                    raise DatasetAccessDeniedError(
+                        DatasetErrorCode.DATASET_ACCESS_DENIED,
+                        "dataset is not available",
+                    )
+                uow.commit()
+        except TransactionError as exc:
+            # The object was removed; retained metadata identifies the mismatch.
+            raise DatasetPersistenceError(
+                DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
+                "unable to delete dataset metadata; reconciliation is required",
+                details={"reconciliation_required": True},
+            ) from exc
 
 
 class InMemoryDatasetStore:
