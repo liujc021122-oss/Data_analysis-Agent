@@ -33,6 +33,13 @@
 
 The default application factory creates a dependency container with development settings and no database-backed services; later API tasks replace these fields with configured service implementations. Route modules are intentionally empty until their corresponding tasks.
 
+## Review follow-up
+
+- Development and test containers now receive `HeaderPrincipalProvider` automatically when no provider is supplied, while production still requires explicit authentication configuration.
+- Added a test for the default test application authentication provider.
+- `pytest tests/api/test_app.py tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 17 passed in 7.15s.
+- `git diff --check` — passed.
+
 ## Review fix
 
 - Added `APIApplication.from_settings` to build the configured database when a URL is present and select the environment storage backend.
