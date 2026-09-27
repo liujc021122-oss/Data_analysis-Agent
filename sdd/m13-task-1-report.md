@@ -21,6 +21,17 @@ GREEN:
 - `python -m compileall -q src` — passed.
 - `git diff --check` — passed.
 
+## Final metadata scope fix
+
+- Limited recursive path-key filtering to public response DTOs so request metadata is preserved.
+- Added tuple and request-metadata coverage alongside the nested response serialization checks.
+
+Verification:
+
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 12 passed in 6.97s.
+- `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest -q` — 861 passed, 1 skipped in 67.85s.
+- `git diff --check` — passed.
+
 ## Final metadata boundary fix
 
 - Added recursive public metadata sanitization for dictionaries, lists, and tuples.
@@ -32,7 +43,6 @@ Verification:
 - `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest tests/api/test_api_foundation.py tests/api/test_schemas.py -q` — 12 passed in 7.01s.
 - `E:\桌面\data_analysis_agent-main\data_analysis_agent-main\.venv\Scripts\python.exe -m pytest -q` — 859 passed, 1 skipped in 67.33s.
 - `git diff --check` — passed.
-- `python -m pytest -q` — 855 passed, 1 skipped (environmental symlink skip).
 
 ## Files changed
 
@@ -45,10 +55,11 @@ Verification:
 - `src/data_analysis_agent/api/schemas.py`
 - `src/data_analysis_agent/api/__init__.py`
 - `tests/api/test_api_foundation.py`
+- `tests/api/test_schemas.py`
 
 ## Self-review and concerns
 
-The existing schema tests construct `ErrorResponse` without a request ID, so the field has a compatibility default. HTTP application handlers must populate it for every response in Task 2. Existing M12 changes in shared files remain in the worktree and were preserved.
+HTTP application handlers must populate the required request ID for every error response in Task 2. Existing M12 changes in shared files remain in the worktree and were preserved.
 
 ## Review fix
 

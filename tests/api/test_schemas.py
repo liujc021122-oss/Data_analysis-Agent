@@ -84,6 +84,11 @@ def test_response_uses_the_domain_task_status_enum_and_is_not_a_domain_model():
 
 def test_public_metadata_recursively_filters_storage_paths():
     task_id = uuid4()
+    request = AnalysisTaskCreateRequest(
+        query="分析销售数据",
+        idempotency_key="metadata-contract",
+        metadata={"file_path": "keep-in-request"},
+    )
     response = AnalysisTaskResponse(
         task_id=task_id,
         query="分析销售数据",
@@ -100,6 +105,9 @@ def test_public_metadata_recursively_filters_storage_paths():
                     {"storage_uri": "local://private/report.md", "value": 4},
                 ],
             },
+            "tuple_values": (
+                {"file_path": "C:/private/tuple.png", "kept": True},
+            ),
         },
         artifacts=(
             ArtifactResponse(
@@ -132,6 +140,8 @@ def test_public_metadata_recursively_filters_storage_paths():
     assert payload["task"]["metadata"]["nested"]["label"] == "kept"
     assert payload["task"]["artifacts"][0]["metadata"]["details"]["ok"] is True
     assert payload["event"]["metadata"]["nested"]["stage"] == "reporting"
+    assert payload["task"]["metadata"]["tuple_values"][0]["kept"] is True
+    assert request.model_dump()["metadata"]["file_path"] == "keep-in-request"
 
 
 def test_event_execution_and_error_dtos_are_json_serializable():

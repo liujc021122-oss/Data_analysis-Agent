@@ -49,6 +49,8 @@ def _sanitize_public_metadata(value: Any) -> Any:
 class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
+
+class PublicAPIModel(APIModel):
     _sanitize_metadata = field_validator(
         "metadata", mode="before", check_fields=False
     )(_sanitize_public_metadata)
@@ -72,7 +74,7 @@ class ErrorResponse(APIModel):
     request_id: StrictStr
 
 
-class ArtifactResponse(APIModel):
+class ArtifactResponse(PublicAPIModel):
     artifact_id: UUID = Field(default_factory=uuid4)
     artifact_type: StrictStr
     name: StrictStr
@@ -84,7 +86,7 @@ class ArtifactResponse(APIModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class AnalysisTaskResponse(APIModel):
+class AnalysisTaskResponse(PublicAPIModel):
     task_id: UUID
     query: StrictStr
     dataset_ids: tuple[UUID, ...] = ()
@@ -109,7 +111,7 @@ class TaskSubmissionResponse(APIModel):
 AnalysisTaskSubmissionResponse = TaskSubmissionResponse
 
 
-class TaskEventResponse(APIModel):
+class TaskEventResponse(PublicAPIModel):
     event_id: UUID = Field(default_factory=uuid4)
     task_id: UUID
     event_type: TaskEventType
