@@ -58,7 +58,12 @@ from ..datasets import (
 )
 from ..datasets.errors import UploadValidationError
 from ..persistence.models import ArtifactRecord, ReportRecord
-from ..storage import ArtifactStorageService, Storage, StorageLifecycleService
+from ..storage import (
+    ArtifactStorageService,
+    Storage,
+    StorageLifecycleService,
+    artifact_content_url,
+)
 from ..storage.errors import StorageError, StorageErrorCode
 from ..tools import ToolCallRequest, ToolCallResult, ToolContext, ToolExecutor, ToolRegistry
 from .llm_port import AgentLLMPort
@@ -1021,6 +1026,21 @@ class DataAnalysisAgent:
             self._record_storage_error(exc)
             return None
 
+    def _report_result_content_url(self, result: object | None) -> str | None:
+        if result is None:
+            return None
+        content_url = getattr(result, "content_url", None)
+        if content_url:
+            return str(content_url)
+        download_url = getattr(result, "download_url", None)
+        if not download_url:
+            download_url = self._report_result_download_url(result)
+        artifact = getattr(result, "artifact", None)
+        artifact_id = getattr(artifact, "artifact_id", None)
+        if not download_url or artifact_id is None:
+            return download_url
+        return artifact_content_url(artifact_id, download_url)
+
     @staticmethod
     def _report_result_payload(result: object) -> dict[str, Any]:
         model_dump = getattr(result, "model_dump", None)
@@ -1033,6 +1053,7 @@ class DataAnalysisAgent:
             "generated": bool(getattr(result, "generated", False)),
             "file_path": getattr(result, "file_path", None),
             "download_url": getattr(result, "download_url", None),
+            "content_url": getattr(result, "content_url", None),
             "artifact": (
                 artifact_dump(mode="json") if callable(artifact_dump) else artifact
             ),
@@ -1235,12 +1256,14 @@ class DataAnalysisAgent:
         final_report_content = bundle.markdown_content
         report_file_path = getattr(markdown_result, "file_path", None)
         report_download_url = self._report_result_download_url(markdown_result)
+        report_content_url = self._report_result_content_url(markdown_result)
         html_report_file_path = getattr(html_result, "file_path", None)
         html_report_generated = bool(
             getattr(html_result, "generated", False)
         )
         html_report_error = getattr(html_result, "error", None)
         html_report_download_url = self._report_result_download_url(html_result)
+        html_report_content_url = self._report_result_content_url(html_result)
 
         word_report_generated = bool(
             getattr(word_result, "generated", False)
@@ -1252,6 +1275,7 @@ class DataAnalysisAgent:
                 Path(self.session_output_dir) / "最终分析报告.docx"
             )
         word_report_download_url = self._report_result_download_url(word_result)
+        word_report_content_url = self._report_result_content_url(word_result)
 
         if report_file_path:
             print(f"📄 最终报告已保存至: {self._display_text(report_file_path)}")
@@ -1297,8 +1321,11 @@ class DataAnalysisAgent:
             'task_id': getattr(self, "task_id", None),
             'artifact_records': list(getattr(self, "artifact_records", [])),
             'report_download_url': report_download_url,
+            'report_content_url': report_content_url,
             'html_report_download_url': html_report_download_url,
+            'html_report_content_url': html_report_content_url,
             'word_report_download_url': word_report_download_url,
+            'word_report_content_url': word_report_content_url,
             'report_results': [
                 self._report_result_payload(result) for result in results
             ],

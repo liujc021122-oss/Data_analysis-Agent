@@ -256,8 +256,18 @@ class LegacyAnalysisAdapter:
                     "execution_audits", getattr(self.agent, "execution_audits", [])
                 ),
                 "report_download_url": report_output.get("report_download_url"),
+                "report_content_url": report_output.get("report_content_url"),
+                "html_report_download_url": report_output.get(
+                    "html_report_download_url"
+                ),
+                "html_report_content_url": report_output.get(
+                    "html_report_content_url"
+                ),
                 "word_report_download_url": report_output.get(
                     "word_report_download_url"
+                ),
+                "word_report_content_url": report_output.get(
+                    "word_report_content_url"
                 ),
                 "storage_error": report_output.get(
                     "storage_error", getattr(self.agent, "storage_error", None)

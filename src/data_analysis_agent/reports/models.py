@@ -35,6 +35,7 @@ class ReportFormatResult(DomainModel):
     generated: StrictBool = False
     file_path: StrictStr | None = None
     download_url: StrictStr | None = None
+    content_url: StrictStr | None = None
     artifact: ReportArtifact | None = None
     error: StrictStr | None = None
 

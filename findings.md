@@ -78,3 +78,8 @@
 - `TaskSubmissionService.submit()` 先提交任务状态再发布 broker 消息；进程若在两步之间退出，`PENDING` 或 `QUEUED` 任务不会被当前只扫描 `RUNNING` 的恢复逻辑补发。
 - 开发/测试应用默认使用 `InMemoryTaskBroker`；只启动 API 时没有消费者，配置 Redis 的开发环境应能切换到 Celery broker，并在 README 明确 API、Redis、Worker 的启动关系。
 - 本地 Artifact 下载 URL 当前为 `local-download://...`，但缺少把受保护令牌解析为 HTTP 文件响应的 API 端点；需要沿用 owner、签名、过期、文件大小和哈希校验。
+
+## M13 Post-delivery audit repair
+
+- 报告服务已经登记 Artifact，但旧兼容结果只暴露本地签名令牌；`ReportFormatResult.content_url` 和顶层兼容字段现在通过共享 URL helper 指向受保护的 Artifact 内容端点，同时保留 `*_download_url`。
+- development 无 Redis 时不再创建无消费者的内存 broker；任务 persistence 仍可用，提交/取消/重试通过 `TASK_BROKER_NOT_CONFIGURED` 明确报告缺少异步 broker。test 环境继续使用内存 broker。

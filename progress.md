@@ -86,3 +86,9 @@
 - M13 修复阶段 4：新增受保护的本地 Artifact `/content` HTTP 端点和 `content_url` 字段，复核 owner、签名、过期、大小、哈希和路径匹配；Worker/API 局部回归 59 passed，安全补充回归 22 passed。
 - M13 最终验证完成：全量 `pytest -q` 为 `901 passed, 1 skipped`；`compileall`、editable install、重复 Alembic upgrade、Worker help 和 `git diff --check` 均通过。验证用 SQLite 文件留在 Git 忽略的 `outputs/` 下，未影响源码或测试。
 - 最终集成提交为 `b9ab562 feat: finalize M12 worker and M13 API integration`，已通过 fast-forward 合并到 `main`。M13 Task 5/6 报告、进度记录和启动文档已纳入该提交；预存的 `sdd/task-3-review.md` 未纳入提交。
+
+## 2026-09-28: M13 Post-delivery Audit Repair
+
+- 按批准的推荐方案新增报告 `content_url`：`ReportFormatResult`、Agent 顶层兼容字段和 `report_results` 均保留旧 `*_download_url` 并提供对应内容地址；本地签名令牌统一映射到受保护 Artifact `/content` 端点。
+- development 未配置 Redis 时不再注入 `InMemoryTaskBroker`；任务 persistence 保留用于读取，提交/取消/重试返回 `TASK_BROKER_NOT_CONFIGURED`。test 环境仍使用内存 broker。
+- 目标回归 `35 passed`，专项回归 `188 passed`，全量回归 `904 passed, 1 skipped`；`compileall`、editable install、重复 Alembic upgrade、Worker help 和 `git diff --check` 均通过。

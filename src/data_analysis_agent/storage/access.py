@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import BinaryIO, TYPE_CHECKING
+from urllib.parse import urlencode
 from uuid import UUID
 
 from .artifacts import ArtifactRepository
@@ -17,6 +18,14 @@ class FileAccessDeniedError(Exception):
     def __init__(self, message: str = "file is not available for this user") -> None:
         self.message = message
         super().__init__(message)
+
+
+def artifact_content_url(artifact_id: UUID, download_url: str) -> str:
+    """Map local signed tokens to the protected API content endpoint."""
+    if download_url.startswith("local-download://"):
+        query = urlencode({"download_url": download_url})
+        return f"/api/artifacts/{artifact_id}/content?{query}"
+    return download_url
 
 
 class FileAccessService:

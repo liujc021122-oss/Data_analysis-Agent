@@ -44,15 +44,19 @@ class APIApplication:
     file_access: FileAccessService | None = None
     principal_provider: PrincipalProvider | None = None
 
-    def configure_task_services(self, broker: TaskBroker) -> None:
+    def configure_task_persistence(self) -> None:
         if self.database is None:
             raise ValueError("DATABASE_URL is required for task services")
         from ..services.persistence import TaskPersistenceService
-        from ..worker.service import TaskSubmissionService
 
         self.task_persistence = TaskPersistenceService(
             lambda: UnitOfWork(self.database.session_factory)
         )
+
+    def configure_task_services(self, broker: TaskBroker) -> None:
+        self.configure_task_persistence()
+        from ..worker.service import TaskSubmissionService
+
         self.task_submission = TaskSubmissionService(
             persistence=self.task_persistence, broker=broker
         )
@@ -83,8 +87,10 @@ class APIApplication:
             from ..worker.celery_app import build_celery_broker
 
             application.configure_task_services(build_celery_broker(settings))
-        elif settings.app_env in {"development", "test"}:
+        elif settings.app_env == "test":
             from ..worker.broker import InMemoryTaskBroker
 
             application.configure_task_services(InMemoryTaskBroker())
+        else:
+            application.configure_task_persistence()
         return application

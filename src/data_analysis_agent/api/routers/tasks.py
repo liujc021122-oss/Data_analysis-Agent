@@ -18,8 +18,14 @@ router = APIRouter(prefix="/analysis-tasks", tags=["analysis-tasks"])
 
 def _services(request: Request):
     application = request.app.state.api_application
-    if application.task_persistence is None or application.task_submission is None:
+    if application.task_persistence is None:
         raise APIError("TASK_SERVICE_UNAVAILABLE", "task service is unavailable", status_code=503)
+    if application.task_submission is None:
+        raise APIError(
+            "TASK_BROKER_NOT_CONFIGURED",
+            "task broker is not configured",
+            status_code=503,
+        )
     return application.task_persistence, application.task_submission
 
 

@@ -135,6 +135,15 @@ Authoritative findings: `sdd/final-review.md` (7 Important, 2 Minor). PDF remain
 - `compileall -q src`、editable install、重复 `alembic upgrade head`、Worker `--help` 和 `git diff --check` 均退出码 0。
 - 最终集成提交：`b9ab562 feat: finalize M12 worker and M13 API integration`，已 fast-forward 合并至 `main`；合并后主分支复验仍为 `901 passed, 1 skipped`。
 
+## M13 Post-delivery Audit Repair（2026-09-28）
+
+**状态：** 已完成
+
+1. [x] 为报告格式结果和旧兼容结果补充直接可访问的 `content_url`，保留原有 `*_download_url` 字段。
+2. [x] 让 development 无 Redis 时不注入内存 broker，并返回稳定的 `TASK_BROKER_NOT_CONFIGURED`；test 继续使用内存 broker。
+3. [x] 更新 API/报告文档、发现记录和 M13 收尾记录。
+4. [x] 完成目标回归、专项回归、全量测试、编译和 diff 检查。
+
 ### M12 Verification Notes
 
 - Worker 聚焦测试覆盖提交幂等、入队失败、取消、原子认领、阶段事件、可重试失败、重试耗尽、stale 恢复、活动执行器停止和 Celery payload；全程使用 SQLite 与 fake broker。

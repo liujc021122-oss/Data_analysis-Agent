@@ -407,8 +407,9 @@ python -m alembic -x db_url=sqlite:///./data_analysis_agent.sqlite3 upgrade head
 uvicorn data_analysis_agent.api.app:create_app --factory --reload
 ```
 
-development 环境的空 `REDIS_URL` 会使用内存 broker，适合 API 契约测试，但只启动 API
-不会有消费者处理任务。要运行完整的异步分析流程，请安装 Worker 依赖并配置 Redis：
+development 环境未配置 `REDIS_URL` 时不会注入内存 broker；API 仍可启动并提供非异步任务
+能力，但提交、取消或重试任务会返回稳定的 `TASK_BROKER_NOT_CONFIGURED` 配置错误。只有
+test 环境使用内存 broker 供离线契约测试。要运行完整的异步分析流程，请安装 Worker 依赖并配置 Redis：
 
 ```powershell
 pip install -e ".[dev,api,worker]"
@@ -456,8 +457,9 @@ STORAGE_RETENTION_DAYS=30
 ```
 
 生产环境还必须配置 `STORAGE_ENDPOINT` 和 `STORAGE_BUCKET`。前端或调用方应使用
-结果中的 `report_download_url`、`word_report_download_url` 或授权下载服务返回的
-临时 URL；不要把 `session_output_dir`、`report_file_path` 或其他本地绝对路径作为
+结果中的 `report_download_url`、`html_report_download_url`、`word_report_download_url`
+及对应的 `*_content_url` 或授权下载服务返回的临时 URL；不要把 `session_output_dir`、
+`report_file_path` 或其他本地绝对路径作为
 下载地址暴露给用户。旧的本地路径字段仍保留用于兼容已有脚本。
 
 失败任务的 staging 目录只会在配置的输出根目录内清理，且只删除当前任务的对象；

@@ -243,7 +243,44 @@ def test_service_keeps_storage_dependencies_separate_and_returns_download_url(
     ).generate(document, formats={ReportFormat.MARKDOWN})
 
     assert bundle.results[0].download_url == "download://report.md"
+    assert bundle.results[0].content_url == "download://report.md"
     assert storage.calls == ["memory://report.md"]
+
+
+def test_service_maps_local_download_token_to_protected_content_url(
+    tmp_path: Path,
+):
+    artifact_id = uuid4()
+
+    class FakeArtifactStorage:
+        def store_report(self, **kwargs):
+            return ReportArtifact(
+                artifact_id=artifact_id,
+                format=ReportFormat.MARKDOWN,
+                file_path="local://tasks/report.md",
+            )
+
+    class FakeStorage:
+        def create_download_url(self, uri: str, *, expires_in: int = 300) -> str:
+            assert uri == "local://tasks/report.md"
+            return "local-download://opaque-token"
+
+    document = ReportDocument(
+        task_id=uuid4(), output_root=str(tmp_path), narrative_markdown="# 报告"
+    )
+
+    bundle = ReportService(
+        allowed_output_root=tmp_path,
+        artifact_storage=FakeArtifactStorage(),
+        storage=FakeStorage(),
+    ).generate(document, formats={ReportFormat.MARKDOWN})
+
+    result = bundle.results[0]
+    assert result.download_url == "local-download://opaque-token"
+    assert result.content_url == (
+        f"/api/artifacts/{artifact_id}/content?"
+        "download_url=local-download%3A%2F%2Fopaque-token"
+    )
 
 
 def test_service_does_not_treat_storage_as_artifact_registry(tmp_path: Path):

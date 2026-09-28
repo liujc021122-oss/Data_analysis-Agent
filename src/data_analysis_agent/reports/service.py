@@ -17,6 +17,7 @@ from data_analysis_agent.domain.models import (
     ReportArtifact,
 )
 from data_analysis_agent.services.errors import sanitize_exception
+from data_analysis_agent.storage import artifact_content_url
 
 from .html import HtmlReportRenderer
 from .models import ReportBundle, ReportDocument, ReportFormatResult
@@ -170,6 +171,7 @@ class ReportService:
     ) -> ReportFormatResult:
         artifact = None
         download_url = None
+        content_url = None
         if self.artifact_storage is not None:
             try:
                 stored = self.artifact_storage.store_report(
@@ -184,6 +186,9 @@ class ReportService:
                 if artifact is not None and self.storage is not None:
                     storage_uri = artifact.file_path
                     download_url = self.storage.create_download_url(storage_uri)
+                    content_url = artifact_content_url(
+                        artifact.artifact_id, download_url
+                    )
             except Exception as exc:
                 storage_errors.append(self._safe_error(exc))
         return ReportFormatResult(
@@ -191,6 +196,7 @@ class ReportService:
             generated=True,
             file_path=str(target),
             download_url=download_url,
+            content_url=content_url,
             artifact=artifact,
         )
 

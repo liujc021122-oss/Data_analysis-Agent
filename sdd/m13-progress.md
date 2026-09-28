@@ -15,7 +15,12 @@
   - Added complete OpenAPI path assertions, anonymous error-contract coverage, and public API export coverage.
   - Documented API installation/startup, local SQLite migration, development identity, production JWT/OIDC boundaries, upload, task submission, and API documentation endpoints.
   - Fixed README migration instructions to pass an explicit Alembic `db_url`; Alembic does not load `.env` automatically.
-  - Added the local protected Artifact `/content` endpoint and `content_url` contract during final integration review.
+- Added the local protected Artifact `/content` endpoint and `content_url` contract during final integration review.
+
+## Post-delivery audit repair (2026-09-28)
+
+- Fixed the remaining report compatibility gap: each `ReportFormatResult` and the legacy Agent result now expose a direct `content_url` alongside the preserved `*_download_url` fields. Local signed tokens map to the protected Artifact `/content` endpoint; provider URLs remain unchanged.
+- Fixed development startup without Redis: no `InMemoryTaskBroker` is injected, persistence remains available for inspection, and task submission/cancel/retry routes return `TASK_BROKER_NOT_CONFIGURED`. Test startup still injects `InMemoryTaskBroker`.
 
 ## Final Verification
 

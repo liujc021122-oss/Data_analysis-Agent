@@ -32,7 +32,7 @@ class Storage(Protocol):
         ...
 
 
-from .access import FileAccessDeniedError, FileAccessService
+from .access import FileAccessDeniedError, FileAccessService, artifact_content_url
 from .artifacts import ArtifactStorageService
 from .lifecycle import StorageConsistencyIssue, StorageLifecycleService
 
@@ -45,6 +45,7 @@ __all__ = [
     "ArtifactStorageService",
     "FileAccessDeniedError",
     "FileAccessService",
+    "artifact_content_url",
     "StorageConsistencyIssue",
     "StorageLifecycleService",
     "dataset_key",

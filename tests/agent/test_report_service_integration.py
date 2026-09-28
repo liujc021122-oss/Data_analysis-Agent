@@ -54,6 +54,7 @@ def test_agent_delegates_formats_to_report_service_and_keeps_legacy_fields(tmp_p
                         generated=True,
                         file_path=str(tmp_path / "最终分析报告.md"),
                         download_url="download://report.md",
+                        content_url="/api/artifacts/markdown/content",
                         artifact=markdown_artifact,
                         error=None,
                     ),
@@ -62,6 +63,7 @@ def test_agent_delegates_formats_to_report_service_and_keeps_legacy_fields(tmp_p
                         generated=True,
                         file_path=str(tmp_path / "最终分析报告.html"),
                         download_url="download://report.html",
+                        content_url="/api/artifacts/html/content",
                         artifact=html_artifact,
                         error=None,
                     ),
@@ -83,11 +85,14 @@ def test_agent_delegates_formats_to_report_service_and_keeps_legacy_fields(tmp_p
     assert result["final_report"] == "# 报告"
     assert result["report_file_path"] == str(tmp_path / "最终分析报告.md")
     assert result["report_download_url"] == "download://report.md"
+    assert result["report_content_url"] == "/api/artifacts/markdown/content"
     assert result["html_report_file_path"] == str(tmp_path / "最终分析报告.html")
     assert result["html_report_generated"] is True
     assert result["html_report_error"] is None
     assert result["html_report_download_url"] == "download://report.html"
+    assert result["html_report_content_url"] == "/api/artifacts/html/content"
     assert len(result["report_results"]) == 2
+    assert result["report_results"][0]["content_url"] == "/api/artifacts/markdown/content"
     assert len(result["report_artifacts"]) == 2
 
 

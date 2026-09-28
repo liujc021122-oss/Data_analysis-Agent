@@ -1,5 +1,5 @@
 from uuid import UUID
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from ...persistence.errors import PersistenceError
 from ...persistence.models import ArtifactRecord
 from ...persistence.unit_of_work import UnitOfWork
-from ...storage import FileAccessDeniedError
+from ...storage import FileAccessDeniedError, artifact_content_url
 from ..application import APIApplication
 from ..auth import Principal, get_current_principal
 from ..errors import APIError
@@ -59,10 +59,7 @@ def _record_and_url(
 
 
 def _content_url(artifact_id: UUID, download_url: str) -> str:
-    if download_url.startswith("local-download://"):
-        query = urlencode({"download_url": download_url})
-        return f"/api/artifacts/{artifact_id}/content?{query}"
-    return download_url
+    return artifact_content_url(artifact_id, download_url)
 
 
 @router.get("/{artifact_id}", response_model=ArtifactResponse)

@@ -7,6 +7,7 @@ from data_analysis_agent.api.application import APIApplication
 from data_analysis_agent.api.auth import HeaderPrincipalProvider
 from data_analysis_agent.api.auth import PrincipalProvider
 from data_analysis_agent.config.settings import ConfigurationError, load_settings
+from data_analysis_agent.persistence.database import init_database
 from data_analysis_agent.worker.broker import InMemoryTaskBroker
 
 
@@ -92,6 +93,46 @@ def test_development_uses_celery_broker_when_redis_is_configured(monkeypatch, tm
 
     assert application.task_submission.broker is broker
     assert not isinstance(application.task_submission.broker, InMemoryTaskBroker)
+
+
+def test_development_without_redis_rejects_async_submission_with_configuration_error(tmp_path):
+    settings = load_settings(
+        app_env="development",
+        environ={
+            "APP_ENV": "development",
+            "DATABASE_URL": f"sqlite:///{tmp_path / 'development.sqlite3'}",
+            "STORAGE_LOCAL_ROOT": str(tmp_path / "objects"),
+        },
+    )
+    application = APIApplication.from_settings(settings)
+    init_database(application.database.engine)
+    try:
+        assert application.task_submission is None
+        response = TestClient(
+            create_app(application),
+            headers={"X-User-ID": "00000000-0000-0000-0000-000000000001"},
+        ).post(
+            "/api/analysis-tasks",
+            json={"query": "分析销售", "idempotency_key": "development-key"},
+        )
+        assert response.status_code == 503
+        assert response.json()["code"] == "TASK_BROKER_NOT_CONFIGURED"
+    finally:
+        application.database.engine.dispose()
+
+
+def test_test_application_keeps_in_memory_task_broker(tmp_path):
+    settings = load_settings(
+        app_env="test",
+        environ={
+            "APP_ENV": "test",
+            "DATABASE_URL": f"sqlite:///{tmp_path / 'test.sqlite3'}",
+            "STORAGE_LOCAL_ROOT": str(tmp_path / "objects"),
+        },
+    )
+    application = APIApplication.from_settings(settings)
+
+    assert isinstance(application.task_submission.broker, InMemoryTaskBroker)
 
 
 def test_production_requires_explicit_principal_provider(fake_application):
