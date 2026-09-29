@@ -2,6 +2,7 @@ from dataclasses import dataclass, field, fields
 import logging
 import math
 import os
+import re
 from pathlib import Path
 from typing import Dict, Literal, Mapping, Optional
 
@@ -23,6 +24,8 @@ DEFAULT_MAX_UPLOAD_SIZE = 104857600
 DEFAULT_WORKER_MAX_RETRIES = 3
 DEFAULT_WORKER_RETRY_BACKOFF_SECONDS = 5.0
 DEFAULT_WORKER_STALE_AFTER_SECONDS = 1800
+DEFAULT_SESSION_TTL_SECONDS = 86400
+DEFAULT_SESSION_COOKIE_NAME = "daa_session"
 LOGGER_NAME = "data_analysis_agent"
 
 
@@ -63,6 +66,10 @@ class Settings:
     worker_max_retries: int = DEFAULT_WORKER_MAX_RETRIES
     worker_retry_backoff_seconds: float = DEFAULT_WORKER_RETRY_BACKOFF_SECONDS
     worker_stale_after_seconds: int = DEFAULT_WORKER_STALE_AFTER_SECONDS
+    session_ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS
+    session_cookie_name: str = DEFAULT_SESSION_COOKIE_NAME
+    session_cookie_secure: bool = False
+    auth_admin_emails: tuple[str, ...] = ()
 
     def llm_config(self) -> LLMConfig:
         return LLMConfig(
@@ -133,6 +140,37 @@ def _nonnegative_float(
     if not math.isfinite(parsed) or parsed < 0:
         raise ConfigurationError(f"{key} must be a non-negative number")
     return parsed
+
+
+def _strict_bool(values: Mapping[str, str], key: str, default: bool) -> bool:
+    raw_value = values.get(key)
+    if raw_value is None or not str(raw_value).strip():
+        return default
+    normalized = str(raw_value).strip().lower()
+    if normalized not in {"true", "false"}:
+        raise ConfigurationError(f"{key} must be true or false")
+    return normalized == "true"
+
+
+def _cookie_name(values: Mapping[str, str]) -> str:
+    value = _nonblank(
+        values.get("AUTH_SESSION_COOKIE_NAME", DEFAULT_SESSION_COOKIE_NAME)
+    )
+    if value is None or not re.fullmatch(r"[A-Za-z0-9_-]+", str(value)):
+        raise ConfigurationError(
+            "AUTH_SESSION_COOKIE_NAME must be a nonblank ASCII token"
+        )
+    return str(value)
+
+
+def _admin_emails(values: Mapping[str, str]) -> tuple[str, ...]:
+    raw = _nonblank(values.get("AUTH_ADMIN_EMAILS"))
+    if raw is None:
+        return ()
+    emails = tuple(item.strip().lower() for item in str(raw).split(","))
+    if any(not item or item.count("@") != 1 for item in emails):
+        raise ConfigurationError("AUTH_ADMIN_EMAILS must contain valid emails")
+    return emails
 
 
 def _validate_production_database_url(database_url: str) -> None:
@@ -224,6 +262,15 @@ def load_settings(
         raise ConfigurationError(
             "EXECUTION_NETWORK_MODE must be one of none or bridge"
         )
+    session_cookie_secure = _strict_bool(
+        values,
+        "AUTH_SESSION_COOKIE_SECURE",
+        environment == "production",
+    )
+    if environment == "production" and not session_cookie_secure:
+        raise ConfigurationError(
+            "AUTH_SESSION_COOKIE_SECURE must be true in production"
+        )
     settings = Settings(
         app_env=environment,
         database_url=_nonblank(values.get("DATABASE_URL")),
@@ -273,6 +320,12 @@ def load_settings(
             "WORKER_STALE_AFTER_SECONDS",
             DEFAULT_WORKER_STALE_AFTER_SECONDS,
         ),
+        session_ttl_seconds=_positive_int(
+            values, "AUTH_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS
+        ),
+        session_cookie_name=_cookie_name(values),
+        session_cookie_secure=session_cookie_secure,
+        auth_admin_emails=_admin_emails(values),
     )
     if settings.log_level not in VALID_LOG_LEVELS:
         raise ConfigurationError(

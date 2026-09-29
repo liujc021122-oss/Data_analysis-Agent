@@ -22,3 +22,4 @@ charset-normalizer>=3.0,<4.0
 boto3>=1.28.0,<2.0
 fastapi>=0.115,<1.0
 python-multipart>=0.0.9,<1.0
+argon2-cffi>=23.1,<26

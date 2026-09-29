@@ -13,7 +13,7 @@ from pydantic import (
     field_validator,
 )
 
-from ..domain.enums import ReportFormat, TaskEventType, TaskStatus
+from ..domain.enums import ReportFormat, TaskEventType, TaskStatus, UserRole
 from ..datasets.models import DatasetProfile
 from .pagination import PageResponse
 
@@ -29,6 +29,12 @@ def _nonblank(value: str) -> str:
     value = value.strip()
     if not value:
         raise ValueError("must not be blank")
+    return value
+
+
+def _password_policy(value: str) -> str:
+    if not value.strip() or not 12 <= len(value) <= 128:
+        raise ValueError("password must contain 12 to 128 characters")
     return value
 
 
@@ -55,6 +61,30 @@ class PublicAPIModel(APIModel):
     _sanitize_metadata = field_validator(
         "metadata", mode="before", check_fields=False
     )(_sanitize_public_metadata)
+
+
+class AuthRegisterRequest(APIModel):
+    email: StrictStr
+    password: StrictStr
+
+    _validate_email = field_validator("email")(_nonblank)
+    _validate_password = field_validator("password")(_password_policy)
+
+
+class AuthLoginRequest(APIModel):
+    email: StrictStr
+    password: StrictStr
+
+    _validate_email = field_validator("email")(_nonblank)
+    _validate_password = field_validator("password")(_password_policy)
+
+
+class AuthUserResponse(APIModel):
+    user_id: UUID
+    email: StrictStr
+    role: UserRole
+    is_active: StrictBool
+    created_at: datetime
 
 
 class AnalysisTaskCreateRequest(APIModel):
