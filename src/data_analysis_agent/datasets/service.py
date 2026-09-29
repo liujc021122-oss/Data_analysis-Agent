@@ -10,6 +10,7 @@ from ..domain.models import utc_now
 from ..persistence.errors import PersistenceError, TransactionError
 from ..persistence.models import DatasetRecord, UserRecord
 from ..persistence.unit_of_work import UnitOfWork
+from ..services.authorization import AccessSubject
 from ..storage import Storage, dataset_key, normalize_filename
 from ..storage.errors import StorageError as CanonicalStorageError
 from ..storage.errors import StorageErrorCode as CanonicalStorageErrorCode
@@ -81,6 +82,21 @@ class DatasetCatalogService:
                 "unable to read dataset metadata",
             ) from exc
 
+    def list_for_subject(self, subject: AccessSubject, offset: int, limit: int):
+        try:
+            with self._uow_factory() as uow:
+                return (
+                    uow.datasets.list_for_subject(subject, offset=offset, limit=limit),
+                    uow.datasets.count_for_subject(subject),
+                )
+        except (DatasetPersistenceError, PersistenceError, SQLAlchemyError) as exc:
+            if isinstance(exc, DatasetPersistenceError):
+                raise
+            raise DatasetPersistenceError(
+                DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
+                "unable to read dataset metadata",
+            ) from exc
+
     def get_for_user(self, user_id: UUID, dataset_id: UUID) -> DatasetRecord:
         try:
             with self._uow_factory() as uow:
@@ -94,6 +110,24 @@ class DatasetCatalogService:
             ) from exc
         if record is None:
             raise DatasetAccessDeniedError(DatasetErrorCode.DATASET_ACCESS_DENIED, "dataset is not available")
+        return record
+
+    def get_for_subject(self, subject: AccessSubject, dataset_id: UUID) -> DatasetRecord:
+        try:
+            with self._uow_factory() as uow:
+                record = uow.datasets.get_for_subject(dataset_id, subject)
+        except (DatasetPersistenceError, PersistenceError, SQLAlchemyError) as exc:
+            if isinstance(exc, DatasetPersistenceError):
+                raise
+            raise DatasetPersistenceError(
+                DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
+                "unable to read dataset metadata",
+            ) from exc
+        if record is None:
+            raise DatasetAccessDeniedError(
+                DatasetErrorCode.DATASET_ACCESS_DENIED,
+                "dataset is not available",
+            )
         return record
 
     def delete_for_user(self, user_id: UUID, dataset_id: UUID) -> None:
@@ -117,6 +151,32 @@ class DatasetCatalogService:
             raise
         except (TransactionError, PersistenceError, SQLAlchemyError) as exc:
             # The object was removed; retained metadata identifies the mismatch.
+            raise DatasetPersistenceError(
+                DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
+                "unable to delete dataset metadata; reconciliation is required",
+                details={"reconciliation_required": True},
+            ) from exc
+
+    def delete_for_subject(self, subject: AccessSubject, dataset_id: UUID) -> None:
+        record = self.get_for_subject(subject, dataset_id)
+        try:
+            self._storage.delete(record.source_uri)
+        except CanonicalStorageError as exc:
+            raise StorageError(
+                DatasetErrorCode.STORAGE_FAILURE,
+                "unable to delete dataset object",
+            ) from exc
+        try:
+            with self._uow_factory() as uow:
+                if not uow.datasets.delete_for_subject(dataset_id, subject):
+                    raise DatasetAccessDeniedError(
+                        DatasetErrorCode.DATASET_ACCESS_DENIED,
+                        "dataset is not available",
+                    )
+                uow.commit()
+        except (DatasetAccessDeniedError, DatasetPersistenceError):
+            raise
+        except (TransactionError, PersistenceError, SQLAlchemyError) as exc:
             raise DatasetPersistenceError(
                 DatasetErrorCode.DATASET_PERSISTENCE_FAILURE,
                 "unable to delete dataset metadata; reconciliation is required",

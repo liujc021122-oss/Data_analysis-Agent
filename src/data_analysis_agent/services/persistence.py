@@ -10,6 +10,7 @@ from ..domain.state import transition_task
 from ..persistence.errors import EntityNotFoundError
 from ..persistence.models import UserRecord
 from ..persistence.repositories import TaskCreationResult
+from .authorization import AccessSubject
 from .idempotency import compute_request_hash
 
 
@@ -48,6 +49,11 @@ class TaskPersistenceService:
         )
         with self.uow_factory() as uow:
             uow.users.ensure(UserRecord(user_id=user_id, created_at=utc_now()))
+            existing = uow.tasks.get_by_idempotency(user_id, request.idempotency_key)
+            if existing is None:
+                for dataset_id in request.dataset_ids:
+                    if uow.datasets.get_for_user(dataset_id, user_id) is None:
+                        raise EntityNotFoundError(f"dataset {dataset_id} not found")
             result = uow.tasks.create_idempotent_with_result(
                 user_id=user_id,
                 task=task,
@@ -55,9 +61,6 @@ class TaskPersistenceService:
                 request_hash=request_hash,
             )
             if result.created:
-                for dataset_id in request.dataset_ids:
-                    if uow.datasets.get_for_user(dataset_id, user_id) is None:
-                        raise EntityNotFoundError(f"dataset {dataset_id} not found")
                 for position, dataset_id in enumerate(request.dataset_ids):
                     uow.tasks.attach_dataset(
                         task_id=result.task.task_id,
@@ -80,15 +83,77 @@ class TaskPersistenceService:
         with self.uow_factory() as uow:
             return uow.tasks.get(task_id)
 
+    def create_task_with_result_for_subject(
+        self, *, subject: AccessSubject, request: AnalysisTaskCreateRequest
+    ) -> TaskCreationResult:
+        request_hash = compute_request_hash(request)
+        task = AnalysisTask(
+            query=request.query,
+            dataset_ids=request.dataset_ids,
+            max_rounds=request.max_rounds,
+            metadata=request.metadata,
+        )
+        with self.uow_factory() as uow:
+            uow.users.ensure(UserRecord(user_id=subject.user_id, created_at=utc_now()))
+            existing = uow.tasks.get_by_idempotency(
+                subject.user_id, request.idempotency_key
+            )
+            if existing is None:
+                for dataset_id in request.dataset_ids:
+                    if uow.datasets.get_for_subject(dataset_id, subject) is None:
+                        raise EntityNotFoundError(f"dataset {dataset_id} not found")
+            result = uow.tasks.create_idempotent_with_result(
+                user_id=subject.user_id,
+                task=task,
+                idempotency_key=request.idempotency_key,
+                request_hash=request_hash,
+            )
+            if result.created:
+                for position, dataset_id in enumerate(request.dataset_ids):
+                    uow.tasks.attach_dataset(
+                        task_id=result.task.task_id,
+                        dataset_id=dataset_id,
+                        position=position,
+                    )
+                uow.task_events.append(
+                    TaskEvent(
+                        task_id=result.task.task_id,
+                        event_type=TaskEventType.STATUS_CHANGED,
+                        from_status=None,
+                        to_status=TaskStatus.PENDING,
+                        message="task created",
+                    )
+                )
+            uow.commit()
+            return result
+
     def get_task_for_user(self, task_id: UUID, user_id: UUID) -> AnalysisTask | None:
         with self.uow_factory() as uow:
             return uow.tasks.get_for_user(task_id, user_id)
+
+    def get_task_for_subject(
+        self, task_id: UUID, subject: AccessSubject
+    ) -> AnalysisTask | None:
+        with self.uow_factory() as uow:
+            return uow.tasks.get_for_subject(task_id, subject)
 
     def list_tasks_for_user(
         self, user_id: UUID, status: TaskStatus | None, offset: int, limit: int
     ) -> tuple[list[AnalysisTask], int]:
         with self.uow_factory() as uow:
             return uow.tasks.list_for_user(user_id, status=status, offset=offset, limit=limit)
+
+    def list_tasks_for_subject(
+        self,
+        subject: AccessSubject,
+        status: TaskStatus | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[AnalysisTask], int]:
+        with self.uow_factory() as uow:
+            return uow.tasks.list_for_subject(
+                subject, status=status, offset=offset, limit=limit
+            )
 
     def list_events_for_user(
         self, task_id: UUID, user_id: UUID, offset: int, limit: int
@@ -98,9 +163,23 @@ class TaskPersistenceService:
                 raise EntityNotFoundError("task is unavailable")
             return uow.task_events.page_for_task(task_id, offset=offset, limit=limit)
 
+    def list_events_for_subject(
+        self, task_id: UUID, subject: AccessSubject, offset: int, limit: int
+    ) -> tuple[list[TaskEvent], int]:
+        with self.uow_factory() as uow:
+            if uow.tasks.get_for_subject(task_id, subject) is None:
+                raise EntityNotFoundError("task is unavailable")
+            return uow.task_events.page_for_task(task_id, offset=offset, limit=limit)
+
     def list_artifacts_for_user(self, task_id: UUID, user_id: UUID):
         with self.uow_factory() as uow:
             if uow.tasks.get_for_user(task_id, user_id) is None:
+                raise EntityNotFoundError("task is unavailable")
+            return uow.artifacts.list_for_task(task_id)
+
+    def list_artifacts_for_subject(self, task_id: UUID, subject: AccessSubject):
+        with self.uow_factory() as uow:
+            if uow.tasks.get_for_subject(task_id, subject) is None:
                 raise EntityNotFoundError("task is unavailable")
             return uow.artifacts.list_for_task(task_id)
 
@@ -119,6 +198,32 @@ class TaskPersistenceService:
                     current,
                     None,
                     uow.task_events.latest_occurred_at(task_id),
+                ),
+            )
+            if not uow.tasks.update_if_status(updated, expected=TaskStatus.FAILED):
+                raise TaskRetryConflictError("task is not failed")
+            uow.task_events.append(event)
+            uow.commit()
+            return updated
+
+    def retry_failed_task_for_subject(
+        self, task_id: UUID, subject: AccessSubject
+    ) -> AnalysisTask:
+        with self.uow_factory() as uow:
+            current = uow.tasks.get_for_subject(task_id, subject, for_update=True)
+            if current is None:
+                raise EntityNotFoundError("task is unavailable")
+            if current.status is not TaskStatus.FAILED:
+                raise TaskRetryConflictError("task is not failed")
+            retry_input = current.model_copy(
+                update={"error_code": None, "error_message": None}
+            )
+            updated, event = transition_task(
+                retry_input,
+                TaskStatus.QUEUED,
+                message="task manually retried",
+                occurred_at=self._next_event_time(
+                    current, None, uow.task_events.latest_occurred_at(task_id)
                 ),
             )
             if not uow.tasks.update_if_status(updated, expected=TaskStatus.FAILED):
@@ -146,6 +251,42 @@ class TaskPersistenceService:
                 ),
             )
             event = event.model_copy(update={"metadata": {"error_code": "TASK_CANCELLED"}})
+            if not uow.tasks.update_if_status(updated, expected=current.status):
+                return uow.tasks.get(task_id), False
+            uow.task_events.append(event)
+            uow.commit()
+            return updated, True
+
+    def cancel_task_for_subject(
+        self, task_id: UUID, subject: AccessSubject
+    ) -> tuple[AnalysisTask, bool]:
+        with self.uow_factory() as uow:
+            current = uow.tasks.get_for_subject(task_id, subject, for_update=True)
+            if current is None:
+                raise EntityNotFoundError("task is unavailable")
+            if current.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            }:
+                return current, False
+            cancelled = current.model_copy(
+                update={
+                    "error_code": "TASK_CANCELLED",
+                    "error_message": "task cancelled",
+                }
+            )
+            updated, event = transition_task(
+                cancelled,
+                TaskStatus.CANCELLED,
+                message="task cancelled",
+                occurred_at=self._next_event_time(
+                    current, None, uow.task_events.latest_occurred_at(task_id)
+                ),
+            )
+            event = event.model_copy(
+                update={"metadata": {"error_code": "TASK_CANCELLED"}}
+            )
             if not uow.tasks.update_if_status(updated, expected=current.status):
                 return uow.tasks.get(task_id), False
             uow.task_events.append(event)

@@ -8,6 +8,7 @@ from ...datasets import DatasetAccessDeniedError
 from ...datasets.errors import DatasetErrorCode, DatasetPersistenceError, StorageError, UploadValidationError
 from ...datasets.models import DatasetProfile
 from ...persistence.errors import PersistenceError
+from ...services.authorization import AccessSubject
 from ...storage.errors import StorageError as CanonicalStorageError
 from ..auth import Principal, get_current_principal
 from ..errors import APIError
@@ -35,6 +36,10 @@ def _response(record) -> DatasetResponse:
     return DatasetResponse(dataset_id=record.dataset_id, name=record.name, content_type=record.content_type, size_bytes=record.size_bytes, checksum=record.checksum, created_at=record.created_at, profile=_profile(record))
 
 
+def _subject(principal: Principal) -> AccessSubject:
+    return AccessSubject(user_id=principal.user_id, role=principal.role)
+
+
 @router.post("", response_model=DatasetUploadResponse, status_code=status.HTTP_201_CREATED)
 def upload_dataset(request: Request, file: UploadFile = File(...), principal: Principal = Depends(get_current_principal)):
     application = request.app.state.api_application
@@ -60,7 +65,7 @@ def list_datasets(
     params = PaginationParams(page=page, page_size=page_size)
     service = _catalog(request)
     try:
-        records, total = service.list_for_user(principal.user_id, params.offset, params.page_size)
+        records, total = service.list_for_subject(_subject(principal), params.offset, params.page_size)
     except (DatasetPersistenceError, PersistenceError) as exc:
         raise APIError("DATASET_PERSISTENCE_FAILURE", "dataset metadata is unavailable", status_code=503) from exc
     return DatasetListResponse(items=[_response(record) for record in records], page=page, page_size=page_size, total=total, has_next=params.offset + len(records) < total)
@@ -69,7 +74,7 @@ def list_datasets(
 @router.get("/{dataset_id}", response_model=DatasetResponse)
 def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depends(get_current_principal)):
     try:
-        return _response(_catalog(request).get_for_user(principal.user_id, dataset_id))
+        return _response(_catalog(request).get_for_subject(_subject(principal), dataset_id))
     except DatasetAccessDeniedError as exc:
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
     except (DatasetPersistenceError, PersistenceError) as exc:
@@ -79,7 +84,7 @@ def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depen
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_dataset(request: Request, dataset_id: UUID, principal: Principal = Depends(get_current_principal)):
     try:
-        _catalog(request).delete_for_user(principal.user_id, dataset_id)
+        _catalog(request).delete_for_subject(_subject(principal), dataset_id)
     except DatasetAccessDeniedError as exc:
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
     except StorageError as exc:

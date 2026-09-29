@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..domain.errors import PersistenceMappingError
 from ..domain.enums import ReportFormat, TaskStatus, ToolCallStatus
 from ..domain.models import AnalysisTask, ExecutionResult, TaskEvent, ToolCall, utc_now
+from ..services.authorization import AccessSubject
 from .errors import EntityNotFoundError
 from .errors import IdempotencyConflictError
 from .mappers import _normalize_json_value, event_to_record, record_to_event, record_to_task, task_to_record
@@ -146,12 +147,37 @@ class DatasetRepository:
         )
         return dataset_orm_to_record(row) if row else None
 
+    def get_for_subject(
+        self, dataset_id: UUID, subject: AccessSubject
+    ) -> DatasetRecord | None:
+        if subject.is_admin:
+            return self.get(dataset_id)
+        return self.get_for_user(dataset_id, subject.user_id)
+
     def count_for_user(self, user_id: UUID) -> int:
         from sqlalchemy import func
         return int(self.session.scalar(select(func.count()).select_from(DatasetORM).where(DatasetORM.user_id == user_id)) or 0)
 
+    def count_for_subject(self, subject: AccessSubject) -> int:
+        if subject.is_admin:
+            return int(self.session.scalar(select(func.count()).select_from(DatasetORM)) or 0)
+        return self.count_for_user(subject.user_id)
+
     def list_for_user(self, user_id: UUID, *, offset: int = 0, limit: int | None = None) -> list[DatasetRecord]:
         statement = select(DatasetORM).where(DatasetORM.user_id == user_id).order_by(DatasetORM.created_at, DatasetORM.dataset_id).offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+        rows = self.session.scalars(statement).all()
+        return [dataset_orm_to_record(row) for row in rows]
+
+    def list_for_subject(
+        self, subject: AccessSubject, *, offset: int = 0, limit: int | None = None
+    ) -> list[DatasetRecord]:
+        if not subject.is_admin:
+            return self.list_for_user(subject.user_id, offset=offset, limit=limit)
+        statement = select(DatasetORM).order_by(
+            DatasetORM.created_at, DatasetORM.dataset_id
+        ).offset(offset)
         if limit is not None:
             statement = statement.limit(limit)
         rows = self.session.scalars(statement).all()
@@ -164,6 +190,16 @@ class DatasetRepository:
         self.session.delete(row)
         self.session.flush()
         return True
+
+    def delete_for_subject(self, dataset_id: UUID, subject: AccessSubject) -> bool:
+        if subject.is_admin:
+            row = self.session.get(DatasetORM, dataset_id)
+            if row is None:
+                return False
+            self.session.delete(row)
+            self.session.flush()
+            return True
+        return self.delete_for_user(dataset_id, subject.user_id)
 
 
 @dataclass(frozen=True)
@@ -351,6 +387,13 @@ class TaskRepository:
         row = self.session.scalar(query)
         return self._to_domain(row) if row is not None else None
 
+    def get_for_subject(
+        self, task_id: UUID, subject: AccessSubject, *, for_update: bool = False
+    ) -> AnalysisTask | None:
+        if subject.is_admin:
+            return self.get_for_update(task_id) if for_update else self.get(task_id)
+        return self.get_for_user(task_id, subject.user_id, for_update=for_update)
+
     def list_for_user(
         self, user_id: UUID, *, status: TaskStatus | None = None,
         offset: int = 0, limit: int = 20,
@@ -365,6 +408,36 @@ class TaskRepository:
             select(AnalysisTaskORM).where(*condition)
             .order_by(AnalysisTaskORM.created_at, AnalysisTaskORM.task_id)
             .offset(offset).limit(limit)
+        ).all()
+        return [self._to_domain(row) for row in rows], total
+
+    def list_for_subject(
+        self,
+        subject: AccessSubject,
+        *,
+        status: TaskStatus | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[AnalysisTask], int]:
+        if not subject.is_admin:
+            return self.list_for_user(
+                subject.user_id, status=status, offset=offset, limit=limit
+            )
+        conditions = []
+        if status is not None:
+            conditions.append(AnalysisTaskORM.status == status)
+        total = int(
+            self.session.scalar(
+                select(func.count()).select_from(AnalysisTaskORM).where(*conditions)
+            )
+            or 0
+        )
+        rows = self.session.scalars(
+            select(AnalysisTaskORM)
+            .where(*conditions)
+            .order_by(AnalysisTaskORM.created_at, AnalysisTaskORM.task_id)
+            .offset(offset)
+            .limit(limit)
         ).all()
         return [self._to_domain(row) for row in rows], total
 

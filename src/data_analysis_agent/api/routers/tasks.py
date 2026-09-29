@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from ...domain.enums import TaskStatus
 from ...persistence.errors import EntityNotFoundError, IdempotencyConflictError, PersistenceError
+from ...services.authorization import AccessSubject
 from ..auth import Principal, get_current_principal
 from ..errors import APIError
 from ..pagination import PaginationParams
@@ -31,6 +32,10 @@ def _services(request: Request):
 
 def _not_found():
     return APIError("TASK_NOT_FOUND", "task is not available", status_code=404)
+
+
+def _subject(principal: Principal) -> AccessSubject:
+    return AccessSubject(user_id=principal.user_id, role=principal.role)
 
 
 def _task_response(task, artifacts=(), *, request_id: str):
@@ -61,7 +66,7 @@ def create_task(request: Request, payload: AnalysisTaskCreateRequest,
 
     _, submission = _services(request)
     try:
-        result = submission.submit(user_id=principal.user_id, request=payload)
+        result = submission.submit_for_subject(subject=_subject(principal), request=payload)
     except EntityNotFoundError as exc:
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
     except IdempotencyConflictError as exc:
@@ -81,7 +86,7 @@ def list_tasks(request: Request, task_status: TaskStatus | None = Query(default=
     persistence, _ = _services(request)
     params = PaginationParams(page=page, page_size=page_size)
     try:
-        items, total = persistence.list_tasks_for_user(principal.user_id, task_status, params.offset, page_size)
+        items, total = persistence.list_tasks_for_subject(_subject(principal), task_status, params.offset, page_size)
     except PersistenceError as exc:
         raise APIError("TASK_PERSISTENCE_FAILURE", "task service is unavailable", status_code=503) from exc
     return TaskListResponse(items=[_task_response(item, request_id=request.state.request_id) for item in items], page=page,
@@ -92,10 +97,10 @@ def list_tasks(request: Request, task_status: TaskStatus | None = Query(default=
 def get_task(request: Request, task_id: UUID, principal: Principal = Depends(get_current_principal)):
     persistence, _ = _services(request)
     try:
-        task = persistence.get_task_for_user(task_id, principal.user_id)
+        task = persistence.get_task_for_subject(task_id, _subject(principal))
         if task is None:
             raise _not_found()
-        artifacts = persistence.list_artifacts_for_user(task_id, principal.user_id)
+        artifacts = persistence.list_artifacts_for_subject(task_id, _subject(principal))
         return _task_response(task, artifacts, request_id=request.state.request_id)
     except EntityNotFoundError as exc:
         raise _not_found() from exc
@@ -110,7 +115,7 @@ def list_events(request: Request, task_id: UUID, page: int = Query(default=1, ge
     persistence, _ = _services(request)
     params = PaginationParams(page=page, page_size=page_size)
     try:
-        events, total = persistence.list_events_for_user(task_id, principal.user_id, params.offset, page_size)
+        events, total = persistence.list_events_for_subject(task_id, _subject(principal), params.offset, page_size)
     except EntityNotFoundError as exc:
         raise _not_found() from exc
     except PersistenceError as exc:
@@ -124,7 +129,7 @@ def list_events(request: Request, task_id: UUID, page: int = Query(default=1, ge
 def cancel_task(request: Request, task_id: UUID, principal: Principal = Depends(get_current_principal)):
     _, submission = _services(request)
     try:
-        return _task_response(submission.cancel_for_user(task_id, principal.user_id), request_id=request.state.request_id)
+        return _task_response(submission.cancel_for_subject(task_id, _subject(principal)), request_id=request.state.request_id)
     except EntityNotFoundError as exc:
         raise _not_found() from exc
     except PersistenceError as exc:
@@ -138,7 +143,7 @@ def retry_task(request: Request, task_id: UUID, principal: Principal = Depends(g
 
     _, submission = _services(request)
     try:
-        result = submission.retry_for_user(task_id, principal.user_id)
+        result = submission.retry_for_subject(task_id, _subject(principal))
     except EntityNotFoundError as exc:
         raise _not_found() from exc
     except TaskRetryConflictError as exc:

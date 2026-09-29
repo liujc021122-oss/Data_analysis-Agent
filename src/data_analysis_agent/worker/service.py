@@ -6,6 +6,7 @@ from uuid import UUID
 
 from ..domain.enums import TaskStatus
 from ..persistence.errors import EntityNotFoundError
+from ..services.authorization import AccessSubject
 from ..services.persistence import TaskPersistenceService
 from .broker import TaskBroker
 from .errors import TaskEnqueueError
@@ -107,6 +108,40 @@ class TaskSubmissionService:
             enqueued=True,
         )
 
+    def submit_for_subject(
+        self, *, subject: AccessSubject, request
+    ) -> TaskSubmissionResult:
+        creation = self.persistence.create_task_with_result_for_subject(
+            subject=subject, request=request
+        )
+        if not creation.created:
+            return TaskSubmissionResult(
+                task=creation.task,
+                message=TaskMessage(task_id=creation.task.task_id),
+                created=False,
+                enqueued=False,
+            )
+        try:
+            queued, _ = self.persistence.transition_task(
+                task_id=creation.task.task_id,
+                target=TaskStatus.QUEUED,
+                message="task queued",
+            )
+            message = self.broker.enqueue(queued.task_id)
+        except Exception as exc:
+            self.persistence.fail_task(
+                creation.task.task_id,
+                code="TASK_ENQUEUE_FAILED",
+                message="task could not be queued",
+            )
+            raise TaskEnqueueError("task could not be queued") from exc
+        return TaskSubmissionResult(
+            task=queued,
+            message=message,
+            created=True,
+            enqueued=True,
+        )
+
     def cancel(self, task_id: UUID):
         current = self.persistence.get_task(task_id)
         if current is None:
@@ -138,6 +173,17 @@ class TaskSubmissionService:
                 self.cancellation_registry.request(task_id)
         return updated
 
+    def cancel_for_subject(self, task_id: UUID, subject: AccessSubject):
+        updated, changed = self.persistence.cancel_task_for_subject(task_id, subject)
+        if changed:
+            try:
+                self.broker.revoke(task_id, terminate=True, signal="SIGTERM")
+            except Exception:
+                pass
+            finally:
+                self.cancellation_registry.request(task_id)
+        return updated
+
     def retry_for_user(self, task_id: UUID, user_id: UUID) -> TaskSubmissionResult:
         queued = self.persistence.retry_failed_task(task_id, user_id)
         try:
@@ -145,6 +191,23 @@ class TaskSubmissionService:
         except Exception as exc:
             self.persistence.fail_task(
                 task_id, code="TASK_ENQUEUE_FAILED", message="task could not be queued"
+            )
+            raise TaskEnqueueError("task could not be queued") from exc
+        return TaskSubmissionResult(
+            task=queued, message=message, created=False, enqueued=True
+        )
+
+    def retry_for_subject(
+        self, task_id: UUID, subject: AccessSubject
+    ) -> TaskSubmissionResult:
+        queued = self.persistence.retry_failed_task_for_subject(task_id, subject)
+        try:
+            message = self.broker.enqueue(task_id)
+        except Exception as exc:
+            self.persistence.fail_task(
+                task_id,
+                code="TASK_ENQUEUE_FAILED",
+                message="task could not be queued",
             )
             raise TaskEnqueueError("task could not be queued") from exc
         return TaskSubmissionResult(
