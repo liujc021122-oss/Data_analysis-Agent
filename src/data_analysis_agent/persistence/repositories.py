@@ -14,10 +14,14 @@ from .errors import EntityNotFoundError
 from .errors import IdempotencyConflictError
 from .mappers import _normalize_json_value, event_to_record, record_to_event, record_to_task, task_to_record
 from .models import (
-    ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord,
-    ToolCallRecord, UserRecord,
+    ArtifactRecord, AuditEventRecord, AuthSessionRecord, DatasetRecord,
+    ExecutionResultRecord, ReportRecord, ToolCallRecord, UserRecord,
 )
 from .orm_mappers import (
+    audit_event_orm_to_record,
+    audit_event_record_to_orm,
+    auth_session_orm_to_record,
+    auth_session_record_to_orm,
     dataset_orm_to_record,
     event_orm_to_record,
     task_orm_to_record,
@@ -31,8 +35,9 @@ from .orm_mappers import (
     report_record_to_orm, tool_call_record_to_orm,
 )
 from .orm_models import (
-    AnalysisTaskORM, ArtifactORM, DatasetORM, ExecutionORM, ReportORM,
-    TaskEventORM, ToolCallORM, UserORM, task_dataset_link,
+    AnalysisTaskORM, ArtifactORM, AuditEventORM, AuthSessionORM, DatasetORM,
+    ExecutionORM, ReportORM, TaskEventORM, ToolCallORM, UserORM,
+    task_dataset_link,
 )
 class UserRepository:
     def __init__(self, session: Session):
@@ -49,6 +54,73 @@ class UserRepository:
     def get(self, user_id: UUID) -> UserRecord | None:
         row = self.session.get(UserORM, user_id)
         return user_orm_to_record(row) if row else None
+
+    def get_by_email(self, email_normalized: str) -> UserRecord | None:
+        row = self.session.scalar(
+            select(UserORM).where(UserORM.email_normalized == email_normalized)
+        )
+        return user_orm_to_record(row) if row else None
+
+
+class AuthSessionRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, record: AuthSessionRecord) -> AuthSessionRecord:
+        row = auth_session_record_to_orm(record)
+        self.session.add(row)
+        self.session.flush()
+        return auth_session_orm_to_record(row)
+
+    def get_active_by_token_hash(
+        self, token_hash: str, now: datetime
+    ) -> AuthSessionRecord | None:
+        row = self.session.scalar(
+            select(AuthSessionORM)
+            .join(UserORM, UserORM.user_id == AuthSessionORM.user_id)
+            .where(
+                AuthSessionORM.token_hash == token_hash,
+                AuthSessionORM.revoked_at.is_(None),
+                AuthSessionORM.expires_at > now,
+                UserORM.is_active.is_(True),
+            )
+        )
+        return auth_session_orm_to_record(row) if row else None
+
+    def touch(self, session_id: UUID, last_seen_at: datetime) -> bool:
+        result = self.session.execute(
+            update(AuthSessionORM)
+            .where(
+                AuthSessionORM.session_id == session_id,
+                AuthSessionORM.revoked_at.is_(None),
+            )
+            .values(last_seen_at=last_seen_at)
+        )
+        self.session.flush()
+        return result.rowcount == 1
+
+    def revoke(self, session_id: UUID, revoked_at: datetime) -> bool:
+        result = self.session.execute(
+            update(AuthSessionORM)
+            .where(
+                AuthSessionORM.session_id == session_id,
+                AuthSessionORM.revoked_at.is_(None),
+            )
+            .values(revoked_at=revoked_at)
+        )
+        self.session.flush()
+        return result.rowcount == 1
+
+
+class AuditEventRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, record: AuditEventRecord) -> AuditEventRecord:
+        row = audit_event_record_to_orm(record)
+        self.session.add(row)
+        self.session.flush()
+        return audit_event_orm_to_record(row)
 
 
 class DatasetRepository:

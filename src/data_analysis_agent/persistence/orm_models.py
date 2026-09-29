@@ -18,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..domain.enums import ReportFormat, TaskEventType, TaskStatus, ToolCallStatus
+from ..domain.enums import AuditAction, ReportFormat, TaskEventType, TaskStatus, ToolCallStatus, UserRole
 from .database import Base, UTCDateTime, UUIDString
 
 
@@ -35,9 +35,59 @@ def enum_column(enum_type, constraint_name: str):
 
 class UserORM(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index("ux_users_email_normalized", "email_normalized", unique=True),
+    )
 
     user_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
     created_at: Mapped[Any] = mapped_column(UTCDateTime(), nullable=False)
+    email_normalized: Mapped[str | None] = mapped_column(String(320))
+    password_hash: Mapped[str | None] = mapped_column(Text())
+    role: Mapped[Any] = mapped_column(
+        enum_column(UserRole, "ck_users_role"),
+        nullable=False,
+        server_default=UserRole.USER.value,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean(), nullable=False, server_default="1"
+    )
+
+
+class AuthSessionORM(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        Index("ix_auth_sessions_user_expires", "user_id", "expires_at"),
+    )
+
+    session_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[Any] = mapped_column(ForeignKey("users.user_id"), nullable=False)
+    created_at: Mapped[Any] = mapped_column(UTCDateTime(), nullable=False)
+    expires_at: Mapped[Any] = mapped_column(UTCDateTime(), nullable=False)
+    last_seen_at: Mapped[Any] = mapped_column(UTCDateTime(), nullable=False)
+    revoked_at: Mapped[Any | None] = mapped_column(UTCDateTime())
+
+
+class AuditEventORM(Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_events_user_occurred", "user_id", "occurred_at"),
+        Index("ix_audit_events_target", "target_type", "target_id"),
+    )
+
+    event_id: Mapped[Any] = mapped_column(UUIDString(), primary_key=True)
+    user_id: Mapped[Any | None] = mapped_column(ForeignKey("users.user_id"))
+    action: Mapped[Any] = mapped_column(
+        enum_column(AuditAction, "ck_audit_events_action"), nullable=False
+    )
+    target_type: Mapped[str | None] = mapped_column(String(64))
+    target_id: Mapped[Any | None] = mapped_column(UUIDString())
+    success: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[Any] = mapped_column(UTCDateTime(), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON(), nullable=False, default=dict
+    )
 
 
 class DatasetORM(Base):

@@ -3,8 +3,8 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from ..domain.errors import PersistenceMappingError
-from .orm_models import AnalysisTaskORM, ArtifactORM, DatasetORM, ExecutionORM, ReportORM, TaskEventORM, ToolCallORM, UserORM
-from .models import AnalysisTaskRecord, ArtifactRecord, DatasetRecord, ExecutionResultRecord, ReportRecord, TaskEventRecord, ToolCallRecord, UserRecord
+from .orm_models import AnalysisTaskORM, ArtifactORM, AuditEventORM, AuthSessionORM, DatasetORM, ExecutionORM, ReportORM, TaskEventORM, ToolCallORM, UserORM
+from .models import AnalysisTaskRecord, ArtifactRecord, AuditEventRecord, AuthSessionRecord, DatasetRecord, ExecutionResultRecord, ReportRecord, TaskEventRecord, ToolCallRecord, UserRecord
 
 
 ARTIFACT_PERSISTENCE_NAMESPACE = "__data_analysis_agent_persistence__"
@@ -17,7 +17,42 @@ def _uuid(value: UUID | str) -> UUID:
 
 
 def user_orm_to_record(row: UserORM) -> UserRecord:
-    return UserRecord(user_id=_uuid(row.user_id), created_at=row.created_at)
+    role = row.role.value if hasattr(row.role, "value") else row.role
+    return UserRecord(
+        user_id=_uuid(row.user_id),
+        created_at=row.created_at,
+        email_normalized=row.email_normalized,
+        password_hash=row.password_hash,
+        role=role,
+        is_active=row.is_active,
+    )
+
+
+def auth_session_orm_to_record(row: AuthSessionORM) -> AuthSessionRecord:
+    return AuthSessionRecord(
+        session_id=_uuid(row.session_id),
+        token_hash=row.token_hash,
+        user_id=_uuid(row.user_id),
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+        last_seen_at=row.last_seen_at,
+        revoked_at=row.revoked_at,
+    )
+
+
+def audit_event_orm_to_record(row: AuditEventORM) -> AuditEventRecord:
+    action = row.action.value if hasattr(row.action, "value") else row.action
+    return AuditEventRecord(
+        event_id=_uuid(row.event_id),
+        user_id=_uuid(row.user_id) if row.user_id else None,
+        action=action,
+        target_type=row.target_type,
+        target_id=_uuid(row.target_id) if row.target_id else None,
+        success=row.success,
+        request_id=row.request_id,
+        occurred_at=row.occurred_at,
+        metadata_json=deepcopy(row.metadata_json or {}),
+    )
 
 
 def dataset_orm_to_record(row: DatasetORM) -> DatasetRecord:
@@ -52,7 +87,40 @@ def report_orm_to_record(row: ReportORM) -> ReportRecord:
 
 
 def user_record_to_orm(record: UserRecord) -> UserORM:
-    return UserORM(user_id=_uuid(record.user_id), created_at=record.created_at)
+    return UserORM(
+        user_id=_uuid(record.user_id),
+        created_at=record.created_at,
+        email_normalized=record.email_normalized,
+        password_hash=record.password_hash,
+        role=record.role,
+        is_active=record.is_active,
+    )
+
+
+def auth_session_record_to_orm(record: AuthSessionRecord) -> AuthSessionORM:
+    return AuthSessionORM(
+        session_id=_uuid(record.session_id),
+        token_hash=record.token_hash,
+        user_id=_uuid(record.user_id),
+        created_at=record.created_at,
+        expires_at=record.expires_at,
+        last_seen_at=record.last_seen_at,
+        revoked_at=record.revoked_at,
+    )
+
+
+def audit_event_record_to_orm(record: AuditEventRecord) -> AuditEventORM:
+    return AuditEventORM(
+        event_id=_uuid(record.event_id),
+        user_id=_uuid(record.user_id) if record.user_id else None,
+        action=record.action,
+        target_type=record.target_type,
+        target_id=_uuid(record.target_id) if record.target_id else None,
+        success=record.success,
+        request_id=record.request_id,
+        occurred_at=record.occurred_at,
+        metadata_json=deepcopy(record.metadata_json),
+    )
 
 
 def dataset_record_to_orm(record: DatasetRecord) -> DatasetORM:

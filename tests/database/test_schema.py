@@ -23,6 +23,8 @@ from data_analysis_agent.domain.enums import TaskEventType, TaskStatus
 
 EXPECTED_TABLES = {
     "users",
+    "auth_sessions",
+    "audit_events",
     "datasets",
     "analysis_tasks",
     "analysis_task_datasets",

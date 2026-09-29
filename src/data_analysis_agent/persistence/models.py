@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 
+from ..domain.enums import AuditAction, UserRole
 
 class PersistenceModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -101,6 +102,32 @@ class ArtifactRecord(PersistenceModel):
 class UserRecord(PersistenceModel):
     user_id: UUID = Field(default_factory=uuid4)
     created_at: datetime
+    email_normalized: StrictStr | None = None
+    password_hash: StrictStr | None = None
+    role: UserRole = UserRole.USER
+    is_active: StrictBool = True
+
+
+class AuthSessionRecord(PersistenceModel):
+    session_id: UUID = Field(default_factory=uuid4)
+    token_hash: StrictStr
+    user_id: UUID
+    created_at: datetime
+    expires_at: datetime
+    last_seen_at: datetime
+    revoked_at: datetime | None = None
+
+
+class AuditEventRecord(PersistenceModel):
+    event_id: UUID = Field(default_factory=uuid4)
+    user_id: UUID | None = None
+    action: AuditAction
+    target_type: StrictStr | None = None
+    target_id: UUID | None = None
+    success: StrictBool
+    request_id: StrictStr
+    occurred_at: datetime
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReportRecord(PersistenceModel):

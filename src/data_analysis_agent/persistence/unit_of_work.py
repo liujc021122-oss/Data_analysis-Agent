@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 
 from .errors import TransactionError
 from .repositories import (
-    ArtifactRepository, DatasetRepository, ExecutionRepository, ReportRepository,
-    TaskEventRepository, TaskRepository, ToolCallRepository, UserRepository,
+    ArtifactRepository, AuditEventRepository, AuthSessionRepository,
+    DatasetRepository, ExecutionRepository, ReportRepository, TaskEventRepository,
+    TaskRepository, ToolCallRepository, UserRepository,
 )
 
 
@@ -12,6 +13,8 @@ class UnitOfWork:
     def __init__(self, session_factory):
         self.session: Session = session_factory()
         self.users = UserRepository(self.session)
+        self.sessions = AuthSessionRepository(self.session)
+        self.audit_events = AuditEventRepository(self.session)
         self.datasets = DatasetRepository(self.session)
         self.tasks = TaskRepository(self.session)
         self.task_events = TaskEventRepository(self.session)
