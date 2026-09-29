@@ -65,12 +65,12 @@ def test_invalid_request_id_is_replaced_and_public_factory_is_exported(fake_appl
     assert len(response.headers["X-Request-ID"]) == 36
 
 
-def test_default_test_application_uses_header_principal_provider():
+def test_default_test_application_does_not_install_header_principal_provider():
     application = APIApplication(settings=load_settings(
         app_env="test", environ={"APP_ENV": "test", "DATABASE_URL": "sqlite://"}
     ))
     create_app(application)
-    assert isinstance(application.principal_provider, HeaderPrincipalProvider)
+    assert application.principal_provider is None
 
 
 def test_development_uses_celery_broker_when_redis_is_configured(monkeypatch, tmp_path):
@@ -106,6 +106,7 @@ def test_development_without_redis_rejects_async_submission_with_configuration_e
     )
     application = APIApplication.from_settings(settings)
     init_database(application.database.engine)
+    application.principal_provider = HeaderPrincipalProvider()
     try:
         assert application.task_submission is None
         response = TestClient(

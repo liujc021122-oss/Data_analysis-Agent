@@ -11,6 +11,7 @@ from ..persistence.unit_of_work import UnitOfWork
 from ..datasets import CsvInspector, UnitOfWorkDatasetStore
 from ..storage.factory import build_storage
 from ..storage import FileAccessService, Storage
+from ..services.auth import AuthenticationService
 
 if TYPE_CHECKING:
     from ..services.persistence import TaskPersistenceService
@@ -42,6 +43,7 @@ class APIApplication:
     task_persistence: TaskPersistenceService | None = None
     task_submission: TaskSubmissionService | None = None
     file_access: FileAccessService | None = None
+    auth_service: AuthenticationService | None = None
     principal_provider: PrincipalProvider | None = None
 
     def configure_task_persistence(self) -> None:
@@ -74,6 +76,7 @@ class APIApplication:
             settings=settings,
             database=database,
             storage=storage,
+            auth_service=AuthenticationService(uow_factory, settings),
             dataset_upload=DatasetUploadService(storage=storage, inspector=CsvInspector(), metadata_store=metadata_store, max_upload_size=settings.max_upload_size),
             dataset_catalog=DatasetCatalogService(storage=storage, uow_factory=uow_factory),
             file_access=FileAccessService(

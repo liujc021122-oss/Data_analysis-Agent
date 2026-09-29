@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from data_analysis_agent.api.app import create_app
 from data_analysis_agent.api.application import APIApplication
+from data_analysis_agent.api.auth import HeaderPrincipalProvider
 from data_analysis_agent.config.settings import load_settings
 from data_analysis_agent.domain.enums import TaskStatus
 from data_analysis_agent.domain.state import can_transition
@@ -23,6 +24,7 @@ def task_api(tmp_path):
     broker = InMemoryTaskBroker()
     owner, stranger = uuid4(), uuid4()
     app_services.configure_task_services(broker)
+    app_services.principal_provider = HeaderPrincipalProvider()
     app = create_app(app_services)
     try:
         yield app_services, broker, TestClient(app, headers={"X-User-ID": str(owner)}), TestClient(app, headers={"X-User-ID": str(stranger)}), owner

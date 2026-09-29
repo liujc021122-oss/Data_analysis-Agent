@@ -16,7 +16,13 @@ from .schemas import (
     TaskEventListResponse,
     ArtifactDownloadResponse,
 )
-from .auth import AuthenticationError, HeaderPrincipalProvider, Principal, PrincipalProvider
+from .auth import (
+    AuthenticationError,
+    HeaderPrincipalProvider,
+    Principal,
+    PrincipalProvider,
+    SessionPrincipalProvider,
+)
 from .auth import get_current_principal
 from .application import APIApplication
 from .app import create_app
@@ -44,6 +50,7 @@ __all__ = [
     "ArtifactDownloadResponse",
     "AuthenticationError",
     "HeaderPrincipalProvider",
+    "SessionPrincipalProvider",
     "Principal",
     "PrincipalProvider",
     "Page",

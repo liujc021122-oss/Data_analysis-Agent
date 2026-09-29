@@ -9,9 +9,9 @@ from fastapi.responses import JSONResponse
 
 from ..config.settings import ConfigurationError, load_settings
 from .application import APIApplication
-from .auth import AuthenticationError, HeaderPrincipalProvider
+from .auth import AuthenticationError, HeaderPrincipalProvider, SessionPrincipalProvider
 from .errors import APIError
-from .routers import artifacts_router, datasets_router, tasks_router
+from .routers import artifacts_router, auth_router, datasets_router, tasks_router
 from .schemas import ErrorResponse
 
 _REQUEST_ID = re.compile(r"^[\x21-\x7e]{1,128}$")
@@ -41,13 +41,16 @@ def _error(request: Request, *, status: int, code: str, message: str, details=No
 
 def create_app(container: APIApplication | None = None) -> FastAPI:
     application = container or APIApplication.from_settings(load_settings())
-    if application.settings.app_env in {"development", "test"} and application.principal_provider is None:
-        application.principal_provider = HeaderPrincipalProvider()
+    if application.principal_provider is None and application.auth_service is not None:
+        application.principal_provider = SessionPrincipalProvider(application.auth_service)
     if application.settings.app_env == "production" and (
         application.principal_provider is None
         or isinstance(application.principal_provider, HeaderPrincipalProvider)
     ):
-        raise ConfigurationError("production requires an explicit non-header authentication provider")
+        raise ConfigurationError(
+            "production requires an explicit non-header authentication provider; "
+            "HeaderPrincipalProvider is forbidden"
+        )
     if application.settings.app_env == "production" and (
         application.database is None or application.storage is None
     ):
@@ -56,6 +59,7 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
     app = FastAPI(title="Data Analysis Agent API", version="1.0.0")
     app.state.api_application = application
     app.middleware("http")(request_id_middleware)
+    app.include_router(auth_router, prefix="/api")
     app.include_router(datasets_router, prefix="/api")
     app.include_router(tasks_router, prefix="/api")
     app.include_router(artifacts_router, prefix="/api")

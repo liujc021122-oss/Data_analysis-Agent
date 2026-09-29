@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from data_analysis_agent.api.app import create_app
 from data_analysis_agent.api.application import APIApplication
+from data_analysis_agent.api.auth import HeaderPrincipalProvider
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
 from data_analysis_agent.config.settings import load_settings
 from data_analysis_agent.persistence.database import init_database
@@ -21,6 +22,7 @@ def artifact_api(tmp_path):
         "STORAGE_URL_EXPIRY": "60",
     })
     application = APIApplication.from_settings(settings)
+    application.principal_provider = HeaderPrincipalProvider()
     init_database(application.database.engine)
     owner_id, foreign_id = uuid4(), uuid4()
     task = application.task_persistence.create_task(

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from data_analysis_agent.api.app import create_app
 from data_analysis_agent.api.application import APIApplication
+from data_analysis_agent.api.auth import HeaderPrincipalProvider
 from data_analysis_agent.config.settings import load_settings
 from data_analysis_agent.datasets.errors import (
     DatasetErrorCode,
@@ -29,6 +30,7 @@ def dataset_api(tmp_path):
     database = Database.from_settings(settings)
     init_database(database.engine)
     application = APIApplication.from_settings(settings)
+    application.principal_provider = HeaderPrincipalProvider()
     owner_id, other_id = uuid4(), uuid4()
 
     def client(user_id):
