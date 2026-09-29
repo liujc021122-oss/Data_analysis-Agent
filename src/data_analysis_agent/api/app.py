@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ..config.settings import ConfigurationError, load_settings
+from ..domain.enums import AuditAction
 from .application import APIApplication
 from .auth import AuthenticationError, HeaderPrincipalProvider, SessionPrincipalProvider
 from .errors import APIError
@@ -76,6 +77,13 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
 
     @app.exception_handler(AuthenticationError)
     async def auth_handler(request: Request, exc: AuthenticationError):
+        application.record_audit(
+            action=AuditAction.AUTHENTICATION_DENIED,
+            user_id=None,
+            request_id=request.state.request_id,
+            success=False,
+            metadata={"reason_code": "AUTHENTICATION_REQUIRED"},
+        )
         return _error(request, status=401, code="AUTHENTICATION_REQUIRED", message="authentication is required")
 
     @app.exception_handler(APIError)

@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from ..domain.errors import PersistenceMappingError
+from ..domain.enums import UserRole
 from .orm_models import AnalysisTaskORM, ArtifactORM, AuditEventORM, AuthSessionORM, DatasetORM, ExecutionORM, ReportORM, TaskEventORM, ToolCallORM, UserORM
 from .models import AnalysisTaskRecord, ArtifactRecord, AuditEventRecord, AuthSessionRecord, DatasetRecord, ExecutionResultRecord, ReportRecord, TaskEventRecord, ToolCallRecord, UserRecord
 
@@ -18,13 +19,15 @@ def _uuid(value: UUID | str) -> UUID:
 
 def user_orm_to_record(row: UserORM) -> UserRecord:
     role = row.role.value if hasattr(row.role, "value") else row.role
+    role = role or UserRole.USER
+    is_active = True if row.is_active is None else row.is_active
     return UserRecord(
         user_id=_uuid(row.user_id),
         created_at=row.created_at,
         email_normalized=row.email_normalized,
         password_hash=row.password_hash,
         role=role,
-        is_active=row.is_active,
+        is_active=is_active,
     )
 
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 
+from ...domain.enums import AuditAction
 from ...datasets import DatasetAccessDeniedError
 from ...datasets.errors import DatasetErrorCode, DatasetPersistenceError, StorageError, UploadValidationError
 from ...datasets.models import DatasetProfile
@@ -46,7 +47,13 @@ def upload_dataset(request: Request, file: UploadFile = File(...), principal: Pr
     if application.dataset_upload is None:
         raise APIError("DATASET_SERVICE_UNAVAILABLE", "dataset service is unavailable", status_code=503)
     try:
-        result = application.dataset_upload.upload(file.file, original_filename=file.filename or "upload.csv", owner_id=principal.user_id)
+        result = application.dataset_upload.upload(
+            file.file,
+            original_filename=file.filename or "upload.csv",
+            owner_id=principal.user_id,
+            request_id=request.state.request_id,
+            role=principal.role.value,
+        )
     except UploadValidationError as exc:
         status_code = 413 if exc.code is DatasetErrorCode.FILE_TOO_LARGE else 422
         raise APIError(exc.code.value, "dataset upload is invalid", status_code=status_code) from exc
@@ -76,6 +83,15 @@ def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depen
     try:
         return _response(_catalog(request).get_for_subject(_subject(principal), dataset_id))
     except DatasetAccessDeniedError as exc:
+        request.app.state.api_application.record_audit(
+            action=AuditAction.AUTHORIZATION_DENIED,
+            user_id=principal.user_id,
+            request_id=request.state.request_id,
+            target_type="dataset",
+            target_id=dataset_id,
+            success=False,
+            metadata={"reason_code": "DATASET_NOT_FOUND"},
+        )
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
     except (DatasetPersistenceError, PersistenceError) as exc:
         raise APIError("DATASET_PERSISTENCE_FAILURE", "dataset metadata is unavailable", status_code=503) from exc
@@ -84,8 +100,19 @@ def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depen
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_dataset(request: Request, dataset_id: UUID, principal: Principal = Depends(get_current_principal)):
     try:
-        _catalog(request).delete_for_subject(_subject(principal), dataset_id)
+        _catalog(request).delete_for_subject(
+            _subject(principal), dataset_id, request_id=request.state.request_id
+        )
     except DatasetAccessDeniedError as exc:
+        request.app.state.api_application.record_audit(
+            action=AuditAction.AUTHORIZATION_DENIED,
+            user_id=principal.user_id,
+            request_id=request.state.request_id,
+            target_type="dataset",
+            target_id=dataset_id,
+            success=False,
+            metadata={"reason_code": "DATASET_NOT_FOUND"},
+        )
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
     except StorageError as exc:
         raise APIError(exc.code.value, "dataset service is unavailable", status_code=503) from exc

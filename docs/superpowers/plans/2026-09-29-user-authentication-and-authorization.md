@@ -652,11 +652,11 @@ git commit -m "feat: protect artifact downloads with authorization"
 - `AuditWriter.record(*, action: AuditAction, user_id: UUID | None, request_id: str, target_type: str | None = None, target_id: UUID | None = None, success: bool, metadata: Mapping[str, str | int | bool] | None = None) -> AuditEventRecord` writes only allowlisted metadata.
 - Existing API test fixtures explicitly set `application.principal_provider = HeaderPrincipalProvider()` before `create_app(application)`; this is a test adapter, not an automatic runtime behavior.
 
-- [ ] **Step 1: Write failing audit integration tests.**
+- [x] **Step 1: Write failing audit integration tests.**
 
 Add tests that register/login/logout, upload/delete a dataset, create/cancel/retry a task, attempt a denied foreign access, and download a report. Assert one audit event for each action, the correct `user_id` when known, the request ID, and absence of these strings in serialized event metadata: `password`, `password_hash`, `daa_session`, `token`, `file_path`, `source_uri`, `storage_uri`, `DATABASE_URL`.
 
-- [ ] **Step 2: Run audit integration tests and confirm missing events.**
+- [x] **Step 2: Run audit integration tests and confirm missing events.**
 
 ```powershell
 E:\anaconda\python.exe -m pytest tests/api/test_audit.py tests/api/test_auth.py -q
@@ -664,13 +664,13 @@ E:\anaconda\python.exe -m pytest tests/api/test_audit.py tests/api/test_auth.py 
 
 Expected: auth flow may pass, but business-action audit assertions fail until route integration is complete.
 
-- [ ] **Step 3: Implement the audit writer and route integration.**
+- [x] **Step 3: Implement the audit writer and route integration.**
 
 Add `AuditWriter` in `src/data_analysis_agent/services/audit.py` using `UnitOfWork.audit_events.add()`. Allow only scalar metadata keys `email_domain`, `resource_type`, `role`, `status_code`, and `reason_code`; discard or reject all other keys. Pass `request.state.request_id` from routes. For mutation actions, write the audit row in the same Unit of Work as the business mutation. For denied reads/downloads, write a best-effort event with no sensitive details and preserve the stable public error.
 
 Wire `AuditWriter` into `APIApplication` and the auth/resource routes. Update environment examples with `AUTH_SESSION_TTL_SECONDS`, `AUTH_SESSION_COOKIE_NAME`, `AUTH_SESSION_COOKIE_SECURE`, and `AUTH_ADMIN_EMAILS`; document that Header authentication is test-only and show the register/login flow in README.
 
-- [ ] **Step 4: Run all API and persistence regression tests.**
+- [x] **Step 4: Run all API and persistence regression tests.**
 
 ```powershell
 E:\anaconda\python.exe -m pytest tests/api tests/database -q

@@ -4,13 +4,14 @@ from typing import Any
 from uuid import UUID
 
 from ..api.schemas import AnalysisTaskCreateRequest
-from ..domain.enums import TaskEventType, TaskStatus
+from ..domain.enums import AuditAction, TaskEventType, TaskStatus
 from ..domain.models import AnalysisTask, TaskEvent, utc_now
 from ..domain.state import transition_task
 from ..persistence.errors import EntityNotFoundError
 from ..persistence.models import UserRecord
 from ..persistence.repositories import TaskCreationResult
 from .authorization import AccessSubject
+from .audit import AuditWriter
 from .idempotency import compute_request_hash
 
 
@@ -29,8 +30,9 @@ class TaskRetryConflictError(ValueError):
 
 
 class TaskPersistenceService:
-    def __init__(self, uow_factory):
+    def __init__(self, uow_factory, audit_writer: AuditWriter | None = None):
         self.uow_factory = uow_factory
+        self.audit_writer = audit_writer
 
     def create_task(
         self, *, user_id: UUID, request: AnalysisTaskCreateRequest
@@ -84,7 +86,11 @@ class TaskPersistenceService:
             return uow.tasks.get(task_id)
 
     def create_task_with_result_for_subject(
-        self, *, subject: AccessSubject, request: AnalysisTaskCreateRequest
+        self,
+        *,
+        subject: AccessSubject,
+        request: AnalysisTaskCreateRequest,
+        request_id: str | None = None,
     ) -> TaskCreationResult:
         request_hash = compute_request_hash(request)
         task = AnalysisTask(
@@ -124,6 +130,20 @@ class TaskPersistenceService:
                         message="task created",
                     )
                 )
+                if self.audit_writer is not None and request_id is not None:
+                    self.audit_writer.record_in_uow(
+                        uow,
+                        action=AuditAction.TASK_CREATED,
+                        user_id=subject.user_id,
+                        request_id=request_id,
+                        target_type="task",
+                        target_id=result.task.task_id,
+                        success=True,
+                        metadata={
+                            "resource_type": "task",
+                            "role": subject.role.value,
+                        },
+                    )
             uow.commit()
             return result
 
@@ -207,7 +227,11 @@ class TaskPersistenceService:
             return updated
 
     def retry_failed_task_for_subject(
-        self, task_id: UUID, subject: AccessSubject
+        self,
+        task_id: UUID,
+        subject: AccessSubject,
+        *,
+        request_id: str | None = None,
     ) -> AnalysisTask:
         with self.uow_factory() as uow:
             current = uow.tasks.get_for_subject(task_id, subject, for_update=True)
@@ -229,6 +253,20 @@ class TaskPersistenceService:
             if not uow.tasks.update_if_status(updated, expected=TaskStatus.FAILED):
                 raise TaskRetryConflictError("task is not failed")
             uow.task_events.append(event)
+            if self.audit_writer is not None and request_id is not None:
+                self.audit_writer.record_in_uow(
+                    uow,
+                    action=AuditAction.TASK_RETRIED,
+                    user_id=subject.user_id,
+                    request_id=request_id,
+                    target_type="task",
+                    target_id=task_id,
+                    success=True,
+                    metadata={
+                        "resource_type": "task",
+                        "role": subject.role.value,
+                    },
+                )
             uow.commit()
             return updated
 
@@ -258,7 +296,11 @@ class TaskPersistenceService:
             return updated, True
 
     def cancel_task_for_subject(
-        self, task_id: UUID, subject: AccessSubject
+        self,
+        task_id: UUID,
+        subject: AccessSubject,
+        *,
+        request_id: str | None = None,
     ) -> tuple[AnalysisTask, bool]:
         with self.uow_factory() as uow:
             current = uow.tasks.get_for_subject(task_id, subject, for_update=True)
@@ -290,6 +332,20 @@ class TaskPersistenceService:
             if not uow.tasks.update_if_status(updated, expected=current.status):
                 return uow.tasks.get(task_id), False
             uow.task_events.append(event)
+            if self.audit_writer is not None and request_id is not None:
+                self.audit_writer.record_in_uow(
+                    uow,
+                    action=AuditAction.TASK_CANCELLED,
+                    user_id=subject.user_id,
+                    request_id=request_id,
+                    target_type="task",
+                    target_id=task_id,
+                    success=True,
+                    metadata={
+                        "resource_type": "task",
+                        "role": subject.role.value,
+                    },
+                )
             uow.commit()
             return updated, True
 

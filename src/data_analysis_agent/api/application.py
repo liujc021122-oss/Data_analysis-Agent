@@ -12,6 +12,7 @@ from ..datasets import CsvInspector, UnitOfWorkDatasetStore
 from ..storage.factory import build_storage
 from ..storage import FileAccessService, Storage
 from ..services.auth import AuthenticationService
+from ..services.audit import AuditWriter
 from ..services.authorization import AccessSubject
 
 if TYPE_CHECKING:
@@ -51,7 +52,18 @@ class APIApplication:
     task_submission: TaskSubmissionService | None = None
     file_access: FileAccessService | None = None
     auth_service: AuthenticationService | None = None
+    audit_writer: AuditWriter | None = None
     principal_provider: PrincipalProvider | None = None
+
+    def __post_init__(self) -> None:
+        if self.audit_writer is None and self.database is not None:
+            self.audit_writer = AuditWriter(
+                lambda: UnitOfWork(self.database.session_factory)
+            )
+
+    def record_audit(self, **kwargs) -> None:
+        if self.audit_writer is not None:
+            self.audit_writer.try_record(**kwargs)
 
     def configure_task_persistence(self) -> None:
         if self.database is None:
@@ -59,7 +71,8 @@ class APIApplication:
         from ..services.persistence import TaskPersistenceService
 
         self.task_persistence = TaskPersistenceService(
-            lambda: UnitOfWork(self.database.session_factory)
+            lambda: UnitOfWork(self.database.session_factory),
+            audit_writer=self.audit_writer,
         )
 
     def configure_task_services(self, broker: TaskBroker) -> None:
@@ -78,14 +91,16 @@ class APIApplication:
             return cls(settings=settings, database=None, storage=storage)
         def uow_factory():
             return UnitOfWork(database.session_factory)
-        metadata_store = UnitOfWorkDatasetStore(uow_factory)
+        audit_writer = AuditWriter(uow_factory)
+        metadata_store = UnitOfWorkDatasetStore(uow_factory, audit_writer=audit_writer)
         application = cls(
             settings=settings,
             database=database,
             storage=storage,
             auth_service=AuthenticationService(uow_factory, settings),
+            audit_writer=audit_writer,
             dataset_upload=DatasetUploadService(storage=storage, inspector=CsvInspector(), metadata_store=metadata_store, max_upload_size=settings.max_upload_size),
-            dataset_catalog=DatasetCatalogService(storage=storage, uow_factory=uow_factory),
+            dataset_catalog=DatasetCatalogService(storage=storage, uow_factory=uow_factory, audit_writer=audit_writer),
             file_access=FileAccessService(
                 storage=storage,
                 artifact_repository=_AuthorizedArtifactLookup(database),

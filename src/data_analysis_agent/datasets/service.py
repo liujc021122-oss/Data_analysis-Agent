@@ -7,10 +7,12 @@ from uuid import UUID, uuid4
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..domain.models import utc_now
+from ..domain.enums import AuditAction
 from ..persistence.errors import PersistenceError, TransactionError
 from ..persistence.models import DatasetRecord, UserRecord
 from ..persistence.unit_of_work import UnitOfWork
 from ..services.authorization import AccessSubject
+from ..services.audit import AuditWriter
 from ..storage import Storage, dataset_key, normalize_filename
 from ..storage.errors import StorageError as CanonicalStorageError
 from ..storage.errors import StorageErrorCode as CanonicalStorageErrorCode
@@ -34,14 +36,39 @@ class DatasetMetadataStore(Protocol):
 
 
 class UnitOfWorkDatasetStore:
-    def __init__(self, uow_factory: Callable[[], UnitOfWork]):
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        audit_writer: AuditWriter | None = None,
+    ):
         self._uow_factory = uow_factory
+        self._audit_writer = audit_writer
 
-    def create(self, record: DatasetRecord) -> DatasetRecord:
+    def create(
+        self,
+        record: DatasetRecord,
+        *,
+        request_id: str | None = None,
+        role: str | None = None,
+    ) -> DatasetRecord:
         try:
             with self._uow_factory() as uow:
                 uow.users.ensure(UserRecord(user_id=record.user_id, created_at=record.created_at))
                 created = uow.datasets.add(record)
+                if self._audit_writer is not None and request_id is not None:
+                    self._audit_writer.record_in_uow(
+                        uow,
+                        action=AuditAction.DATASET_UPLOADED,
+                        user_id=record.user_id,
+                        request_id=request_id,
+                        target_type="dataset",
+                        target_id=record.dataset_id,
+                        success=True,
+                        metadata={
+                            "resource_type": "dataset",
+                            **({"role": role} if role is not None else {}),
+                        },
+                    )
                 uow.commit()
                 return created
         except TransactionError as exc:
@@ -66,9 +93,10 @@ class UnitOfWorkDatasetStore:
 
 
 class DatasetCatalogService:
-    def __init__(self, *, storage: Storage, uow_factory):
+    def __init__(self, *, storage: Storage, uow_factory, audit_writer: AuditWriter | None = None):
         self._storage = storage
         self._uow_factory = uow_factory
+        self._audit_writer = audit_writer
 
     def list_for_user(self, user_id: UUID, offset: int, limit: int):
         try:
@@ -157,7 +185,13 @@ class DatasetCatalogService:
                 details={"reconciliation_required": True},
             ) from exc
 
-    def delete_for_subject(self, subject: AccessSubject, dataset_id: UUID) -> None:
+    def delete_for_subject(
+        self,
+        subject: AccessSubject,
+        dataset_id: UUID,
+        *,
+        request_id: str | None = None,
+    ) -> None:
         record = self.get_for_subject(subject, dataset_id)
         try:
             self._storage.delete(record.source_uri)
@@ -172,6 +206,20 @@ class DatasetCatalogService:
                     raise DatasetAccessDeniedError(
                         DatasetErrorCode.DATASET_ACCESS_DENIED,
                         "dataset is not available",
+                    )
+                if self._audit_writer is not None and request_id is not None:
+                    self._audit_writer.record_in_uow(
+                        uow,
+                        action=AuditAction.DATASET_DELETED,
+                        user_id=subject.user_id,
+                        request_id=request_id,
+                        target_type="dataset",
+                        target_id=dataset_id,
+                        success=True,
+                        metadata={
+                            "resource_type": "dataset",
+                            "role": subject.role.value,
+                        },
                     )
                 uow.commit()
         except (DatasetAccessDeniedError, DatasetPersistenceError):
@@ -207,8 +255,15 @@ class DatasetUploadService:
         self._metadata_store = metadata_store
         self._max_upload_size = max_upload_size
 
-    def upload(self, stream: BinaryIO, *, original_filename: str,
-               owner_id: UUID) -> DatasetUploadResult:
+    def upload(
+        self,
+        stream: BinaryIO,
+        *,
+        original_filename: str,
+        owner_id: UUID,
+        request_id: str | None = None,
+        role: str | None = None,
+    ) -> DatasetUploadResult:
         try:
             safe_name = normalize_filename(original_filename)
         except (TypeError, ValueError) as exc:
@@ -263,7 +318,14 @@ class DatasetUploadService:
                 },
             )
             try:
-                self._metadata_store.create(record)
+                if request_id is not None and isinstance(
+                    self._metadata_store, UnitOfWorkDatasetStore
+                ):
+                    self._metadata_store.create(
+                        record, request_id=request_id, role=role
+                    )
+                else:
+                    self._metadata_store.create(record)
             except Exception as exc:
                 try:
                     self._storage.delete(stored.uri)

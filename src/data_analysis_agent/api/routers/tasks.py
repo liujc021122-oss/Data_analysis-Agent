@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from ...domain.enums import TaskStatus
+from ...domain.enums import AuditAction, TaskStatus
 from ...persistence.errors import EntityNotFoundError, IdempotencyConflictError, PersistenceError
 from ...services.authorization import AccessSubject
 from ..auth import Principal, get_current_principal
@@ -38,6 +38,18 @@ def _subject(principal: Principal) -> AccessSubject:
     return AccessSubject(user_id=principal.user_id, role=principal.role)
 
 
+def _record_denied(request: Request, principal: Principal, *, target_type: str, target_id: UUID | None = None, reason_code: str = "TASK_NOT_FOUND") -> None:
+    request.app.state.api_application.record_audit(
+        action=AuditAction.AUTHORIZATION_DENIED,
+        user_id=principal.user_id,
+        request_id=request.state.request_id,
+        target_type=target_type,
+        target_id=target_id,
+        success=False,
+        metadata={"reason_code": reason_code},
+    )
+
+
 def _task_response(task, artifacts=(), *, request_id: str):
     error = None
     if task.error_code:
@@ -66,8 +78,19 @@ def create_task(request: Request, payload: AnalysisTaskCreateRequest,
 
     _, submission = _services(request)
     try:
-        result = submission.submit_for_subject(subject=_subject(principal), request=payload)
+        result = submission.submit_for_subject(
+            subject=_subject(principal),
+            request=payload,
+            request_id=request.state.request_id,
+        )
     except EntityNotFoundError as exc:
+        _record_denied(
+            request,
+            principal,
+            target_type="dataset",
+            target_id=payload.dataset_ids[0] if payload.dataset_ids else None,
+            reason_code="DATASET_NOT_FOUND",
+        )
         raise APIError("DATASET_NOT_FOUND", "dataset is not available", status_code=404) from exc
     except IdempotencyConflictError as exc:
         raise APIError("IDEMPOTENCY_CONFLICT", "idempotency key was reused", status_code=409) from exc
@@ -99,10 +122,12 @@ def get_task(request: Request, task_id: UUID, principal: Principal = Depends(get
     try:
         task = persistence.get_task_for_subject(task_id, _subject(principal))
         if task is None:
+            _record_denied(request, principal, target_type="task", target_id=task_id)
             raise _not_found()
         artifacts = persistence.list_artifacts_for_subject(task_id, _subject(principal))
         return _task_response(task, artifacts, request_id=request.state.request_id)
     except EntityNotFoundError as exc:
+        _record_denied(request, principal, target_type="task", target_id=task_id)
         raise _not_found() from exc
     except PersistenceError as exc:
         raise APIError("TASK_PERSISTENCE_FAILURE", "task service is unavailable", status_code=503) from exc
@@ -117,6 +142,7 @@ def list_events(request: Request, task_id: UUID, page: int = Query(default=1, ge
     try:
         events, total = persistence.list_events_for_subject(task_id, _subject(principal), params.offset, page_size)
     except EntityNotFoundError as exc:
+        _record_denied(request, principal, target_type="task", target_id=task_id)
         raise _not_found() from exc
     except PersistenceError as exc:
         raise APIError("TASK_PERSISTENCE_FAILURE", "task service is unavailable", status_code=503) from exc
@@ -129,11 +155,15 @@ def list_events(request: Request, task_id: UUID, page: int = Query(default=1, ge
 def cancel_task(request: Request, task_id: UUID, principal: Principal = Depends(get_current_principal)):
     _, submission = _services(request)
     try:
-        return _task_response(submission.cancel_for_subject(task_id, _subject(principal)), request_id=request.state.request_id)
+        task = submission.cancel_for_subject(
+            task_id, _subject(principal), request_id=request.state.request_id
+        )
     except EntityNotFoundError as exc:
+        _record_denied(request, principal, target_type="task", target_id=task_id)
         raise _not_found() from exc
     except PersistenceError as exc:
         raise APIError("TASK_PERSISTENCE_FAILURE", "task service is unavailable", status_code=503) from exc
+    return _task_response(task, request_id=request.state.request_id)
 
 
 @router.post("/{task_id}/retry", response_model=TaskRetryResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -143,8 +173,11 @@ def retry_task(request: Request, task_id: UUID, principal: Principal = Depends(g
 
     _, submission = _services(request)
     try:
-        result = submission.retry_for_subject(task_id, _subject(principal))
+        result = submission.retry_for_subject(
+            task_id, _subject(principal), request_id=request.state.request_id
+        )
     except EntityNotFoundError as exc:
+        _record_denied(request, principal, target_type="task", target_id=task_id)
         raise _not_found() from exc
     except TaskRetryConflictError as exc:
         raise APIError("TASK_NOT_RETRYABLE", "task is not failed", status_code=409) from exc

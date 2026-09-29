@@ -109,10 +109,10 @@ class TaskSubmissionService:
         )
 
     def submit_for_subject(
-        self, *, subject: AccessSubject, request
+        self, *, subject: AccessSubject, request, request_id: str | None = None
     ) -> TaskSubmissionResult:
         creation = self.persistence.create_task_with_result_for_subject(
-            subject=subject, request=request
+            subject=subject, request=request, request_id=request_id
         )
         if not creation.created:
             return TaskSubmissionResult(
@@ -173,8 +173,12 @@ class TaskSubmissionService:
                 self.cancellation_registry.request(task_id)
         return updated
 
-    def cancel_for_subject(self, task_id: UUID, subject: AccessSubject):
-        updated, changed = self.persistence.cancel_task_for_subject(task_id, subject)
+    def cancel_for_subject(
+        self, task_id: UUID, subject: AccessSubject, request_id: str | None = None
+    ):
+        updated, changed = self.persistence.cancel_task_for_subject(
+            task_id, subject, request_id=request_id
+        )
         if changed:
             try:
                 self.broker.revoke(task_id, terminate=True, signal="SIGTERM")
@@ -198,9 +202,11 @@ class TaskSubmissionService:
         )
 
     def retry_for_subject(
-        self, task_id: UUID, subject: AccessSubject
+        self, task_id: UUID, subject: AccessSubject, request_id: str | None = None
     ) -> TaskSubmissionResult:
-        queued = self.persistence.retry_failed_task_for_subject(task_id, subject)
+        queued = self.persistence.retry_failed_task_for_subject(
+            task_id, subject, request_id=request_id
+        )
         try:
             message = self.broker.enqueue(task_id)
         except Exception as exc:

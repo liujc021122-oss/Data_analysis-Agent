@@ -425,23 +425,33 @@ uvicorn data_analysis_agent.api.app:create_app --factory --reload
 `content_url` 访问受保护的 HTTP 内容端点。端点会再次校验当前用户、令牌有效期、
 对象路径、大小和哈希，不会暴露宿主机文件路径。
 
-服务提供 `/docs` 和 `/openapi.json`。数据集上传使用 `multipart/form-data`，分析任务使用
-JSON；两者都会返回不透明的 ID：
+服务提供 `/docs` 和 `/openapi.json`。浏览器 API 使用服务端 opaque Session：登录响应设置
+`HttpOnly`、`SameSite=Lax` Cookie，服务端只保存 Session Token 的哈希。先注册并登录，
+再使用 Cookie 访问数据集和任务接口：
 
 ```powershell
-curl.exe -X POST http://127.0.0.1:8000/api/datasets `
-  -H "X-User-ID: 00000000-0000-0000-0000-000000000001" `
+curl.exe -X POST http://127.0.0.1:8000/api/auth/register `
+  -H "Content-Type: application/json" `
+  -d '{"email":"owner@example.com","password":"correct horse battery staple"}'
+
+curl.exe -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{"email":"owner@example.com","password":"correct horse battery staple"}'
+
+curl.exe -b cookies.txt -X POST http://127.0.0.1:8000/api/datasets `
   -F "file=@sales.csv"
 
-curl.exe -X POST http://127.0.0.1:8000/api/analysis-tasks `
+curl.exe -b cookies.txt -X POST http://127.0.0.1:8000/api/analysis-tasks `
   -H "Content-Type: application/json" `
-  -H "X-User-ID: 00000000-0000-0000-0000-000000000001" `
   -d '{"query":"分析销售趋势","idempotency_key":"sales-2026-09"}'
 ```
 
-`X-User-ID` 只用于开发和测试环境。生产环境必须注入 JWT/OIDC 等正式身份提供器，服务
-不会回退到请求头身份。任务、事件、图表和报告读取都会按当前用户授权；错误响应统一
-包含 `code`、`message`、`details` 和 `request_id`。
+`X-User-ID` 不属于默认运行时认证，只能由测试显式注入 `HeaderPrincipalProvider`。管理员邮箱
+由 `AUTH_ADMIN_EMAILS` 配置，管理员可跨用户读取和下载；普通用户只能访问自己的数据集、
+任务和报告。退出请求会撤销 Session，之后 Cookie 不能继续访问业务数据。敏感操作会写入
+`audit_events`，审计 metadata 只保留资源类型、角色、状态码和错误码等安全标量，不记录
+密码、Token、Cookie、文件路径、对象 URI 或数据库 URL。错误响应统一包含 `code`、`message`、
+`details` 和 `request_id`。
 
 ### 文件存储抽象
 
