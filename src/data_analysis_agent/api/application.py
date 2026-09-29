@@ -12,6 +12,7 @@ from ..datasets import CsvInspector, UnitOfWorkDatasetStore
 from ..storage.factory import build_storage
 from ..storage import FileAccessService, Storage
 from ..services.auth import AuthenticationService
+from ..services.authorization import AccessSubject
 
 if TYPE_CHECKING:
     from ..services.persistence import TaskPersistenceService
@@ -29,6 +30,12 @@ class _AuthorizedArtifactLookup:
     def get_for_user(self, artifact_id: UUID, user_id: UUID) -> ArtifactRecord | None:
         with UnitOfWork(self._database.session_factory) as uow:
             return uow.artifacts.get_for_user(artifact_id, user_id)
+
+    def get_for_subject(
+        self, artifact_id: UUID, subject: AccessSubject
+    ) -> ArtifactRecord | None:
+        with UnitOfWork(self._database.session_factory) as uow:
+            return uow.artifacts.get_for_subject(artifact_id, subject)
 
 
 @dataclass
@@ -82,6 +89,11 @@ class APIApplication:
             file_access=FileAccessService(
                 storage=storage,
                 artifact_repository=_AuthorizedArtifactLookup(database),
+                content_signing_secret=(
+                    settings.storage_signing_secret.encode("utf-8")
+                    if settings.storage_signing_secret
+                    else None
+                ),
             ),
         )
         if settings.app_env == "production" or (

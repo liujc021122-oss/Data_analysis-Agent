@@ -7,8 +7,10 @@ from fastapi.testclient import TestClient
 from data_analysis_agent.api.app import create_app
 from data_analysis_agent.api.application import APIApplication
 from data_analysis_agent.api.auth import HeaderPrincipalProvider
+from data_analysis_agent.api.auth import Principal
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
 from data_analysis_agent.config.settings import load_settings
+from data_analysis_agent.domain.enums import UserRole
 from data_analysis_agent.persistence.database import init_database
 from data_analysis_agent.persistence.models import ArtifactRecord
 
@@ -152,3 +154,21 @@ def test_artifact_routes_require_authentication(artifact_api):
 
     assert response.status_code == 401
     assert response.json()["code"] == "AUTHENTICATION_REQUIRED"
+
+
+def test_admin_can_download_another_users_artifact(artifact_api):
+    application, artifact, _owner, _foreign = artifact_api
+    admin_user_id = uuid4()
+
+    class AdminPrincipalProvider:
+        def current_principal(self, request):
+            return Principal(user_id=admin_user_id, role=UserRole.ADMIN)
+
+    application.principal_provider = AdminPrincipalProvider()
+    admin = TestClient(create_app(application))
+
+    metadata = admin.get(f"/api/artifacts/{artifact.artifact_id}")
+    assert metadata.status_code == 200, metadata.text
+    content = admin.get(metadata.json()["content_url"])
+    assert content.status_code == 200, content.text
+    assert content.content == b"chart"

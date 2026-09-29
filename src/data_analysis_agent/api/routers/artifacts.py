@@ -1,5 +1,5 @@
 from uuid import UUID
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from ...persistence.errors import PersistenceError
 from ...persistence.models import ArtifactRecord
 from ...persistence.unit_of_work import UnitOfWork
+from ...services.authorization import AccessSubject
 from ...storage import FileAccessDeniedError, artifact_content_url
 from ..application import APIApplication
 from ..auth import Principal, get_current_principal
@@ -34,17 +35,17 @@ def _services(request: Request) -> APIApplication:
 
 
 def _record_and_url(
-    request: Request, artifact_id: UUID, user_id: UUID
+    request: Request, artifact_id: UUID, subject: AccessSubject
 ) -> tuple[ArtifactRecord, str, int]:
     application = _services(request)
     try:
         with UnitOfWork(application.database.session_factory) as uow:
-            record = uow.artifacts.get_for_user(artifact_id, user_id)
+            record = uow.artifacts.get_for_subject(artifact_id, subject)
         if record is None:
             raise _not_found()
-        url = application.file_access.create_download_url(
+        url = application.file_access.create_download_url_for_subject(
             artifact_id,
-            user_id,
+            subject,
             expires_in=application.settings.storage_url_expiry,
         )
     except FileAccessDeniedError as exc:
@@ -58,8 +59,26 @@ def _record_and_url(
     return record, url, application.settings.storage_url_expiry
 
 
-def _content_url(artifact_id: UUID, download_url: str) -> str:
-    return artifact_content_url(artifact_id, download_url)
+def _content_url(
+    request: Request,
+    artifact_id: UUID,
+    download_url: str,
+    subject: AccessSubject,
+    expires_in: int,
+) -> str:
+    if download_url.startswith("local-download://"):
+        return artifact_content_url(artifact_id, download_url)
+    application = _services(request)
+    try:
+        token = application.file_access.create_content_token_for_subject(
+            artifact_id,
+            subject,
+            expires_in=expires_in,
+        )
+    except FileAccessDeniedError as exc:
+        raise _not_found() from exc
+    query = urlencode({"download_url": token})
+    return f"/api/artifacts/{artifact_id}/content?{query}"
 
 
 @router.get("/{artifact_id}", response_model=ArtifactResponse)
@@ -68,13 +87,18 @@ def get_artifact(
     artifact_id: UUID,
     principal: Principal = Depends(get_current_principal),
 ):
-    record, url, _expiry = _record_and_url(request, artifact_id, principal.user_id)
+    subject = AccessSubject(user_id=principal.user_id, role=principal.role)
+    record, url, expiry = _record_and_url(
+        request,
+        artifact_id,
+        subject,
+    )
     return ArtifactResponse(
         artifact_id=record.artifact_id,
         artifact_type=record.artifact_type,
         name=record.name,
         download_url=url,
-        content_url=_content_url(record.artifact_id, url),
+        content_url=_content_url(request, record.artifact_id, url, subject, expiry),
         format=record.format,
         mime_type=record.mime_type,
         description=record.description,
@@ -89,11 +113,16 @@ def download_artifact(
     artifact_id: UUID,
     principal: Principal = Depends(get_current_principal),
 ):
-    _record, url, expires_in = _record_and_url(request, artifact_id, principal.user_id)
+    subject = AccessSubject(user_id=principal.user_id, role=principal.role)
+    _record, url, expires_in = _record_and_url(
+        request,
+        artifact_id,
+        subject,
+    )
     return ArtifactDownloadResponse(
         artifact_id=artifact_id,
         download_url=url,
-        content_url=_content_url(artifact_id, url),
+        content_url=_content_url(request, artifact_id, url, subject, expires_in),
         expires_in=expires_in,
     )
 
@@ -111,10 +140,11 @@ def download_artifact_content(
     if not download_url or (token is not None and download_url != token):
         raise _not_found()
     application = _services(request)
+    subject = AccessSubject(user_id=principal.user_id, role=principal.role)
     try:
-        record, stream = application.file_access.open_download(
+        record, stream = application.file_access.open_download_for_subject(
             artifact_id,
-            principal.user_id,
+            subject,
             download_url,
         )
     except FileAccessDeniedError as exc:

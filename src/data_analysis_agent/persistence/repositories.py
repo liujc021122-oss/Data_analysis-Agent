@@ -678,6 +678,13 @@ class ArtifactRepository:
             return None
         return self._to_record(row)
 
+    def get_for_subject(
+        self, artifact_id: UUID, subject: AccessSubject
+    ) -> ArtifactRecord | None:
+        if subject.is_admin:
+            return self.get(artifact_id)
+        return self.get_for_user(artifact_id, subject.user_id)
+
     def list_for_task(self, task_id: UUID) -> list[ArtifactRecord]:
         rows = self.session.scalars(select(ArtifactORM).where(ArtifactORM.task_id == task_id).order_by(ArtifactORM.created_at, ArtifactORM.artifact_id)).all()
         return [self._to_record(row) for row in rows]

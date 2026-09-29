@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from ..domain.models import utc_now
 from ..persistence.models import ArtifactRecord, ReportRecord
+from ..services.authorization import AccessSubject
 from .errors import StorageError, StorageErrorCode
 from .keys import normalize_filename, task_file_key
 from .models import StorageObject
@@ -25,6 +26,11 @@ class ArtifactRepository(Protocol):
         ...
 
     def get_for_user(self, artifact_id: UUID, user_id: UUID) -> ArtifactRecord | None:
+        ...
+
+    def get_for_subject(
+        self, artifact_id: UUID, subject: AccessSubject
+    ) -> ArtifactRecord | None:
         ...
 
 
