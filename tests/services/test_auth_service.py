@@ -233,3 +233,21 @@ def test_authentication_actions_write_allowlisted_audit_events(auth_service, uow
         serialized = json.dumps(event["metadata"]).lower()
         assert not forbidden & set(serialized.split())
         assert all(secret not in serialized for secret in forbidden)
+
+
+def test_failed_login_audit_does_not_persist_untrusted_email_domain(
+    auth_service, uow_factory
+):
+    submitted_password = "correct horse battery staple"
+
+    with pytest.raises(InvalidCredentialsError):
+        auth_service.login(
+            email=f"attacker@{submitted_password}",
+            password=submitted_password,
+            request_id="req-untrusted-domain",
+        )
+
+    events = _audit_events(uow_factory)
+    failed = next(event for event in events if event["request_id"] == "req-untrusted-domain")
+    serialized = json.dumps(failed["metadata"])
+    assert submitted_password not in serialized

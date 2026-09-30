@@ -108,11 +108,17 @@ class AuditWriter:
     ) -> dict[str, str | int | bool]:
         if metadata is None:
             return {}
-        return {
-            key: value
-            for key, value in metadata.items()
-            if key in _ALLOWED_METADATA_KEYS and isinstance(value, _SCALAR_TYPES)
-        }
+        safe: dict[str, str | int | bool] = {}
+        for key, value in metadata.items():
+            if key not in _ALLOWED_METADATA_KEYS or not isinstance(value, _SCALAR_TYPES):
+                continue
+            if key == "email_domain":
+                # Keep the field useful for coarse monitoring without persisting
+                # any caller-controlled email text that could contain a secret.
+                safe[key] = "provided" if value else "invalid"
+            else:
+                safe[key] = value
+        return safe
 
 
 __all__ = ["AuditWriter"]

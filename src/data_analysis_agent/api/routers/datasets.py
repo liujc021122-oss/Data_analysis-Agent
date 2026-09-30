@@ -75,13 +75,31 @@ def list_datasets(
         records, total = service.list_for_subject(_subject(principal), params.offset, params.page_size)
     except (DatasetPersistenceError, PersistenceError) as exc:
         raise APIError("DATASET_PERSISTENCE_FAILURE", "dataset metadata is unavailable", status_code=503) from exc
+    subject = _subject(principal)
+    for record in records:
+        request.app.state.api_application.record_cross_user_access(
+            subject=subject,
+            owner_id=record.user_id,
+            request_id=request.state.request_id,
+            target_type="dataset",
+            target_id=record.dataset_id,
+        )
     return DatasetListResponse(items=[_response(record) for record in records], page=page, page_size=page_size, total=total, has_next=params.offset + len(records) < total)
 
 
 @router.get("/{dataset_id}", response_model=DatasetResponse)
 def get_dataset(request: Request, dataset_id: UUID, principal: Principal = Depends(get_current_principal)):
     try:
-        return _response(_catalog(request).get_for_subject(_subject(principal), dataset_id))
+        subject = _subject(principal)
+        record = _catalog(request).get_for_subject(subject, dataset_id)
+        request.app.state.api_application.record_cross_user_access(
+            subject=subject,
+            owner_id=record.user_id,
+            request_id=request.state.request_id,
+            target_type="dataset",
+            target_id=dataset_id,
+        )
+        return _response(record)
     except DatasetAccessDeniedError as exc:
         request.app.state.api_application.record_audit(
             action=AuditAction.AUTHORIZATION_DENIED,

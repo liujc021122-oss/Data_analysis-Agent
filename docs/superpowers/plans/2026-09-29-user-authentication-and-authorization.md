@@ -678,7 +678,7 @@ E:\anaconda\python.exe -m pytest tests/api tests/database -q
 
 Expected: all API/database tests pass, including old owner isolation tests and new session tests.
 
-- [ ] **Step 5: Commit audit integration and documentation.**
+- [x] **Step 5: Commit audit integration and documentation.**
 
 ```powershell
 git add src/data_analysis_agent/services/audit.py src/data_analysis_agent/api/app.py src/data_analysis_agent/api/application.py src/data_analysis_agent/api/routers/tasks.py src/data_analysis_agent/api/routers/datasets.py src/data_analysis_agent/api/routers/artifacts.py src/data_analysis_agent/services/auth.py tests/api/test_audit.py tests/database/conftest.py .env.development.example .env.test.example .env.production.example README.md
@@ -696,7 +696,7 @@ git commit -m "feat: audit authenticated API operations"
 **Interfaces:**
 - All M17 public behavior is covered by the committed tests and the design document at `docs/superpowers/specs/2026-09-29-user-authentication-and-authorization-design.md`.
 
-- [ ] **Step 1: Run the complete M17 focused suite.**
+- [x] **Step 1: Run the complete M17 focused suite.**
 
 ```powershell
 E:\anaconda\python.exe -m pytest tests/services/test_auth.py tests/services/test_auth_service.py tests/config/test_auth_settings.py tests/api/test_auth_schemas.py tests/api/test_auth.py tests/api/test_authorization.py tests/api/test_audit.py tests/api/test_artifacts.py tests/database/test_auth_persistence.py -q
@@ -704,7 +704,7 @@ E:\anaconda\python.exe -m pytest tests/services/test_auth.py tests/services/test
 
 Expected: all M17 tests pass with no new warnings or errors.
 
-- [ ] **Step 2: Run the existing complete suite.**
+- [x] **Step 2: Run the existing complete suite.**
 
 ```powershell
 E:\anaconda\python.exe -m pytest -q
@@ -712,7 +712,7 @@ E:\anaconda\python.exe -m pytest -q
 
 Expected: the pre-M17 baseline remains green except for already documented skips; any new failure is fixed before completion.
 
-- [ ] **Step 3: Verify static compilation, migration idempotency, and diff hygiene.**
+- [x] **Step 3: Verify static compilation, migration idempotency, and diff hygiene.**
 
 ```powershell
 E:\anaconda\python.exe -m compileall -q src
@@ -723,10 +723,10 @@ git diff --check
 
 Expected: all commands exit 0; the second migration run is a no-op; no whitespace errors are reported.
 
-- [ ] **Step 4: Perform the acceptance checklist.**
+- [x] **Step 4: Perform the acceptance checklist.**
 
 Verify with real TestClient flows that: an unauthenticated request cannot list business data; a second user cannot access another user's dataset/task/artifact/report by replacing an ID; a foreign download URL fails at content time; logout invalidates the old Session; an admin crosses the owner boundary while a regular user does not; password hashes and Session Tokens never appear in API responses or audit records; and the production app rejects Header Provider configuration.
 
-- [ ] **Step 5: Commit only concrete verification repairs and report results.**
+- [x] **Step 5: Commit only concrete verification repairs and report results.**
 
 If Step 1-4 required repairs, run the affected focused tests again and commit them with a specific message such as `fix: close M17 session authorization regression`. Otherwise leave the tree unchanged apart from the M17 commits and report the exact test/compile/migration results.

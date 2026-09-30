@@ -47,6 +47,25 @@ def _record_denied(request: Request, subject: AccessSubject, artifact_id: UUID, 
     )
 
 
+def _record_admin_artifact_access(
+    request: Request, subject: AccessSubject, record: ArtifactRecord
+) -> None:
+    application = request.app.state.api_application
+    if not subject.is_admin or application.task_persistence is None:
+        return
+    try:
+        owner_id = application.task_persistence.get_task_owner_id(record.task_id)
+    except Exception:
+        return
+    application.record_cross_user_access(
+        subject=subject,
+        owner_id=owner_id,
+        request_id=request.state.request_id,
+        target_type="artifact",
+        target_id=record.artifact_id,
+    )
+
+
 def _record_and_url(
     request: Request, artifact_id: UUID, subject: AccessSubject
 ) -> tuple[ArtifactRecord, str, int]:
@@ -109,6 +128,7 @@ def get_artifact(
         artifact_id,
         subject,
     )
+    _record_admin_artifact_access(request, subject, record)
     return ArtifactResponse(
         artifact_id=record.artifact_id,
         artifact_type=record.artifact_type,
@@ -130,11 +150,12 @@ def download_artifact(
     principal: Principal = Depends(get_current_principal),
 ):
     subject = AccessSubject(user_id=principal.user_id, role=principal.role)
-    _record, url, expires_in = _record_and_url(
+    record, url, expires_in = _record_and_url(
         request,
         artifact_id,
         subject,
     )
+    _record_admin_artifact_access(request, subject, record)
     return ArtifactDownloadResponse(
         artifact_id=artifact_id,
         download_url=url,
@@ -183,6 +204,7 @@ def download_artifact_content(
             "role": subject.role.value,
         },
     )
+    _record_admin_artifact_access(request, subject, record)
     safe_name = quote(record.name, safe="")
     return StreamingResponse(
         stream,

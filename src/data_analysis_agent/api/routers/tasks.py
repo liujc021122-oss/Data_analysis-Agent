@@ -50,6 +50,22 @@ def _record_denied(request: Request, principal: Principal, *, target_type: str, 
     )
 
 
+def _record_admin_task_access(request: Request, principal: Principal, persistence, task_id: UUID) -> None:
+    if not principal.is_admin:
+        return
+    try:
+        owner_id = persistence.get_task_owner_id(task_id)
+    except Exception:
+        return
+    request.app.state.api_application.record_cross_user_access(
+        subject=_subject(principal),
+        owner_id=owner_id,
+        request_id=request.state.request_id,
+        target_type="task",
+        target_id=task_id,
+    )
+
+
 def _task_response(task, artifacts=(), *, request_id: str):
     error = None
     if task.error_code:
@@ -112,6 +128,8 @@ def list_tasks(request: Request, task_status: TaskStatus | None = Query(default=
         items, total = persistence.list_tasks_for_subject(_subject(principal), task_status, params.offset, page_size)
     except PersistenceError as exc:
         raise APIError("TASK_PERSISTENCE_FAILURE", "task service is unavailable", status_code=503) from exc
+    for item in items:
+        _record_admin_task_access(request, principal, persistence, item.task_id)
     return TaskListResponse(items=[_task_response(item, request_id=request.state.request_id) for item in items], page=page,
                             page_size=page_size, total=total, has_next=params.offset + len(items) < total)
 
@@ -125,6 +143,7 @@ def get_task(request: Request, task_id: UUID, principal: Principal = Depends(get
             _record_denied(request, principal, target_type="task", target_id=task_id)
             raise _not_found()
         artifacts = persistence.list_artifacts_for_subject(task_id, _subject(principal))
+        _record_admin_task_access(request, principal, persistence, task_id)
         return _task_response(task, artifacts, request_id=request.state.request_id)
     except EntityNotFoundError as exc:
         _record_denied(request, principal, target_type="task", target_id=task_id)
@@ -146,6 +165,7 @@ def list_events(request: Request, task_id: UUID, page: int = Query(default=1, ge
         raise _not_found() from exc
     except PersistenceError as exc:
         raise APIError("TASK_PERSISTENCE_FAILURE", "task service is unavailable", status_code=503) from exc
+    _record_admin_task_access(request, principal, persistence, task_id)
     return TaskEventListResponse(items=[TaskEventResponse.model_validate(event) for event in events],
                                  page=page, page_size=page_size, total=total,
                                  has_next=params.offset + len(events) < total)

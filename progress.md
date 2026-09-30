@@ -92,3 +92,12 @@
 - 按批准的推荐方案新增报告 `content_url`：`ReportFormatResult`、Agent 顶层兼容字段和 `report_results` 均保留旧 `*_download_url` 并提供对应内容地址；本地签名令牌统一映射到受保护 Artifact `/content` 端点。
 - development 未配置 Redis 时不再注入 `InMemoryTaskBroker`；任务 persistence 保留用于读取，提交/取消/重试返回 `TASK_BROKER_NOT_CONFIGURED`。test 环境仍使用内存 broker。
 - 目标回归 `35 passed`，专项回归 `188 passed`，全量回归 `904 passed, 1 skipped`；`compileall`、editable install、重复 Alembic upgrade、Worker help 和 `git diff --check` 均通过。
+
+## 2026-09-30: M17 审查修复与最终验证
+
+- 独立审查发现两项 Important：管理员跨用户成功读取没有审计；登录失败审计绕过 `AuditWriter`，可把不可信邮箱域名写入 metadata。另记录了删除审计失败路径的原子性测试缺口。
+- 按 TDD 先新增回归测试：恶意邮箱域名不得包含提交的密码；管理员跨用户读取覆盖数据集列表/详情、任务列表/详情/事件和 Artifact 元数据/下载地址。两项测试均先按预期失败。
+- 修复认证事件统一经 `AuditWriter.record_in_uow()`，对 `email_domain` 只保留 `provided`/`invalid` 分类；新增 `ADMIN_CROSS_USER_ACCESS` 并接入跨用户成功读取审计，保持原有权限和错误契约。
+- README 明确生产多进程必须配置一致的 `STORAGE_SIGNING_SECRET`。
+- 修复后 M17 聚焦套件：`46 passed, 6 warnings`；全量回归：`945 passed, 1 skipped, 15 warnings`。
+- `compileall -q src`、首次和重复 SQLite Alembic upgrade、`git diff --check` 均退出码 0；唯一 skip 是当前环境不支持 symlink 的既有执行器测试。

@@ -24,6 +24,7 @@ def audit_api(tmp_path):
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite:///{tmp_path / 'audit.sqlite3'}",
             "STORAGE_LOCAL_ROOT": str(tmp_path / "objects"),
+            "AUTH_ADMIN_EMAILS": "admin@example.com",
         },
     )
     application = APIApplication.from_settings(settings)
@@ -242,3 +243,94 @@ def test_unauthenticated_business_access_is_audited(audit_api):
     assert events[0].action is AuditAction.AUTHENTICATION_DENIED
     assert events[0].user_id is None
     assert events[0].metadata_json == {"reason_code": "AUTHENTICATION_REQUIRED"}
+
+
+def test_admin_cross_user_reads_are_audited(audit_api):
+    application, owner, admin = audit_api
+    _register_and_login(owner, "owner@example.com", "owner-read")
+    _register_and_login(admin, "admin@example.com", "admin-read")
+
+    uploaded = owner.post(
+        "/api/datasets",
+        files={"file": ("sales.csv", b"name,value\na,1\n", "text/csv")},
+        headers={"X-Request-ID": "owner-read-upload"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    dataset_id = uploaded.json()["dataset_id"]
+
+    created = owner.post(
+        "/api/analysis-tasks",
+        json={"query": "admin read", "idempotency_key": "admin-read-task"},
+        headers={"X-Request-ID": "owner-read-task"},
+    )
+    assert created.status_code == 202, created.text
+    task_id = UUID(created.json()["task_id"])
+
+    stored = application.storage.put(
+        BytesIO(b"# report\n"),
+        key=f"tasks/{task_id}/reports/{uuid4()}_report.md",
+        content_type="text/markdown",
+    )
+    with UnitOfWork(application.database.session_factory) as uow:
+        task = application.task_persistence.get_task(task_id)
+        artifact = uow.artifacts.add(
+            ArtifactRecord(
+                task_id=task_id,
+                artifact_type="REPORT",
+                name="report.md",
+                file_path=stored.uri,
+                format="MARKDOWN",
+                mime_type="text/markdown",
+                content_hash=stored.checksum,
+                size_bytes=stored.size_bytes,
+                created_at=task.created_at,
+            )
+        )
+        uow.commit()
+
+    requests = {
+        "admin-dataset-list": admin.get(
+            "/api/datasets", headers={"X-Request-ID": "admin-dataset-list"}
+        ),
+        "admin-dataset-get": admin.get(
+            f"/api/datasets/{dataset_id}",
+            headers={"X-Request-ID": "admin-dataset-get"},
+        ),
+        "admin-task-list": admin.get(
+            "/api/analysis-tasks", headers={"X-Request-ID": "admin-task-list"}
+        ),
+        "admin-task-get": admin.get(
+            f"/api/analysis-tasks/{task_id}",
+            headers={"X-Request-ID": "admin-task-get"},
+        ),
+        "admin-task-events": admin.get(
+            f"/api/analysis-tasks/{task_id}/events",
+            headers={"X-Request-ID": "admin-task-events"},
+        ),
+        "admin-artifact-get": admin.get(
+            f"/api/artifacts/{artifact.artifact_id}",
+            headers={"X-Request-ID": "admin-artifact-get"},
+        ),
+        "admin-artifact-download": admin.get(
+            f"/api/artifacts/{artifact.artifact_id}/download",
+            headers={"X-Request-ID": "admin-artifact-download"},
+        ),
+    }
+    assert all(response.status_code == 200 for response in requests.values()), {
+        request_id: response.text for request_id, response in requests.items()
+    }
+
+    events = _events(application)
+    for request_id in requests:
+        matching = [
+            event
+            for event in events
+            if event.request_id == request_id
+        ]
+        assert len(matching) == 1, (request_id, matching)
+        assert matching[0].action.value == "ADMIN_CROSS_USER_ACCESS"
+        assert matching[0].success is True
+        assert matching[0].metadata_json == {
+            "resource_type": matching[0].target_type,
+            "role": "ADMIN",
+        }

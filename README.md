@@ -466,7 +466,9 @@ STORAGE_URL_EXPIRY=300
 STORAGE_RETENTION_DAYS=30
 ```
 
-生产环境还必须配置 `STORAGE_ENDPOINT` 和 `STORAGE_BUCKET`。前端或调用方应使用
+生产环境还必须配置 `STORAGE_ENDPOINT`、`STORAGE_BUCKET` 和稳定的
+`STORAGE_SIGNING_SECRET`。多进程或多副本部署必须让所有 API 进程使用同一个高熵密钥；
+未配置时应用会生成进程内随机密钥，跨进程生成和读取内容令牌会失败。前端或调用方应使用
 结果中的 `report_download_url`、`html_report_download_url`、`word_report_download_url`
 及对应的 `*_content_url` 或授权下载服务返回的临时 URL；不要把 `session_output_dir`、
 `report_file_path` 或其他本地绝对路径作为

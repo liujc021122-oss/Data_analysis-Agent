@@ -83,3 +83,9 @@
 
 - 报告服务已经登记 Artifact，但旧兼容结果只暴露本地签名令牌；`ReportFormatResult.content_url` 和顶层兼容字段现在通过共享 URL helper 指向受保护的 Artifact 内容端点，同时保留 `*_download_url`。
 - development 无 Redis 时不再创建无消费者的内存 broker；任务 persistence 仍可用，提交/取消/重试通过 `TASK_BROKER_NOT_CONFIGURED` 明确报告缺少异步 broker。test 环境继续使用内存 broker。
+
+## M17 审查修复发现
+
+- 管理员跨用户读取必须在成功路径审计，覆盖数据集、任务和 Artifact 元数据读取；列表场景按实际返回的跨用户资源写入目标 ID。
+- 认证服务直接构造审计记录会绕过 metadata allowlist；所有认证事件应通过 `AuditWriter.record_in_uow()`，并且不应把用户提交的邮箱域名原文写入审计值。
+- 本地/应用级内容令牌在多进程生产环境要求固定 `STORAGE_SIGNING_SECRET`；README 已明确配置约束。

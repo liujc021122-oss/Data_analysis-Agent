@@ -11,7 +11,8 @@ from argon2.exceptions import VerificationError
 from ..config.settings import Settings
 from ..domain.enums import AuditAction, UserRole
 from ..domain.models import utc_now
-from ..persistence.models import AuditEventRecord, AuthSessionRecord, UserRecord
+from ..persistence.models import AuthSessionRecord, UserRecord
+from .audit import AuditWriter
 
 
 class AuthenticationError(Exception):
@@ -62,9 +63,10 @@ class PasswordHasher:
 
 
 class AuthenticationService:
-    def __init__(self, uow_factory, settings: Settings):
+    def __init__(self, uow_factory, settings: Settings, audit_writer: AuditWriter | None = None):
         self.uow_factory = uow_factory
         self.settings = settings
+        self.audit_writer = audit_writer or AuditWriter(uow_factory)
 
     def register(
         self, *, email: str, password: str, request_id: str | None
@@ -89,15 +91,13 @@ class AuthenticationService:
                     raise EmailAlreadyRegisteredError()
                 saved = uow.users.ensure(user)
                 authenticated = _to_authenticated_user(saved)
-                uow.audit_events.add(
-                    _audit_event(
-                        action=AuditAction.REGISTERED,
-                        user_id=authenticated.user_id,
-                        request_id=request_id,
-                        success=True,
-                        metadata={"role": authenticated.role.value},
-                        occurred_at=now,
-                    )
+                self.audit_writer.record_in_uow(
+                    uow,
+                    action=AuditAction.REGISTERED,
+                    user_id=authenticated.user_id,
+                    request_id=request_id or "unknown",
+                    success=True,
+                    metadata={"role": authenticated.role.value},
                 )
                 uow.commit()
                 return authenticated
@@ -131,15 +131,13 @@ class AuthenticationService:
                     user_id = user.user_id
                 else:
                     user_id = None
-                uow.audit_events.add(
-                    _audit_event(
-                        action=AuditAction.LOGIN_FAILED,
-                        user_id=user_id,
-                        request_id=request_id,
-                        success=False,
-                        metadata={"email_domain": _email_domain(email)},
-                        occurred_at=now,
-                    )
+                self.audit_writer.record_in_uow(
+                    uow,
+                    action=AuditAction.LOGIN_FAILED,
+                    user_id=user_id,
+                    request_id=request_id or "unknown",
+                    success=False,
+                    metadata={"email_domain": _email_domain(email)},
                 )
                 uow.commit()
                 raise InvalidCredentialsError()
@@ -156,15 +154,13 @@ class AuthenticationService:
                 )
             )
             authenticated = _to_authenticated_user(user)
-            uow.audit_events.add(
-                _audit_event(
-                    action=AuditAction.LOGIN_SUCCEEDED,
-                    user_id=authenticated.user_id,
-                    request_id=request_id,
-                    success=True,
-                    metadata={"role": authenticated.role.value},
-                    occurred_at=now,
-                )
+            self.audit_writer.record_in_uow(
+                uow,
+                action=AuditAction.LOGIN_SUCCEEDED,
+                user_id=authenticated.user_id,
+                request_id=request_id or "unknown",
+                success=True,
+                metadata={"role": authenticated.role.value},
             )
             uow.commit()
             return LoginResult(
@@ -203,30 +199,26 @@ class AuthenticationService:
             revoked = uow.sessions.revoke(session.session_id, now)
             if not revoked:
                 return False
-            uow.audit_events.add(
-                _audit_event(
-                    action=AuditAction.LOGGED_OUT,
-                    user_id=session.user_id,
-                    request_id=request_id,
-                    success=True,
-                    metadata={},
-                    occurred_at=now,
-                )
+            self.audit_writer.record_in_uow(
+                uow,
+                action=AuditAction.LOGGED_OUT,
+                user_id=session.user_id,
+                request_id=request_id or "unknown",
+                success=True,
+                metadata={},
             )
             uow.commit()
             return True
 
     def _record_failed_login(self, *, email: str, request_id: str | None) -> None:
         with self.uow_factory() as uow:
-            uow.audit_events.add(
-                _audit_event(
-                    action=AuditAction.LOGIN_FAILED,
-                    user_id=None,
-                    request_id=request_id,
-                    success=False,
-                    metadata={"email_domain": _email_domain(email)},
-                    occurred_at=utc_now(),
-                )
+            self.audit_writer.record_in_uow(
+                uow,
+                action=AuditAction.LOGIN_FAILED,
+                user_id=None,
+                request_id=request_id or "unknown",
+                success=False,
+                metadata={"email_domain": _email_domain(email)},
             )
             uow.commit()
 
@@ -246,7 +238,7 @@ def _email_domain(email: str) -> str:
     if not isinstance(email, str):
         return "invalid"
     _, separator, domain = email.strip().lower().partition("@")
-    return domain if separator and domain.strip() else "invalid"
+    return "provided" if separator and domain.strip() else "invalid"
 
 
 def _token_hash(token: str) -> str:
@@ -262,25 +254,6 @@ def _to_authenticated_user(record: UserRecord) -> AuthenticatedUser:
         role=record.role,
         is_active=record.is_active,
         created_at=record.created_at,
-    )
-
-
-def _audit_event(
-    *,
-    action: AuditAction,
-    user_id: UUID | None,
-    request_id: str | None,
-    success: bool,
-    metadata: dict[str, str],
-    occurred_at: datetime,
-) -> AuditEventRecord:
-    return AuditEventRecord(
-        user_id=user_id,
-        action=action,
-        success=success,
-        request_id=request_id or "unknown",
-        occurred_at=occurred_at,
-        metadata_json=metadata,
     )
 
 

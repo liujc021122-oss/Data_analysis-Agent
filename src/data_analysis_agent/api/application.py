@@ -14,6 +14,7 @@ from ..storage import FileAccessService, Storage
 from ..services.auth import AuthenticationService
 from ..services.audit import AuditWriter
 from ..services.authorization import AccessSubject
+from ..domain.enums import AuditAction
 
 if TYPE_CHECKING:
     from ..services.persistence import TaskPersistenceService
@@ -65,6 +66,27 @@ class APIApplication:
         if self.audit_writer is not None:
             self.audit_writer.try_record(**kwargs)
 
+    def record_cross_user_access(
+        self,
+        *,
+        subject: AccessSubject,
+        owner_id: UUID | None,
+        request_id: str,
+        target_type: str,
+        target_id: UUID,
+    ) -> None:
+        if not subject.is_admin or owner_id is None or owner_id == subject.user_id:
+            return
+        self.record_audit(
+            action=AuditAction.ADMIN_CROSS_USER_ACCESS,
+            user_id=subject.user_id,
+            request_id=request_id,
+            target_type=target_type,
+            target_id=target_id,
+            success=True,
+            metadata={"resource_type": target_type, "role": subject.role.value},
+        )
+
     def configure_task_persistence(self) -> None:
         if self.database is None:
             raise ValueError("DATABASE_URL is required for task services")
@@ -97,7 +119,7 @@ class APIApplication:
             settings=settings,
             database=database,
             storage=storage,
-            auth_service=AuthenticationService(uow_factory, settings),
+            auth_service=AuthenticationService(uow_factory, settings, audit_writer),
             audit_writer=audit_writer,
             dataset_upload=DatasetUploadService(storage=storage, inspector=CsvInspector(), metadata_store=metadata_store, max_upload_size=settings.max_upload_size),
             dataset_catalog=DatasetCatalogService(storage=storage, uow_factory=uow_factory, audit_writer=audit_writer),
