@@ -137,3 +137,43 @@ def test_compose_template_contains_only_safe_placeholders_and_required_ignores()
     assert "deploy/certs/*.key" in ignored
     assert "frontend/node_modules/" in ignored
     assert "frontend/dist/" in ignored
+
+
+def test_reverse_proxy_routes_frontend_api_and_healthz():
+    config = (ROOT / "deploy" / "nginx" / "reverse-proxy.conf").read_text(encoding="utf-8")
+
+    assert "proxy_pass http://frontend:8080" in config
+    assert "proxy_pass http://backend:8000" in config
+    assert "location = /healthz" in config
+    assert "X-Request-ID" in config
+
+
+def test_https_override_mounts_ignored_local_certificates():
+    override = yaml.safe_load((ROOT / "compose.https.yaml").read_text(encoding="utf-8"))
+    proxy = override["services"]["reverse-proxy"]
+
+    assert "8443:443" in proxy["ports"]
+    assert any("deploy/certs:/etc/nginx/certs:ro" in item for item in proxy["volumes"])
+    https = (ROOT / "deploy" / "nginx" / "reverse-proxy-https.conf").read_text(encoding="utf-8")
+
+    assert "ssl_certificate /etc/nginx/certs/local.crt" in https
+
+
+def test_local_certificate_helpers_require_force_and_crypto_tools():
+    powershell = (ROOT / "scripts" / "generate-local-certificate.ps1").read_text(encoding="utf-8")
+    bash = (ROOT / "scripts" / "generate-local-certificate.sh").read_text(encoding="utf-8")
+
+    assert "[switch]$Force" in powershell
+    assert "Get-Command openssl" in powershell
+    assert "New-SelfSignedCertificate" in powershell
+    assert "local.crt" in powershell and "local.key" in powershell
+    assert "--force" in bash
+    assert "command -v openssl" in bash
+    assert "-addext \"subjectAltName=DNS:localhost,IP:127.0.0.1\"" in bash
+
+
+def test_local_certificate_outputs_are_ignored():
+    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    assert "deploy/certs/*.crt" in ignored
+    assert "deploy/certs/*.key" in ignored

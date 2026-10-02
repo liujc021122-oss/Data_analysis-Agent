@@ -202,6 +202,7 @@ docs/superpowers/
 
 # Local deployment secrets and frontend build output
 deploy/certs/*.pem
+deploy/certs/*.crt
 deploy/certs/*.key
 frontend/node_modules/
 frontend/dist/
