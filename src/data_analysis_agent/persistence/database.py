@@ -68,7 +68,13 @@ def create_engine_from_settings(settings: Settings) -> Engine:
             raise DatabaseConfigurationError(
                 "DATABASE_URL must use MySQL in production"
             )
-        engine = create_engine(url, future=True, pool_pre_ping=True)
+        engine_options: dict[str, object] = {
+            "future": True,
+            "pool_pre_ping": True,
+        }
+        if url.get_backend_name() == "mysql":
+            engine_options["connect_args"] = {"connect_timeout": 3}
+        engine = create_engine(url, **engine_options)
         if url.get_backend_name() == "sqlite":
             event.listen(engine, "connect", _enable_sqlite_foreign_keys)
         return engine
