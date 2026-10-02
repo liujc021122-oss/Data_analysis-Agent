@@ -447,7 +447,7 @@ Expected: failure because the image files do not exist.
 
 - [ ] Step 3: Create the backend Dockerfile.
 
-Use Python 3.12-slim, set PYTHONDONTWRITEBYTECODE=1, PYTHONUNBUFFERED=1, and PIP_NO_CACHE_DIR=1, copy the constraints and packaging files, install the API and worker extras under the constraints, then copy src, alembic, and alembic.ini. Create a non-root app user with uid 10001 and writable /app/outputs and /app/outputs/datasets. Expose 8000 and use this default command:
+Use Python 3.12-slim, set PYTHONDONTWRITEBYTECODE=1, PYTHONUNBUFFERED=1, and PIP_NO_CACHE_DIR=1, copy the constraints and packaging files, copy `src/`, `alembic/`, and `alembic.ini`, then install the API and worker extras under the constraints so normal package discovery can see the source tree. Create a non-root app user with uid 10001 and writable /app/outputs and /app/outputs/datasets. Expose 8000 and use this default command:
 
     CMD ["uvicorn", "data_analysis_agent.api.app:create_app", "--factory",
          "--host", "0.0.0.0", "--port", "8000"]
