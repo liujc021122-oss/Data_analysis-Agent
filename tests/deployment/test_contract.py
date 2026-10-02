@@ -146,6 +146,12 @@ def test_reverse_proxy_routes_frontend_api_and_healthz():
     assert "proxy_pass http://backend:8000" in config
     assert "location = /healthz" in config
     assert "X-Request-ID" in config
+    assert "proxy_set_header X-Request-ID $http_x_request_id;" in config
+    assert "proxy_set_header X-Request-ID $request_id;" not in config
+
+    https = (ROOT / "deploy" / "nginx" / "reverse-proxy-https.conf").read_text(encoding="utf-8")
+    assert "proxy_set_header X-Request-ID $http_x_request_id;" in https
+    assert "proxy_set_header X-Request-ID $request_id;" not in https
 
 
 def test_https_override_mounts_ignored_local_certificates():
