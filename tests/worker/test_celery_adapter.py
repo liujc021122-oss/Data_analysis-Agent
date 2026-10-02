@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from data_analysis_agent.config.settings import load_settings
+from data_analysis_agent.persistence.database import create_engine_from_settings
 from data_analysis_agent.worker import (
     CeleryTaskBroker,
     WorkerConfigurationError,
@@ -56,6 +57,7 @@ def test_production_settings_require_redis_for_worker(tmp_path):
             "DATABASE_URL": "mysql+pymysql://user:pass@db.invalid/app",
             "STORAGE_ENDPOINT": "https://storage.invalid",
             "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )
@@ -71,3 +73,36 @@ def test_celery_app_requires_redis_url(tmp_path):
     )
     with pytest.raises(WorkerConfigurationError, match="REDIS_URL"):
         build_celery_app(settings)
+
+
+def test_mysql_engine_uses_bounded_connect_timeout(monkeypatch):
+    settings = load_settings(
+        app_env="production",
+        environ={
+            "OPENAI_API_KEY": "key",
+            "OPENAI_BASE_URL": "https://offline.invalid",
+            "OPENAI_MODEL": "offline-model",
+            "DATABASE_URL": "mysql+pymysql://user:pass@db.invalid/app",
+            "STORAGE_ENDPOINT": "https://storage.invalid",
+            "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
+        },
+    )
+
+    captured = {}
+
+    class FakeEngine:
+        pass
+
+    def fake_create_engine(url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return FakeEngine()
+
+    monkeypatch.setattr(
+        "data_analysis_agent.persistence.database.create_engine", fake_create_engine
+    )
+
+    create_engine_from_settings(settings)
+
+    assert captured["kwargs"]["connect_args"] == {"connect_timeout": 3}

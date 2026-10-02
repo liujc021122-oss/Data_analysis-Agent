@@ -15,6 +15,7 @@ from ..services.persistence import TaskPersistenceService
 from .broker import CeleryTaskBroker
 from .celery_app import build_celery_app, build_celery_broker, register_analysis_task
 from .errors import WorkerConfigurationError
+from .health import worker_healthcheck
 from .worker import AnalysisTaskWorker
 
 
@@ -28,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--loglevel", default=None)
     parser.add_argument("--recover-stale", action="store_true")
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="check the worker database, Redis, and object storage dependencies and exit",
+    )
     return parser
 
 
@@ -74,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         settings = load_settings(app_env=args.env)
         configure_logging(settings)
+        if args.healthcheck:
+            return 0 if worker_healthcheck(settings) else 1
         database = Database.from_settings(settings)
         app = build_celery_app(settings)
         broker = build_celery_broker(settings, celery_app=app)

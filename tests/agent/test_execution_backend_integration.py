@@ -67,6 +67,7 @@ def production_settings(tmp_path: Path):
             "DATABASE_URL": "mysql+pymysql://user:password@db.invalid/data",
             "STORAGE_ENDPOINT": "https://storage.invalid",
             "STORAGE_BUCKET": "analysis",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
             "EXECUTION_IMAGE": "analysis:offline",
         },
         dotenv_dir=tmp_path,

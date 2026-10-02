@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import CHAR, DateTime, create_engine, event
+from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
@@ -43,6 +44,15 @@ class UTCDateTime(TypeDecorator[datetime]):
         return value.replace(tzinfo=timezone.utc) if value is not None else None
 
 
+class UTCDateTimeMicrosecond(UTCDateTime):
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "mysql":
+            return dialect.type_descriptor(DATETIME(fsp=6))
+        return dialect.type_descriptor(DateTime())
+
+
 @dataclass(frozen=True)
 class Database:
     engine: Engine
@@ -68,7 +78,13 @@ def create_engine_from_settings(settings: Settings) -> Engine:
             raise DatabaseConfigurationError(
                 "DATABASE_URL must use MySQL in production"
             )
-        engine = create_engine(url, future=True, pool_pre_ping=True)
+        engine_options: dict[str, object] = {
+            "future": True,
+            "pool_pre_ping": True,
+        }
+        if url.get_backend_name() == "mysql":
+            engine_options["connect_args"] = {"connect_timeout": 3}
+        engine = create_engine(url, **engine_options)
         if url.get_backend_name() == "sqlite":
             event.listen(engine, "connect", _enable_sqlite_foreign_keys)
         return engine

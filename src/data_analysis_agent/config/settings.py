@@ -1,10 +1,9 @@
 from dataclasses import dataclass, field, fields
-import logging
 import math
 import os
 import re
 from pathlib import Path
-from typing import Dict, Literal, Mapping, Optional
+from typing import Dict, Literal, Mapping, Optional, cast
 
 from dotenv import dotenv_values
 from sqlalchemy.engine import make_url
@@ -17,6 +16,7 @@ VALID_ENVIRONMENTS = {"development", "test", "production"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 VALID_EXECUTION_BACKENDS = {"local", "container"}
 VALID_EXECUTION_NETWORK_MODES = {"none", "bridge"}
+VALID_STORAGE_BACKENDS = {"local", "s3"}
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_MAX_TASK_RUNTIME = 900
@@ -54,6 +54,7 @@ class Settings:
     max_upload_size: int
     output_dir: Path
     log_level: str
+    storage_backend: Literal["local", "s3"] = "local"
     storage_region: Optional[str] = None
     storage_access_key_id: Optional[str] = field(default=None, repr=False)
     storage_secret_access_key: Optional[str] = field(default=None, repr=False)
@@ -104,7 +105,21 @@ def _get_environment(raw: str) -> EnvironmentName:
         raise ConfigurationError(
             "APP_ENV must be one of development, test, or production"
         )
-    return raw
+    return cast(EnvironmentName, raw)
+
+
+def _storage_backend(
+    values: Mapping[str, str], environment: EnvironmentName
+) -> Literal["local", "s3"]:
+    selected = (
+        _nonblank(values.get("STORAGE_BACKEND"))
+        or ("s3" if environment == "production" else "local")
+    ).lower()
+    if selected not in VALID_STORAGE_BACKENDS:
+        raise ConfigurationError("STORAGE_BACKEND must be one of local or s3")
+    if environment == "production" and selected != "s3":
+        raise ConfigurationError("STORAGE_BACKEND must be s3 in production")
+    return cast(Literal["local", "s3"], selected)
 
 
 def _positive_int(values: Mapping[str, str], key: str, default: int) -> int:
@@ -238,6 +253,7 @@ def load_settings(
         or defaults[environment]
     )
     selected_output_path = Path(selected_output)
+    storage_backend = _storage_backend(values, environment)
     api_key = _nonblank(values.get("OPENAI_API_KEY"))
     base_url = _nonblank(values.get("OPENAI_BASE_URL"))
     model = _nonblank(values.get("OPENAI_MODEL"))
@@ -304,9 +320,12 @@ def load_settings(
             or selected_output_path / "datasets"
         ),
         log_level=values.get("LOG_LEVEL", "INFO").upper(),
-        execution_backend=execution_backend,
+        storage_backend=storage_backend,
+        execution_backend=cast(Literal["local", "container"], execution_backend),
         execution_image=_nonblank(values.get("EXECUTION_IMAGE")),
-        execution_network_mode=execution_network_mode,
+        execution_network_mode=cast(
+            Literal["none", "bridge"], execution_network_mode
+        ),
         worker_max_retries=_nonnegative_int(
             values, "WORKER_MAX_RETRIES", DEFAULT_WORKER_MAX_RETRIES
         ),
@@ -343,8 +362,11 @@ def load_settings(
                 ("OPENAI_BASE_URL", settings.openai_base_url),
                 ("OPENAI_MODEL", settings.openai_model),
                 ("DATABASE_URL", settings.database_url),
-                ("STORAGE_ENDPOINT", settings.storage_endpoint),
-                ("STORAGE_BUCKET", settings.storage_bucket),
+                *((
+                    ("STORAGE_ENDPOINT", settings.storage_endpoint),
+                    ("STORAGE_BUCKET", settings.storage_bucket),
+                    ("STORAGE_SIGNING_SECRET", settings.storage_signing_secret),
+                ) if settings.storage_backend == "s3" else ()),
             )
             if not value
         ]
@@ -352,20 +374,9 @@ def load_settings(
             raise ConfigurationError(
                 "Missing required production configuration: " + ", ".join(missing)
             )
+        assert settings.database_url is not None
         _validate_production_database_url(settings.database_url)
     return settings
 
 
-def configure_logging(settings: Settings) -> logging.Logger:
-    logger = logging.getLogger(LOGGER_NAME)
-    logger.setLevel(getattr(logging, settings.log_level))
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)s %(name)s: %(message)s"
-            )
-        )
-        logger.addHandler(handler)
-    logger.propagate = True
-    return logger
+from .logging import configure_logging

@@ -392,6 +392,17 @@ Markdown，也不会丢失 Agent 已有的分析结果。报告中的结构化�
 范围内、已经验证的证据；未验证指标、跨任务图表、越界路径和不存在的图片不会作为事实
 证据进入输出。
 
+### M20 Docker Compose 部署
+
+M20 提供包含前端、API、Worker、MySQL、Redis、MinIO、迁移任务和反向代理的本地 Docker Compose 拓扑。完整的配置、启动、健康检查、重启、HTTPS 和清理步骤见 [docs/deployment/local-compose.md](docs/deployment/local-compose.md)。
+
+```powershell
+Copy-Item .env.compose.example .env.compose
+docker compose --env-file .env.compose -f compose.yaml up -d --build
+```
+
+Compose 将 MySQL 发布到主机端口 `3307` 以避开本机 `3306` 冲突。空的 `OPENAI_API_KEY` 支持仅健康检查启动；执行分析请求前必须配置 API Key。现有 SQLite 本地开发启动方式继续适用，见下方 M13 后端 API。
+
 ### M13 后端 API
 
 安装 API 依赖并启动本地服务：
@@ -467,8 +478,8 @@ STORAGE_RETENTION_DAYS=30
 ```
 
 生产环境还必须配置 `STORAGE_ENDPOINT`、`STORAGE_BUCKET` 和稳定的
-`STORAGE_SIGNING_SECRET`。多进程或多副本部署必须让所有 API 进程使用同一个高熵密钥；
-未配置时应用会生成进程内随机密钥，跨进程生成和读取内容令牌会失败。前端或调用方应使用
+`STORAGE_SIGNING_SECRET`；缺少签名密钥时应用会拒绝启动。多进程或多副本部署必须让所有
+API 进程使用同一个高熵密钥。前端或调用方应使用
 结果中的 `report_download_url`、`html_report_download_url`、`word_report_download_url`
 及对应的 `*_content_url` 或授权下载服务返回的临时 URL；不要把 `session_output_dir`、
 `report_file_path` 或其他本地绝对路径作为

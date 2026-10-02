@@ -33,6 +33,7 @@ def test_production_cannot_disable_secure_session_cookie():
                 "DATABASE_URL": "mysql+pymysql://user:pass@db/app",
                 "STORAGE_ENDPOINT": "https://s3.example",
                 "STORAGE_BUCKET": "bucket",
+                "STORAGE_SIGNING_SECRET": "signing-secret",
                 "EXECUTION_IMAGE": "analysis:latest",
                 "AUTH_SESSION_COOKIE_SECURE": "false",
             },

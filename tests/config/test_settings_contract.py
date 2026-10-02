@@ -10,6 +10,7 @@ from data_analysis_agent.config.settings import (
     configure_logging,
     load_settings,
 )
+from data_analysis_agent.config.logging import JsonLogFormatter
 from data_analysis_agent.config.llm import LLMConfig
 from data_analysis_agent.storage.factory import build_storage
 
@@ -34,6 +35,39 @@ def test_development_defaults_allow_offline_construction(tmp_path):
     assert settings.storage_signing_secret is None
     assert settings.storage_url_expiry == 300
     assert settings.storage_retention_days == 30
+    assert settings.storage_backend == "local"
+
+
+def test_storage_backend_defaults_to_local_for_test(tmp_path):
+    settings = load_settings(app_env="test", environ={}, dotenv_dir=tmp_path)
+
+    assert settings.storage_backend == "local"
+
+
+def test_storage_backend_selects_s3_in_development(tmp_path):
+    settings = load_settings(
+        app_env="development",
+        environ={
+            "STORAGE_BACKEND": "s3",
+            "STORAGE_ENDPOINT": "http://minio:9000",
+            "STORAGE_BUCKET": "data-analysis",
+            "STORAGE_ACCESS_KEY_ID": "minioadmin",
+            "STORAGE_SECRET_ACCESS_KEY": "minioadmin123",
+        },
+        dotenv_dir=tmp_path,
+    )
+    storage = build_storage(settings)
+
+    assert storage.__class__.__name__ == "S3Storage"
+
+
+def test_invalid_storage_backend_is_rejected(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_BACKEND"):
+        load_settings(
+            app_env="development",
+            environ={"STORAGE_BACKEND": "filesystem"},
+            dotenv_dir=tmp_path,
+        )
 
 
 def test_storage_settings_parse_typed_values_without_mutating_process_environment(
@@ -67,6 +101,52 @@ def test_storage_settings_parse_typed_values_without_mutating_process_environmen
     assert serialized["storage_signing_secret"] == "<redacted>"
     assert "secret-key" not in repr(settings)
     assert "signing-secret" not in repr(settings)
+    assert "signing-secret" not in repr(serialized)
+
+
+def test_production_storage_backend_requires_s3(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_BACKEND"):
+        load_settings(
+            app_env="production",
+            environ={
+                "STORAGE_BACKEND": "local",
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": "mysql+pymysql://user:password@db.example.invalid/db",
+            },
+            dotenv_dir=tmp_path,
+        )
+
+
+def test_production_s3_backend_requires_endpoint_and_bucket(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_ENDPOINT|STORAGE_BUCKET"):
+        load_settings(
+            app_env="production",
+            environ={
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": "mysql+pymysql://user:password@db.example.invalid/db",
+            },
+            dotenv_dir=tmp_path,
+        )
+
+
+def test_production_s3_backend_requires_signing_secret(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_SIGNING_SECRET"):
+        load_settings(
+            app_env="production",
+            environ={
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": "mysql+pymysql://user:password@db.example.invalid/db",
+                "STORAGE_ENDPOINT": "https://storage.example.invalid",
+                "STORAGE_BUCKET": "data-analysis",
+            },
+            dotenv_dir=tmp_path,
+        )
 
 
 @pytest.mark.parametrize("key", ["STORAGE_URL_EXPIRY", "STORAGE_RETENTION_DAYS"])
@@ -165,6 +245,7 @@ def test_production_factory_accepts_provider_default_credentials(tmp_path, monke
             "REDIS_URL": "redis://redis.example.invalid:6379/0",
             "STORAGE_ENDPOINT": "https://storage.example.invalid",
             "STORAGE_BUCKET": "data-analysis",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )
@@ -204,6 +285,7 @@ def test_production_sqlite_database_url_is_rejected_at_settings_boundary(tmp_pat
                 "REDIS_URL": "redis://redis.example.invalid:6379/0",
                 "STORAGE_ENDPOINT": "https://storage.example.invalid",
                 "STORAGE_BUCKET": "data-analysis",
+                "STORAGE_SIGNING_SECRET": "signing-secret",
             },
             dotenv_dir=tmp_path,
         )
@@ -258,6 +340,7 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
             "REDIS_URL": "redis://redis.example.invalid:6379/0",
             "STORAGE_ENDPOINT": "https://storage.example.invalid",
             "STORAGE_BUCKET": "data-analysis",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )
@@ -271,3 +354,41 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
     assert llm_config.api_key == "secret-that-must-not-be-logged"
     assert llm_config.model == "offline-model"
     assert "secret-that-must-not-be-logged" not in caplog.text
+
+
+def test_json_logging_contains_context_without_secrets(tmp_path):
+    settings = load_settings(app_env="test", environ={}, dotenv_dir=tmp_path)
+    logger = configure_logging(settings)
+    record = logger.makeRecord(
+        logger.name,
+        logging.INFO,
+        __file__,
+        1,
+        "request complete",
+        (),
+        None,
+        extra={
+            "request_id": "request-123",
+            "task_id": "task-456",
+            "api_key": "secret-api-key",
+            "database_url": "mysql://user:password@db.invalid/app",
+            "password": "secret-password",
+        },
+    )
+
+    rendered = next(
+        handler.formatter.format(record)
+        for handler in logger.handlers
+        if isinstance(handler.formatter, JsonLogFormatter)
+    )
+
+    import json
+
+    payload = json.loads(rendered)
+    assert payload["request_id"] == "request-123"
+    assert payload["task_id"] == "task-456"
+    assert payload["message"] == "request complete"
+    assert "api_key" not in payload
+    assert "database_url" not in payload
+    assert "password" not in payload
+    assert "secret" not in rendered

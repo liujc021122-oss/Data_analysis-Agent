@@ -1,0 +1,14 @@
+.env*
+.env.compose
+.venv
+__pycache__
+*.py[cod]
+.git
+.gitignore
+.pytest_cache
+.mypy_cache
+outputs
+deploy/certs
+frontend/node_modules
+frontend/dist
+*.log

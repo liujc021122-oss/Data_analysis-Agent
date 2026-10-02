@@ -35,6 +35,12 @@ class S3Storage:
         self._secret_access_key = secret_access_key
         self._client = client if client is not None else self._create_client()
 
+    def healthcheck(self) -> None:
+        try:
+            self._client.head_bucket(Bucket=self._bucket)
+        except Exception as exc:
+            raise self._backend_error("check object storage health") from exc
+
     def put(
         self,
         stream: BinaryIO,
@@ -190,6 +196,7 @@ class S3Storage:
 
     def _create_client(self) -> Any:
         import boto3
+        from botocore.config import Config
 
         return boto3.client(
             "s3",
@@ -197,6 +204,11 @@ class S3Storage:
             region_name=self._region,
             aws_access_key_id=self._access_key_id,
             aws_secret_access_key=self._secret_access_key,
+            config=Config(
+                connect_timeout=2,
+                read_timeout=2,
+                retries={"max_attempts": 1},
+            ),
         )
 
     def _key_for_uri(self, uri: str) -> str:

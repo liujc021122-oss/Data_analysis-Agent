@@ -48,6 +48,7 @@ def production_test_settings():
             "DATABASE_URL": "mysql+pymysql://user:pass@db/app",
             "STORAGE_ENDPOINT": "https://s3.example",
             "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
             "EXECUTION_IMAGE": "analysis:latest",
         },
     )

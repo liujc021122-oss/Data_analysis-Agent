@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..domain.enums import AuditAction, ReportFormat, TaskEventType, TaskStatus, ToolCallStatus, UserRole
-from .database import Base, UTCDateTime, UUIDString
+from .database import Base, UTCDateTime, UTCDateTimeMicrosecond, UUIDString
 
 
 def enum_column(enum_type, constraint_name: str):
@@ -84,7 +84,7 @@ class AuditEventORM(Base):
     target_id: Mapped[Any | None] = mapped_column(UUIDString())
     success: Mapped[bool] = mapped_column(Boolean(), nullable=False)
     request_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    occurred_at: Mapped[Any] = mapped_column(UTCDateTime(), nullable=False)
+    occurred_at: Mapped[Any] = mapped_column(UTCDateTimeMicrosecond(), nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         JSON(), nullable=False, default=dict
     )

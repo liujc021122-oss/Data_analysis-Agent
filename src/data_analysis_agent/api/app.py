@@ -7,11 +7,13 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from ..config.logging import configure_logging
 from ..config.settings import ConfigurationError, load_settings
 from ..domain.enums import AuditAction
 from .application import APIApplication
 from .auth import AuthenticationError, HeaderPrincipalProvider, SessionPrincipalProvider
 from .errors import APIError
+from .health import health_router
 from .routers import artifacts_router, auth_router, datasets_router, tasks_router
 from .schemas import ErrorResponse
 
@@ -42,6 +44,7 @@ def _error(request: Request, *, status: int, code: str, message: str, details=No
 
 def create_app(container: APIApplication | None = None) -> FastAPI:
     application = container or APIApplication.from_settings(load_settings())
+    configure_logging(application.settings)
     if application.principal_provider is None and application.auth_service is not None:
         application.principal_provider = SessionPrincipalProvider(application.auth_service)
     if application.settings.app_env == "production" and (
@@ -60,6 +63,7 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
     app = FastAPI(title="Data Analysis Agent API", version="1.0.0")
     app.state.api_application = application
     app.middleware("http")(request_id_middleware)
+    app.include_router(health_router)
     app.include_router(auth_router, prefix="/api")
     app.include_router(datasets_router, prefix="/api")
     app.include_router(tasks_router, prefix="/api")

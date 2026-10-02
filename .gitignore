@@ -106,6 +106,7 @@ celerybeat.pid
 .env.development
 .env.test
 .env.production
+.env.compose
 .venv
 env/
 venv/
@@ -198,3 +199,11 @@ docs/superpowers/
 
 # Local linked worktrees
 .worktrees/
+
+# Local deployment secrets and frontend build output
+deploy/certs/*.pem
+deploy/certs/*.crt
+deploy/certs/*.key
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo

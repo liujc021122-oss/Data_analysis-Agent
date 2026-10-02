@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timedelta
+from threading import Lock
 from typing import Any
 from uuid import UUID
 
@@ -8,7 +10,6 @@ from ..domain.enums import AuditAction
 from ..persistence.models import AuditEventRecord, UserRecord
 from ..persistence.unit_of_work import UnitOfWork
 from ..domain.models import utc_now
-
 
 _ALLOWED_METADATA_KEYS = frozenset(
     {"email_domain", "resource_type", "role", "status_code", "reason_code"}
@@ -21,6 +22,8 @@ class AuditWriter:
 
     def __init__(self, uow_factory):
         self._uow_factory = uow_factory
+        self._timestamp_lock = Lock()
+        self._last_occurred_at: datetime | None = None
 
     def record(
         self,
@@ -79,9 +82,8 @@ class AuditWriter:
         except Exception:
             return None
 
-    @classmethod
     def _event(
-        cls,
+        self,
         *,
         action: AuditAction,
         user_id: UUID | None,
@@ -98,9 +100,20 @@ class AuditWriter:
             target_id=target_id,
             success=success,
             request_id=request_id,
-            occurred_at=utc_now(),
-            metadata_json=cls._safe_metadata(metadata),
+            occurred_at=self._next_occurred_at(),
+            metadata_json=self._safe_metadata(metadata),
         )
+
+    def _next_occurred_at(self) -> datetime:
+        candidate = utc_now()
+        with self._timestamp_lock:
+            if (
+                self._last_occurred_at is not None
+                and candidate <= self._last_occurred_at
+            ):
+                candidate = self._last_occurred_at + timedelta(microseconds=1)
+            self._last_occurred_at = candidate
+        return candidate
 
     @staticmethod
     def _safe_metadata(
@@ -110,7 +123,9 @@ class AuditWriter:
             return {}
         safe: dict[str, str | int | bool] = {}
         for key, value in metadata.items():
-            if key not in _ALLOWED_METADATA_KEYS or not isinstance(value, _SCALAR_TYPES):
+            if key not in _ALLOWED_METADATA_KEYS or not isinstance(
+                value, _SCALAR_TYPES
+            ):
                 continue
             if key == "email_domain":
                 # Keep the field useful for coarse monitoring without persisting
