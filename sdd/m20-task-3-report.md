@@ -36,4 +36,3 @@ The new tests were run before the implementation and failed during collection be
 ## Review notes
 
 The readiness route intentionally reports an unconfigured Redis URL as unavailable. Health check exceptions are caught at each dependency boundary and are never included in the response. The formatter does not serialize arbitrary `LogRecord` attributes, preventing API keys, URLs, passwords, and other extra record fields from being emitted as structured fields.
-

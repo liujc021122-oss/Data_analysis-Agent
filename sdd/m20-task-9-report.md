@@ -33,4 +33,3 @@ Task 9 documentation is complete on branch `codex/m20-deployment`. The committed
 ## Commit
 
 `b18e1b9 docs: document local compose deployment`
-
