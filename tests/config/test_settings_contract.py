@@ -34,6 +34,39 @@ def test_development_defaults_allow_offline_construction(tmp_path):
     assert settings.storage_signing_secret is None
     assert settings.storage_url_expiry == 300
     assert settings.storage_retention_days == 30
+    assert settings.storage_backend == "local"
+
+
+def test_storage_backend_defaults_to_local_for_test(tmp_path):
+    settings = load_settings(app_env="test", environ={}, dotenv_dir=tmp_path)
+
+    assert settings.storage_backend == "local"
+
+
+def test_storage_backend_selects_s3_in_development(tmp_path):
+    settings = load_settings(
+        app_env="development",
+        environ={
+            "STORAGE_BACKEND": "s3",
+            "STORAGE_ENDPOINT": "http://minio:9000",
+            "STORAGE_BUCKET": "data-analysis",
+            "STORAGE_ACCESS_KEY_ID": "minioadmin",
+            "STORAGE_SECRET_ACCESS_KEY": "minioadmin123",
+        },
+        dotenv_dir=tmp_path,
+    )
+    storage = build_storage(settings)
+
+    assert storage.__class__.__name__ == "S3Storage"
+
+
+def test_invalid_storage_backend_is_rejected(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_BACKEND"):
+        load_settings(
+            app_env="development",
+            environ={"STORAGE_BACKEND": "filesystem"},
+            dotenv_dir=tmp_path,
+        )
 
 
 def test_storage_settings_parse_typed_values_without_mutating_process_environment(
@@ -67,6 +100,36 @@ def test_storage_settings_parse_typed_values_without_mutating_process_environmen
     assert serialized["storage_signing_secret"] == "<redacted>"
     assert "secret-key" not in repr(settings)
     assert "signing-secret" not in repr(settings)
+    assert "signing-secret" not in repr(serialized)
+
+
+def test_production_storage_backend_requires_s3(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_BACKEND"):
+        load_settings(
+            app_env="production",
+            environ={
+                "STORAGE_BACKEND": "local",
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": "mysql+pymysql://user:password@db.example.invalid/db",
+            },
+            dotenv_dir=tmp_path,
+        )
+
+
+def test_production_s3_backend_requires_endpoint_and_bucket(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_ENDPOINT|STORAGE_BUCKET"):
+        load_settings(
+            app_env="production",
+            environ={
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": "mysql+pymysql://user:password@db.example.invalid/db",
+            },
+            dotenv_dir=tmp_path,
+        )
 
 
 @pytest.mark.parametrize("key", ["STORAGE_URL_EXPIRY", "STORAGE_RETENTION_DAYS"])

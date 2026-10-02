@@ -31,6 +31,9 @@ class Storage(Protocol):
     def create_download_url(self, uri: str, *, expires_in: int = 300) -> str:
         ...
 
+    def healthcheck(self) -> None:
+        ...
+
 
 from .access import FileAccessDeniedError, FileAccessService, artifact_content_url
 from .artifacts import ArtifactStorageService

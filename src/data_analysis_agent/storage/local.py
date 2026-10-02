@@ -33,6 +33,15 @@ class LocalFileStorage:
         self._metadata_path = self._root / self._METADATA_FILENAME
         self._content_types = self._load_content_types()
 
+    def healthcheck(self) -> None:
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StorageError(
+                StorageErrorCode.BACKEND_UNAVAILABLE,
+                "unable to access local storage",
+            ) from exc
+
     def put(
         self,
         stream: BinaryIO,

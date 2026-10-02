@@ -35,6 +35,12 @@ class S3Storage:
         self._secret_access_key = secret_access_key
         self._client = client if client is not None else self._create_client()
 
+    def healthcheck(self) -> None:
+        try:
+            self._client.head_bucket(Bucket=self._bucket)
+        except Exception as exc:
+            raise self._backend_error("check object storage health") from exc
+
     def put(
         self,
         stream: BinaryIO,

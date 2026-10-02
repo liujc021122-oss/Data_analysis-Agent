@@ -10,37 +10,37 @@ if TYPE_CHECKING:
 
 
 def build_storage(settings: Settings) -> Storage:
-    """Build the storage adapter selected by the application environment."""
+    """Build the explicitly selected storage adapter."""
 
-    if settings.app_env in {"development", "test"}:
-        return LocalFileStorage(settings.storage_local_root)
+    from ..config.settings import ConfigurationError
 
-    if settings.app_env != "production":
-        from ..config.settings import ConfigurationError
-
-        raise ConfigurationError("APP_ENV does not select a storage backend")
-
-    required = {
-        "STORAGE_ENDPOINT": getattr(settings, "storage_endpoint", None),
-        "STORAGE_BUCKET": getattr(settings, "storage_bucket", None),
-    }
-    missing = [name for name, value in required.items() if not _has_value(value)]
-    if missing:
-        from ..config.settings import ConfigurationError
-
+    signing_secret = (
+        settings.storage_signing_secret.encode("utf-8")
+        if settings.storage_signing_secret
+        else None
+    )
+    if settings.storage_backend == "local":
+        return LocalFileStorage(
+            settings.storage_local_root,
+            signing_secret=signing_secret,
+        )
+    if settings.storage_backend != "s3":
+        raise ConfigurationError("STORAGE_BACKEND must be one of local or s3")
+    if not _has_value(settings.storage_endpoint) or not _has_value(
+        settings.storage_bucket
+    ):
         raise ConfigurationError(
-            "Missing required production object-storage configuration: "
-            + ", ".join(missing)
+            "STORAGE_ENDPOINT and STORAGE_BUCKET are required for the s3 backend"
         )
 
     from .s3 import S3Storage
 
     return S3Storage(
-        bucket=getattr(settings, "storage_bucket", None),
-        endpoint=getattr(settings, "storage_endpoint", None),
-        region=getattr(settings, "storage_region", None),
-        access_key_id=getattr(settings, "storage_access_key_id", None),
-        secret_access_key=getattr(settings, "storage_secret_access_key", None),
+        bucket=settings.storage_bucket,
+        endpoint=settings.storage_endpoint,
+        region=settings.storage_region,
+        access_key_id=settings.storage_access_key_id,
+        secret_access_key=settings.storage_secret_access_key,
     )
 
 

@@ -7,6 +7,7 @@ import pytest
 
 from data_analysis_agent.config.settings import ConfigurationError, Settings
 from data_analysis_agent.storage.factory import build_storage
+from data_analysis_agent.storage.errors import StorageError, StorageErrorCode
 from data_analysis_agent.storage.local import LocalFileStorage
 from data_analysis_agent.storage.s3 import S3Storage
 
@@ -14,6 +15,7 @@ from data_analysis_agent.storage.s3 import S3Storage
 def _settings(environment: str, **overrides):
     values = {
         "app_env": environment,
+        "storage_backend": "s3" if environment == "production" else "local",
         "database_url": None,
         "redis_url": None,
         "storage_endpoint": "https://object-storage.example.invalid",
@@ -116,3 +118,71 @@ def test_production_factory_never_selects_local_backend():
 
     with pytest.raises(ConfigurationError):
         build_storage(settings)
+
+
+def test_explicit_s3_backend_is_selected_in_development(monkeypatch):
+    fake_boto3 = ModuleType("boto3")
+    fake_boto3.client = lambda service_name, **kwargs: SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+
+    storage = build_storage(_settings("development", storage_backend="s3"))
+
+    assert isinstance(storage, S3Storage)
+
+
+def test_local_backend_passes_signing_secret_to_local_storage(tmp_path):
+    storage = build_storage(
+        _settings(
+            "test",
+            storage_local_root=tmp_path,
+            storage_signing_secret="signing-secret",
+        )
+    )
+
+    assert storage._signing_secret == b"signing-secret"
+
+
+def test_local_storage_healthcheck_creates_root(tmp_path):
+    root = tmp_path / "nested" / "objects"
+    storage = LocalFileStorage(root)
+
+    storage.healthcheck()
+
+    assert root.is_dir()
+
+
+def test_s3_storage_healthcheck_checks_bucket():
+    calls = []
+
+    class Client:
+        def head_bucket(self, **kwargs):
+            calls.append(kwargs)
+
+    storage = S3Storage(
+        bucket="data-bucket",
+        endpoint="https://object-storage.example.invalid",
+        client=Client(),
+    )
+
+    storage.healthcheck()
+
+    assert calls == [{"Bucket": "data-bucket"}]
+
+
+def test_s3_storage_healthcheck_sanitizes_provider_failure():
+    class Client:
+        def head_bucket(self, **kwargs):
+            raise RuntimeError("provider secret and endpoint")
+
+    storage = S3Storage(
+        bucket="data-bucket",
+        endpoint="https://object-storage.example.invalid",
+        client=Client(),
+    )
+
+    with pytest.raises(StorageError) as exc_info:
+        storage.healthcheck()
+
+    assert exc_info.value.code is StorageErrorCode.BACKEND_UNAVAILABLE
+    assert "provider secret" not in str(exc_info.value)
+    assert "object-storage.example.invalid" not in str(exc_info.value)
