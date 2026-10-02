@@ -59,6 +59,28 @@ def test_non_production_factory_returns_local_storage_without_importing_boto3(
     assert storage._root == (tmp_path / environment).resolve()
 
 
+@pytest.mark.parametrize("environment", ["development", "test"])
+def test_legacy_settings_default_to_local_storage_by_environment(environment, tmp_path):
+    settings = SimpleNamespace(
+        app_env=environment,
+        storage_local_root=tmp_path / environment,
+    )
+
+    storage = build_storage(settings)
+
+    assert isinstance(storage, LocalFileStorage)
+
+
+def test_legacy_production_settings_default_to_s3_and_fail_closed(tmp_path):
+    settings = SimpleNamespace(
+        app_env="production",
+        storage_local_root=tmp_path / "production",
+    )
+
+    with pytest.raises(ConfigurationError, match="STORAGE_ENDPOINT|STORAGE_BUCKET"):
+        build_storage(settings)
+
+
 def test_production_factory_constructs_s3_with_typed_storage_settings(monkeypatch):
     calls = []
     fake_boto3 = ModuleType("boto3")
