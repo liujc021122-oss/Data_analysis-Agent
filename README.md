@@ -392,6 +392,17 @@ Markdown，也不会丢失 Agent 已有的分析结果。报告中的结构化�
 范围内、已经验证的证据；未验证指标、跨任务图表、越界路径和不存在的图片不会作为事实
 证据进入输出。
 
+### M20 Docker Compose 部署
+
+M20 提供包含前端、API、Worker、MySQL、Redis、MinIO、迁移任务和反向代理的本地 Docker Compose 拓扑。完整的配置、启动、健康检查、重启、HTTPS 和清理步骤见 [docs/deployment/local-compose.md](docs/deployment/local-compose.md)。
+
+```powershell
+Copy-Item .env.compose.example .env.compose
+docker compose --env-file .env.compose -f compose.yaml up -d --build
+```
+
+Compose 将 MySQL 发布到主机端口 `3307` 以避开本机 `3306` 冲突。空的 `OPENAI_API_KEY` 支持仅健康检查启动；执行分析请求前必须配置 API Key。现有 SQLite 本地开发启动方式继续适用，见下方 M13 后端 API。
+
 ### M13 后端 API
 
 安装 API 依赖并启动本地服务：
