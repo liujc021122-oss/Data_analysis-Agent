@@ -1,5 +1,6 @@
 from .llm import LLMConfig
-from .settings import ConfigurationError, Settings, configure_logging, load_settings
+from .logging import configure_logging
+from .settings import ConfigurationError, Settings, load_settings
 
 
 def build_storage(settings):

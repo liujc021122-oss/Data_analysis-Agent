@@ -10,6 +10,7 @@ from data_analysis_agent.config.settings import (
     configure_logging,
     load_settings,
 )
+from data_analysis_agent.config.logging import JsonLogFormatter
 from data_analysis_agent.config.llm import LLMConfig
 from data_analysis_agent.storage.factory import build_storage
 
@@ -334,3 +335,41 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
     assert llm_config.api_key == "secret-that-must-not-be-logged"
     assert llm_config.model == "offline-model"
     assert "secret-that-must-not-be-logged" not in caplog.text
+
+
+def test_json_logging_contains_context_without_secrets(tmp_path):
+    settings = load_settings(app_env="test", environ={}, dotenv_dir=tmp_path)
+    logger = configure_logging(settings)
+    record = logger.makeRecord(
+        logger.name,
+        logging.INFO,
+        __file__,
+        1,
+        "request complete",
+        (),
+        None,
+        extra={
+            "request_id": "request-123",
+            "task_id": "task-456",
+            "api_key": "secret-api-key",
+            "database_url": "mysql://user:password@db.invalid/app",
+            "password": "secret-password",
+        },
+    )
+
+    rendered = next(
+        handler.formatter.format(record)
+        for handler in logger.handlers
+        if isinstance(handler.formatter, JsonLogFormatter)
+    )
+
+    import json
+
+    payload = json.loads(rendered)
+    assert payload["request_id"] == "request-123"
+    assert payload["task_id"] == "task-456"
+    assert payload["message"] == "request complete"
+    assert "api_key" not in payload
+    assert "database_url" not in payload
+    assert "password" not in payload
+    assert "secret" not in rendered

@@ -12,6 +12,7 @@ from ..domain.enums import AuditAction
 from .application import APIApplication
 from .auth import AuthenticationError, HeaderPrincipalProvider, SessionPrincipalProvider
 from .errors import APIError
+from .health import health_router
 from .routers import artifacts_router, auth_router, datasets_router, tasks_router
 from .schemas import ErrorResponse
 
@@ -60,6 +61,7 @@ def create_app(container: APIApplication | None = None) -> FastAPI:
     app = FastAPI(title="Data Analysis Agent API", version="1.0.0")
     app.state.api_application = application
     app.middleware("http")(request_id_middleware)
+    app.include_router(health_router)
     app.include_router(auth_router, prefix="/api")
     app.include_router(datasets_router, prefix="/api")
     app.include_router(tasks_router, prefix="/api")

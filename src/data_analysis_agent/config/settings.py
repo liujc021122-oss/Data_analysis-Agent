@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field, fields
-import logging
 import math
 import os
 import re
@@ -379,16 +378,4 @@ def load_settings(
     return settings
 
 
-def configure_logging(settings: Settings) -> logging.Logger:
-    logger = logging.getLogger(LOGGER_NAME)
-    logger.setLevel(getattr(logging, settings.log_level))
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)s %(name)s: %(message)s"
-            )
-        )
-        logger.addHandler(handler)
-    logger.propagate = True
-    return logger
+from .logging import configure_logging
