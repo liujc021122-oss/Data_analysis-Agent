@@ -38,7 +38,17 @@
 - Task 7 commits: `8defeac`, `8493968`; 12 deployment contract tests and ignore checks passed; task review passed after request-ID forwarding fix.
 - Completed Task 8: added GitHub Actions jobs for constrained backend/frontend verification, Compose/migration integration, image builds, and conditional registry publishing.
 - Task 8 commit: `8f55536`; 15 contract tests, targeted mypy, and frontend checks passed; Docker/actionlint unavailable locally; task review passed.
+- Completed Task 9: documented new-machine Compose startup, readiness/migration/log inspection, restart persistence, destructive volume cleanup, optional HTTPS, secret behavior, and local Docker limitations; linked the guide from README.
+- Task 9 commit: `b18e1b9`; 13 deployment contract tests and documentation searches passed; task review passed.
 
 - Completed Task 9: documented local Compose prerequisites, secret replacement, startup, configuration validation, HTTP health checks, direct readiness and migration inspection, restart persistence, destructive `down -v` cleanup, optional local HTTPS on port `8443`, self-signed certificate warnings, and the empty API-key health-only behavior.
 - Added an M20 Docker Compose startup section to `README.md` while preserving the existing SQLite/M13 startup instructions.
 - Task 9 verification: the focused deployment contract suite and required documentation search were run after the documentation changes; Docker runtime verification remains unavailable locally because Docker is not installed.
+
+## Task 10 verification (2026-10-02)
+
+- Focused M20 Python suite: 62 passed. Deployment contract rerun: 13 passed.
+- Full constrained Python 3.12.7 / SQLAlchemy 2.0.54 suite: 979 passed, 1 skipped, 2 failed. The prior SQLAlchemy 2.1.1 enum-autoflush failure did not recur. Both failures are CLI dataset-ID tests using an incomplete `SimpleNamespace` settings fixture; see findings. The full backend CI job is therefore not green and M20 is not closed.
+- Frontend: `npm ci`, typecheck, 30 Vitest tests, and production build passed. `frontend/dist` remains ignored. `npm ci` reported four moderate dependency advisories.
+- Structural checks: deployment contract passed; `git diff --check` passed; the requested secret scan found only variable references, a README placeholder, and synthetic test values. No real-looking key was found. Docker CLI is absent, so Compose configuration, image builds, service health, migrations, routing, and restart persistence remain unverified locally; CI defines Docker-enabled checks but no CI result was available in this run.
+- Reviewed the branch history, diff against `main`, Dockerfiles, Compose and HTTPS override, CI workflow, deployment guide, health interfaces, and secret/ignore boundaries. Task 10 records the evidence and the open backend regression without changing implementation files.
