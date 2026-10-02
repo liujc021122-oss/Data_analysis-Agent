@@ -80,3 +80,33 @@ It could not run because the M20 baseline does not yet contain `src/data_analysi
 To be recorded after final staging and verification:
 
 `build: stabilize dependencies and add frontend workspace`
+
+## Review fix: reproducible mypy constraint
+
+The review finding was that the declared `mypy>=1.11,<2.0` development dependency was not pinned in the Python 3.12 constraints snapshot. The packaging test now reads the constraints file and asserts `mypy==1.20.2`. The snapshot contains that exact version, which satisfies the declared development range.
+
+Exact regression command and output after the fix:
+
+```text
+\.venv\Scripts\python.exe -m pytest tests/packaging/test_dependency_constraints.py -q
+..                                                                       [100%]
+2 passed in 0.10s
+```
+
+Exact dependency/install verification command and output:
+
+```text
+\.venv\Scripts\python.exe -m pip install -e ".[dev,api,worker]" --constraint requirements/constraints-py312.txt
+Successfully installed data-analysis-agent-0.2.0
+
+\.venv\Scripts\python.exe -m pip check
+No broken requirements found.
+
+\.venv\Scripts\python.exe -c "import importlib.metadata as m; print('mypy=' + m.version('mypy')); print('sqlalchemy=' + m.version('SQLAlchemy'))"
+mypy=1.20.2
+sqlalchemy=2.0.54
+```
+
+Fix commit:
+
+`build: constrain mypy for reproducible installs`
