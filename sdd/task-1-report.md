@@ -1,112 +1,64 @@
-# Task 1 Report: Stabilize Python Dependencies and Import the M15 Frontend
-
-## Scope
-
-Implemented Task 1 in `E:/桌面/data_analysis_agent-main/data_analysis_agent-main/.worktrees/m20-deployment`.
-
-The change includes the dependency boundary, the Python 3.12 constraints snapshot, targeted mypy settings, the dependency regression test, and the approved tracked frontend tree from `codex/m15-frontend`. The pre-existing untracked M20 planning files were preserved.
+# Task 1 Report: Define Gateway Models, Errors, and Configuration
 
 ## Files changed
 
-- `pyproject.toml`
-  - Changed SQLAlchemy to `SQLAlchemy>=2.0,<2.1`.
-  - Added `mypy>=1.11,<2.0` to the `dev` extra.
-- `requirements/constraints-py312.txt`
-  - Added the Python 3.12 package snapshot from the M20 environment.
-  - Excluded the local editable project and replaced the known incompatible SQLAlchemy 2.1.1 result with `SQLAlchemy<2.1`.
-  - Contains no credentials or local paths.
-- `mypy.ini`
-  - Added the exact targeted Python 3.12 mypy configuration from the brief.
-- `tests/packaging/test_dependency_constraints.py`
-  - Added the two required dependency regression tests.
-- `frontend/`
-  - Imported the tracked M15 package manifest, lockfile, Vite/Vitest/TypeScript configuration, React source, tests, and public favicon.
-  - Preserved the `@` Vite alias and the `/api` proxy default `http://127.0.0.1:8000`.
-  - Excluded the M15 environment example and all generated or ignored output.
+- `pyproject.toml`: added `jsonschema>=4.21,<5.0`.
+- `src/data_analysis_agent/config/llm.py`: added gateway retry/timeout settings, immutable model pricing, validation, and secret-safe representation/serialization.
+- `src/data_analysis_agent/llm/__init__.py`: exported gateway contracts and errors.
+- `src/data_analysis_agent/llm/models.py`: added typed chat, provider, metrics, response, stream, and structured-output models.
+- `src/data_analysis_agent/llm/errors.py`: added stable gateway error types and retryability metadata with message sanitization.
+- `tests/llm/__init__.py`, `tests/llm/test_models.py`, `tests/llm/test_errors.py`: added Task 1 contract tests.
+- `sdd/task-1-report.md`: this report.
 
-## TDD evidence
+## TDD evidence and exact commands/results
 
-1. RED: ran
+Working directory for all commands:
+`E:/桌面/data_analysis_agent-main/data_analysis_agent-main/.worktrees/m06-llm-gateway`
 
-   `\.venv\Scripts\python.exe -m pytest tests/packaging/test_dependency_constraints.py -q`
+1. RED, before production implementation:
 
-   Result: 2 failed. The first test failed because `requirements/constraints-py312.txt` was absent; the second failed because the mypy extra was absent. This confirmed the test was exercising the requested missing dependency boundary.
+   `pytest tests/llm/test_models.py tests/llm/test_errors.py -q`
 
-2. GREEN: added the metadata, constraints, and mypy configuration, then reran the focused test.
+   Result: collection failed with `ModuleNotFoundError: No module named 'data_analysis_agent.llm'` for both new test modules. Exit code: 2.
 
-   Result: `2 passed in 0.08s`.
+2. Focused GREEN verification:
 
-## Verification
+   `pytest tests/llm/test_models.py tests/llm/test_errors.py -q`
 
-- `\.venv\Scripts\python.exe -m pip install -e ".[dev,api,worker]" --constraint requirements/constraints-py312.txt`
-  - Passed. SQLAlchemy resolved to `2.0.54`; mypy resolved to `1.20.2`.
-- `\.venv\Scripts\python.exe -m pytest tests/packaging/test_dependency_constraints.py -q`
-  - Passed: 2 tests.
-- `npm ci` in `frontend/`
-  - Passed: 189 packages installed and audited.
-- `npm run typecheck` in `frontend/`
-  - Passed: `tsc -b --pretty false`.
-- `npm run test` in `frontend/`
-  - Passed: 12 test files and 30 tests.
-- `npm run build` in `frontend/`
-  - Passed: TypeScript build and Vite production build.
-- `git diff --check`
-  - Passed.
+   Result: `12 passed, 2 warnings in 4.44s`. Exit code: 0.
 
-## Required mypy command
+3. Required focused suite:
 
-The exact targeted command from the brief was attempted:
+   `pytest tests/llm/test_models.py tests/llm/test_errors.py tests/config/test_settings_contract.py -q`
 
-`\.venv\Scripts\python.exe -m mypy --config-file mypy.ini src/data_analysis_agent/config/settings.py src/data_analysis_agent/config/logging.py src/data_analysis_agent/api/health.py src/data_analysis_agent/worker/health.py`
+   Result: `30 passed, 2 warnings in 4.59s`. Exit code: 0.
 
-It could not run because the M20 baseline does not yet contain `src/data_analysis_agent/config/logging.py`, `src/data_analysis_agent/api/health.py`, or `src/data_analysis_agent/worker/health.py`. Those files belong to later M20 tasks, so they were not created or changed in this task. The command reported the missing `config/logging.py` path before type checking.
+4. Required compile command:
 
-## Self-review
+   `python -m compileall -q src/data_analysis_agent/llm`
 
-- SQLAlchemy metadata and constraints prevent the known 2.1 enum regression.
-- The constraints snapshot has no editable project entry, credentials, or local filesystem path.
-- The frontend package scripts are exactly `build: tsc -b && vite build`, `typecheck: tsc -b --pretty false`, and `test: vitest run`.
-- The imported frontend tree contains the M15 lockfile, source tests, Vite alias, API proxy, and public asset.
-- No backend behavior or later-task deployment files were modified.
-- The worktree also contains pre-existing untracked `sdd/m20-findings.md`, `sdd/m20-progress.md`, and `sdd/m20-task-plan.md`; they are outside this task and were not staged.
+   Result: the Windows Store `python.exe` alias was unavailable; command returned exit code 9009.
 
-## Concerns
+   Equivalent available interpreter command:
 
-- The specified mypy gate remains unavailable until the three later-task health/logging modules are added.
-- `npm ci` reported four moderate dependency audit findings in the imported M15 dependency graph. The brief requires preserving the approved lockfile, so the lockfile was not changed.
+   `py -3 -m compileall -q src/data_analysis_agent/llm`
+
+   Result: exit code 0.
+
+5. Required diff check:
+
+   `git diff --check`
+
+   Result: exit code 0. Git emitted only normal LF/CRLF conversion warnings for `pyproject.toml` and `src/data_analysis_agent/config/llm.py`.
 
 ## Commit
 
-To be recorded after final staging and verification:
+To be recorded after this report is written:
 
-`build: stabilize dependencies and add frontend workspace`
+`feat: define LLM gateway contracts and configuration`
 
-## Review fix: reproducible mypy constraint
+## Concerns
 
-The review finding was that the declared `mypy>=1.11,<2.0` development dependency was not pinned in the Python 3.12 constraints snapshot. The packaging test now reads the constraints file and asserts `mypy==1.20.2`. The snapshot contains that exact version, which satisfies the declared development range.
-
-Exact regression command and output after the fix:
-
-```text
-\.venv\Scripts\python.exe -m pytest tests/packaging/test_dependency_constraints.py -q
-..                                                                       [100%]
-2 passed in 0.10s
-```
-
-Exact dependency/install verification command and output:
-
-```text
-\.venv\Scripts\python.exe -m pip install -e ".[dev,api,worker]" --constraint requirements/constraints-py312.txt
-Successfully installed data-analysis-agent-0.2.0
-
-\.venv\Scripts\python.exe -m pip check
-No broken requirements found.
-
-\.venv\Scripts\python.exe -c "import importlib.metadata as m; print('mypy=' + m.version('mypy')); print('sqlalchemy=' + m.version('SQLAlchemy'))"
-mypy=1.20.2
-sqlalchemy=2.0.54
-```
-
-Fix commit:
-
-`build: constrain mypy for reproducible installs`
+- The test process emits two pre-existing Pydantic warnings about unrelated fields named `model_call_count` and `model_duration_ms`.
+- The literal `python` command is unavailable in this environment; compilation passed using `py -3`.
+- No real provider or object-storage APIs were called.
