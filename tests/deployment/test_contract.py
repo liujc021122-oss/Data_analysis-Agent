@@ -6,6 +6,18 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_ci_runs_tests_types_and_image_builds():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "pytest" in workflow
+    assert "mypy" in workflow
+    assert "npm run typecheck" in workflow
+    assert "npm run test" in workflow
+    assert "docker compose" in workflow
+    assert "docker build" in workflow or "build-push-action" in workflow
+    assert "OPENAI_API_KEY: test-only-key" in workflow
+
+
 def test_dockerfiles_use_runtime_secret_injection():
     backend = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     frontend = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")

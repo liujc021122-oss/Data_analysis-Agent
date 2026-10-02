@@ -1,0 +1,258 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  OPENAI_API_KEY: test-only-key
+
+jobs:
+  backend:
+    name: Backend tests and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements/constraints-py312.txt
+      - name: Install constrained Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --constraint requirements/constraints-py312.txt ".[dev,api,worker]"
+      - name: Run offline backend tests
+        env:
+          APP_ENV: test
+        run: python -m pytest -q
+      - name: Run targeted mypy
+        run: >-
+          python -m mypy --config-file mypy.ini
+          src/data_analysis_agent/config/settings.py
+          src/data_analysis_agent/config/logging.py
+          src/data_analysis_agent/api/health.py
+          src/data_analysis_agent/worker/health.py
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  deployment-contract:
+    name: Deployment contracts and configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements/constraints-py312.txt
+      - name: Install constrained test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --constraint requirements/constraints-py312.txt ".[dev]"
+      - name: Run deployment contract tests
+        env:
+          APP_ENV: test
+        run: python -m pytest tests/deployment/test_contract.py tests/packaging/test_dependency_constraints.py -q
+      - name: Validate base Compose configuration
+        run: docker compose --env-file .env.compose.example -f compose.yaml config
+      - name: Validate HTTPS Compose configuration
+        run: docker compose --env-file .env.compose.example -f compose.yaml -f compose.https.yaml config
+
+  integration:
+    name: Migration and service integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0.44
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_password
+          MYSQL_DATABASE: data_analysis
+          MYSQL_USER: data_analysis
+          MYSQL_PASSWORD: ci_app_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -pci_root_password"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+      minio:
+        image: minio/minio:RELEASE.2024-12-18T13-25-16Z
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: ci_minio_password
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd="curl -f http://127.0.0.1:9000/minio/health/ready"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      APP_ENV: test
+      DATABASE_URL: mysql+pymysql://data_analysis:ci_app_password@127.0.0.1:3306/data_analysis
+      REDIS_URL: redis://127.0.0.1:6379/0
+      STORAGE_BACKEND: s3
+      STORAGE_ENDPOINT: http://127.0.0.1:9000
+      STORAGE_BUCKET: data-analysis-ci
+      STORAGE_REGION: us-east-1
+      STORAGE_ACCESS_KEY_ID: minioadmin
+      STORAGE_SECRET_ACCESS_KEY: ci_minio_password
+      STORAGE_SIGNING_SECRET: ci-signing-secret
+      OPENAI_API_KEY: test-only-key
+      EXECUTION_BACKEND: local
+      EXECUTION_NETWORK_MODE: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements/constraints-py312.txt
+      - name: Install constrained application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --constraint requirements/constraints-py312.txt ".[dev,api,worker]"
+      - name: Wait for service health
+        run: |
+          python - <<'PY'
+          import time
+          import urllib.request
+
+          import pymysql
+          import redis
+
+          deadline = time.time() + 120
+          while time.time() < deadline:
+              try:
+                  connection = pymysql.connect(
+                      host="127.0.0.1", port=3306, user="data_analysis",
+                      password="ci_app_password", database="data_analysis",
+                  )
+                  connection.close()
+                  redis.Redis.from_url("redis://127.0.0.1:6379/0").ping()
+                  urllib.request.urlopen("http://127.0.0.1:9000/minio/health/ready", timeout=3)
+                  break
+              except Exception as error:
+                  last_error = error
+                  time.sleep(2)
+          else:
+              raise SystemExit(f"services did not become ready: {last_error}")
+          PY
+      - name: Create integration storage bucket
+        run: |
+          python - <<'PY'
+          import boto3
+
+          client = boto3.client(
+              "s3", endpoint_url="http://127.0.0.1:9000", region_name="us-east-1",
+              aws_access_key_id="minioadmin", aws_secret_access_key="ci_minio_password",
+          )
+          client.create_bucket(Bucket="data-analysis-ci")
+          PY
+      - name: Check and apply migrations
+        run: |
+          alembic upgrade head
+          alembic check
+      - name: Probe backend readiness
+        run: |
+          nohup uvicorn data_analysis_agent.api.app:create_app --factory --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health/ready; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat backend.log
+          exit 1
+      - name: Run worker healthcheck
+        run: data-analysis-agent-worker --env test --healthcheck
+
+  image-build:
+    name: Build container images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build --file Dockerfile --tag data-analysis-agent:ci .
+      - name: Build frontend image
+        run: docker build --file frontend/Dockerfile --tag data-analysis-agent-frontend:ci frontend
+
+  registry-config:
+    name: Check registry configuration
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          if [[ -n "$REGISTRY" && -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish-images:
+    name: Publish container images
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.registry-config.outputs.enabled == 'true'
+    needs: [backend, frontend, deployment-contract, integration, image-build, registry-config]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.CONTAINER_REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ vars.CONTAINER_REGISTRY }}/data-analysis-agent:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ vars.CONTAINER_REGISTRY }}/data-analysis-agent-frontend:${{ github.sha }}
