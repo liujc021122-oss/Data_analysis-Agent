@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from ..config import build_storage
 from ..config.settings import Settings
 from ..persistence.database import Database
 
@@ -42,10 +43,20 @@ def redis_ready(settings: Settings) -> bool:
             client.close()
 
 
+def storage_ready(settings: Settings) -> bool:
+    try:
+        storage = build_storage(settings)
+        storage.healthcheck()
+        return True
+    except Exception:
+        return False
+
+
 def worker_healthcheck(settings: Settings) -> bool:
     database_ok = database_ready(settings)
     redis_ok = redis_ready(settings)
-    return database_ok and redis_ok
+    storage_ok = storage_ready(settings)
+    return database_ok and redis_ok and storage_ok
 
 
-__all__ = ["database_ready", "redis_ready", "worker_healthcheck"]
+__all__ = ["database_ready", "redis_ready", "storage_ready", "worker_healthcheck"]

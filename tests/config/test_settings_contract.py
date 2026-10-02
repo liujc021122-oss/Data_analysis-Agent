@@ -133,6 +133,22 @@ def test_production_s3_backend_requires_endpoint_and_bucket(tmp_path):
         )
 
 
+def test_production_s3_backend_requires_signing_secret(tmp_path):
+    with pytest.raises(ConfigurationError, match="STORAGE_SIGNING_SECRET"):
+        load_settings(
+            app_env="production",
+            environ={
+                "OPENAI_API_KEY": "offline-key",
+                "OPENAI_BASE_URL": "https://offline.invalid",
+                "OPENAI_MODEL": "offline-model",
+                "DATABASE_URL": "mysql+pymysql://user:password@db.example.invalid/db",
+                "STORAGE_ENDPOINT": "https://storage.example.invalid",
+                "STORAGE_BUCKET": "data-analysis",
+            },
+            dotenv_dir=tmp_path,
+        )
+
+
 @pytest.mark.parametrize("key", ["STORAGE_URL_EXPIRY", "STORAGE_RETENTION_DAYS"])
 def test_storage_positive_integer_settings_reject_invalid_values(tmp_path, key):
     with pytest.raises(ConfigurationError, match=key):
@@ -229,6 +245,7 @@ def test_production_factory_accepts_provider_default_credentials(tmp_path, monke
             "REDIS_URL": "redis://redis.example.invalid:6379/0",
             "STORAGE_ENDPOINT": "https://storage.example.invalid",
             "STORAGE_BUCKET": "data-analysis",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )
@@ -268,6 +285,7 @@ def test_production_sqlite_database_url_is_rejected_at_settings_boundary(tmp_pat
                 "REDIS_URL": "redis://redis.example.invalid:6379/0",
                 "STORAGE_ENDPOINT": "https://storage.example.invalid",
                 "STORAGE_BUCKET": "data-analysis",
+                "STORAGE_SIGNING_SECRET": "signing-secret",
             },
             dotenv_dir=tmp_path,
         )
@@ -322,6 +340,7 @@ def test_settings_produce_typed_llm_config_without_logging_secret(tmp_path, capl
             "REDIS_URL": "redis://redis.example.invalid:6379/0",
             "STORAGE_ENDPOINT": "https://storage.example.invalid",
             "STORAGE_BUCKET": "data-analysis",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )

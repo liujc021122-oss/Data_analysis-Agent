@@ -365,6 +365,7 @@ def load_settings(
                 *((
                     ("STORAGE_ENDPOINT", settings.storage_endpoint),
                     ("STORAGE_BUCKET", settings.storage_bucket),
+                    ("STORAGE_SIGNING_SECRET", settings.storage_signing_secret),
                 ) if settings.storage_backend == "s3" else ()),
             )
             if not value

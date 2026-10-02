@@ -2,9 +2,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from sqlalchemy.dialects import mysql
 
 from data_analysis_agent.config.settings import load_settings
-from data_analysis_agent.persistence.database import Database
+from data_analysis_agent.persistence.database import Database, UTCDateTimeMicrosecond
 from data_analysis_agent.persistence.errors import DatabaseConfigurationError
 
 
@@ -43,6 +44,7 @@ def test_database_factory_accepts_production_mysql_url_without_connecting():
             "OPENAI_MODEL": "offline-model",
             "STORAGE_ENDPOINT": "https://storage.invalid",
             "STORAGE_BUCKET": "offline-bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
             "DATABASE_URL": (
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"
@@ -56,6 +58,13 @@ def test_database_factory_accepts_production_mysql_url_without_connecting():
     assert database.engine.url.drivername == "mysql+pymysql"
 
 
+def test_mysql_datetime_type_preserves_microseconds():
+    datetime_type = UTCDateTimeMicrosecond().load_dialect_impl(mysql.dialect())
+
+    assert UTCDateTimeMicrosecond.__dict__.get("cache_ok") is True
+    assert str(datetime_type.compile(dialect=mysql.dialect())) == "DATETIME(6)"
+
+
 def test_database_factory_rejects_sqlite_url_for_production(tmp_path):
     settings = load_settings(
         app_env="production",
@@ -65,6 +74,7 @@ def test_database_factory_rejects_sqlite_url_for_production(tmp_path):
             "OPENAI_MODEL": "offline-model",
             "STORAGE_ENDPOINT": "https://storage.invalid",
             "STORAGE_BUCKET": "offline-bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
             "DATABASE_URL": (
                 "mysql+pymysql://user:password@db.example.invalid:3306/"
                 "data_analysis"

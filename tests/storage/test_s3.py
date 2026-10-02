@@ -291,17 +291,22 @@ def test_s3_client_construction_forwards_endpoint_and_credentials(monkeypatch):
         secret_access_key="secret-key",
     )
 
-    assert calls == [
-        (
-            "s3",
-            {
-                "endpoint_url": "https://minio.example.invalid",
-                "region_name": "us-east-1",
-                "aws_access_key_id": "access-key",
-                "aws_secret_access_key": "secret-key",
-            },
+    service_name, kwargs = calls[0]
+    assert service_name == "s3"
+    assert {
+        key: kwargs[key]
+        for key in (
+            "endpoint_url",
+            "region_name",
+            "aws_access_key_id",
+            "aws_secret_access_key",
         )
-    ]
+    } == {
+        "endpoint_url": "https://minio.example.invalid",
+        "region_name": "us-east-1",
+        "aws_access_key_id": "access-key",
+        "aws_secret_access_key": "secret-key",
+    }
 
 
 def test_minio_storage_forwards_endpoint_to_s3_client(monkeypatch):

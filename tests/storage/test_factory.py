@@ -95,17 +95,22 @@ def test_production_factory_constructs_s3_with_typed_storage_settings(monkeypatc
     storage = build_storage(_settings("production"))
 
     assert isinstance(storage, S3Storage)
-    assert calls == [
-        (
-            "s3",
-            {
-                "endpoint_url": "https://object-storage.example.invalid",
-                "region_name": "test-region",
-                "aws_access_key_id": "access-key",
-                "aws_secret_access_key": "secret-key",
-            },
+    service_name, kwargs = calls[0]
+    assert service_name == "s3"
+    assert {
+        key: kwargs[key]
+        for key in (
+            "endpoint_url",
+            "region_name",
+            "aws_access_key_id",
+            "aws_secret_access_key",
         )
-    ]
+    } == {
+        "endpoint_url": "https://object-storage.example.invalid",
+        "region_name": "test-region",
+        "aws_access_key_id": "access-key",
+        "aws_secret_access_key": "secret-key",
+    }
 
 
 @pytest.mark.parametrize(
@@ -150,6 +155,23 @@ def test_explicit_s3_backend_is_selected_in_development(monkeypatch):
     storage = build_storage(_settings("development", storage_backend="s3"))
 
     assert isinstance(storage, S3Storage)
+
+
+def test_s3_client_uses_bounded_network_timeouts(monkeypatch):
+    calls = []
+    fake_boto3 = ModuleType("boto3")
+    fake_boto3.client = lambda service_name, **kwargs: calls.append(kwargs) or object()
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+
+    S3Storage(
+        bucket="data-bucket",
+        endpoint="https://object-storage.example.invalid",
+    )
+
+    config = calls[0]["config"]
+    assert config.connect_timeout == 2
+    assert config.read_timeout == 2
+    assert config.retries["max_attempts"] == 1
 
 
 def test_local_backend_passes_signing_secret_to_local_storage(tmp_path):

@@ -16,6 +16,7 @@ from data_analysis_agent.services.auth import (
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
 )
+from data_analysis_agent.services.audit import AuditWriter
 
 
 @pytest.fixture
@@ -251,3 +252,32 @@ def test_failed_login_audit_does_not_persist_untrusted_email_domain(
     failed = next(event for event in events if event["request_id"] == "req-untrusted-domain")
     serialized = json.dumps(failed["metadata"])
     assert submitted_password not in serialized
+
+
+def test_audit_writer_makes_same_clock_ticks_strictly_ordered(
+    monkeypatch, uow_factory
+):
+    fixed_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "data_analysis_agent.services.audit.utc_now", lambda: fixed_now
+    )
+    writer = AuditWriter(uow_factory)
+
+    with uow_factory() as uow:
+        first = writer.record_in_uow(
+            uow,
+            action=AuditAction.LOGIN_FAILED,
+            user_id=None,
+            request_id="req-first",
+            success=False,
+        )
+        second = writer.record_in_uow(
+            uow,
+            action=AuditAction.LOGGED_OUT,
+            user_id=None,
+            request_id="req-second",
+            success=True,
+        )
+        uow.commit()
+
+    assert first.occurred_at < second.occurred_at

@@ -227,6 +227,7 @@ def test_production_quick_analysis_files_fails_closed_without_upload_service(
             "DATABASE_URL": "mysql+pymysql://user:pass@db/app",
             "STORAGE_ENDPOINT": "https://objects.invalid",
             "STORAGE_BUCKET": "datasets",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )

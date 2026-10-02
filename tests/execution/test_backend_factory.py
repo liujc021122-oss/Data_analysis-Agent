@@ -23,6 +23,7 @@ def _production_environment(**overrides: str) -> dict[str, str]:
         "DATABASE_URL": "mysql+pymysql://user:password@db.invalid/data_analysis",
         "STORAGE_ENDPOINT": "https://storage.invalid",
         "STORAGE_BUCKET": "data-analysis",
+        "STORAGE_SIGNING_SECRET": "signing-secret",
         "EXECUTION_IMAGE": "analysis:offline",
     }
     values.update(overrides)

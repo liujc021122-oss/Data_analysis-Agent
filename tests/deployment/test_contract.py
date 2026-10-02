@@ -16,6 +16,19 @@ def test_ci_runs_tests_types_and_image_builds():
     assert "docker compose" in workflow
     assert "docker build" in workflow or "build-push-action" in workflow
     assert "OPENAI_API_KEY: test-only-key" in workflow
+    assert "compose-integration:" in workflow
+    assert "docker compose --env-file .env.compose.example -f compose.yaml up -d --build" in workflow
+    assert "docker compose --env-file .env.compose.example -f compose.yaml restart" in workflow
+    assert "http://127.0.0.1:8080/health/ready" in workflow
+    assert "docker compose --env-file .env.compose.example -f compose.yaml config --quiet" in workflow
+    assert "docker compose --env-file .env.compose.example -f compose.yaml -f compose.https.yaml config --quiet" in workflow
+    assert "redis-cli SET m20_ci_marker persisted" in workflow
+    assert "redis-cli GET m20_ci_marker" in workflow
+    assert "m20-ci-marker" in workflow
+    assert "mc pipe" in workflow
+    assert "mc cat" in workflow
+    assert "DATETIME_PRECISION" in workflow
+    assert "m20_precision" in workflow
 
 
 def test_dockerfiles_use_runtime_secret_injection():
@@ -69,14 +82,17 @@ def test_compose_declares_the_approved_services():
         compose["services"]["worker"]["depends_on"]["migrate"]["condition"]
         == "service_completed_successfully"
     )
+    reverse_proxy = compose["services"]["reverse-proxy"]
+    assert "./deploy/nginx/reverse-proxy.conf:/etc/nginx/conf.d/default.conf:ro" in reverse_proxy["volumes"]
+    assert reverse_proxy["command"] == ["nginx", "-g", "daemon off;"]
 
 
 def test_compose_uses_persistent_named_volumes_and_nonconflicting_ports():
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
 
     assert {"mysql_data", "redis_data", "minio_data"} <= set(compose["volumes"])
-    assert "3307:3306" in compose["services"]["mysql"]["ports"]
-    assert "8080:80" in compose["services"]["reverse-proxy"]["ports"]
+    assert "127.0.0.1:3307:3306" in compose["services"]["mysql"]["ports"]
+    assert "127.0.0.1:8080:80" in compose["services"]["reverse-proxy"]["ports"]
 
 
 def test_compose_does_not_place_secrets_in_build_args():
@@ -121,6 +137,9 @@ def test_compose_defines_bounded_native_healthchecks_and_idempotent_storage_init
         assert healthcheck["interval"]
 
     assert "mysqladmin ping" in " ".join(services["mysql"]["healthcheck"]["test"])
+    mysql_healthcheck = services["mysql"]["healthcheck"]["test"]
+    assert mysql_healthcheck[0] == "CMD-SHELL"
+    assert '-p"$${MYSQL_ROOT_PASSWORD}"' in mysql_healthcheck[1]
     assert "redis-cli ping" in " ".join(services["redis"]["healthcheck"]["test"])
     assert "/minio/health/ready" in " ".join(services["minio"]["healthcheck"]["test"])
     assert "urllib.request" in " ".join(services["backend"]["healthcheck"]["test"])
@@ -144,6 +163,9 @@ def test_compose_template_contains_only_safe_placeholders_and_required_ignores()
     ):
         assert f"{key}=" in template
     assert "change-me" in template
+    assert "STORAGE_SECRET_ACCESS_KEY=change-me" in template
+    assert "STORAGE_SECRET_ACCESS_KEY=minioadmin123" not in template
+    assert "MINIO_ROOT_PASSWORD=" not in template
     assert ".env.compose" in ignored
     assert "deploy/certs/*.pem" in ignored
     assert "deploy/certs/*.key" in ignored
@@ -157,11 +179,17 @@ def test_reverse_proxy_routes_frontend_api_and_healthz():
     assert "proxy_pass http://frontend:8080" in config
     assert "proxy_pass http://backend:8000" in config
     assert "location = /healthz" in config
+    assert "location = /health/ready" in config
+    assert "proxy_pass http://backend:8000/health/ready;" in config
+    assert "client_max_body_size 100m;" in config
     assert "X-Request-ID" in config
     assert "proxy_set_header X-Request-ID $http_x_request_id;" in config
     assert "proxy_set_header X-Request-ID $request_id;" not in config
 
     https = (ROOT / "deploy" / "nginx" / "reverse-proxy-https.conf").read_text(encoding="utf-8")
+    assert "location = /health/ready" in https
+    assert "proxy_pass http://backend:8000/health/ready;" in https
+    assert "client_max_body_size 100m;" in https
     assert "proxy_set_header X-Request-ID $http_x_request_id;" in https
     assert "proxy_set_header X-Request-ID $request_id;" not in https
 
@@ -170,8 +198,9 @@ def test_https_override_mounts_ignored_local_certificates():
     override = yaml.safe_load((ROOT / "compose.https.yaml").read_text(encoding="utf-8"))
     proxy = override["services"]["reverse-proxy"]
 
-    assert "8443:443" in proxy["ports"]
+    assert "127.0.0.1:8443:443" in proxy["ports"]
     assert any("deploy/certs:/etc/nginx/certs:ro" in item for item in proxy["volumes"])
+    assert "https://127.0.0.1/health/ready" in " ".join(proxy["healthcheck"]["test"])
     https = (ROOT / "deploy" / "nginx" / "reverse-proxy-https.conf").read_text(encoding="utf-8")
 
     assert "ssl_certificate /etc/nginx/certs/local.crt" in https
@@ -184,6 +213,7 @@ def test_local_certificate_helpers_require_force_and_crypto_tools():
     assert "[switch]$Force" in powershell
     assert "Get-Command openssl" in powershell
     assert "New-SelfSignedCertificate" in powershell
+    assert "IPAddress=127.0.0.1" in powershell
     assert "local.crt" in powershell and "local.key" in powershell
     assert "--force" in bash
     assert "command -v openssl" in bash

@@ -24,6 +24,19 @@ def test_request_id_is_generated_and_openapi_is_available(fake_application):
     assert "/api/datasets" in response.json()["paths"]
 
 
+def test_create_app_configures_application_logging(monkeypatch, fake_application):
+    configured = []
+    monkeypatch.setattr(
+        "data_analysis_agent.api.app.configure_logging",
+        lambda settings: configured.append(settings),
+        raising=False,
+    )
+
+    create_app(fake_application)
+
+    assert configured == [fake_application.settings]
+
+
 def test_openapi_lists_the_complete_m13_api_surface(fake_application):
     paths = TestClient(create_app(fake_application)).get("/openapi.json").json()["paths"]
 
@@ -144,6 +157,7 @@ def test_production_requires_explicit_principal_provider(fake_application):
             "OPENAI_BASE_URL": "https://api.example", "OPENAI_MODEL": "model",
             "DATABASE_URL": "mysql+pymysql://u:p@localhost/db",
             "STORAGE_ENDPOINT": "http://storage", "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
     ), principal_provider=None)
     with pytest.raises(ConfigurationError, match="authentication provider"):
@@ -158,6 +172,7 @@ def test_production_rejects_header_principal_provider(fake_application):
             "OPENAI_BASE_URL": "https://api.example", "OPENAI_MODEL": "model",
             "DATABASE_URL": "mysql+pymysql://u:p@localhost/db",
             "STORAGE_ENDPOINT": "http://storage", "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
     ), principal_provider=HeaderPrincipalProvider())
     with pytest.raises(ConfigurationError, match="non-header"):

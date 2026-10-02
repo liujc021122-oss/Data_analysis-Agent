@@ -27,12 +27,12 @@ the `mysql:3306` service address from `DATABASE_URL`.
 Validate interpolation and the merged Compose model before starting services:
 
 ```powershell
-docker compose --env-file .env.compose -f compose.yaml config
+docker compose --env-file .env.compose -f compose.yaml config --quiet
 ```
 
-Expected outcome: Compose prints the resolved configuration and exits with code
-0. Check that the database password in `DATABASE_URL` matches
-`MYSQL_PASSWORD` before continuing.
+Expected outcome: Compose validates the interpolated configuration and exits with
+code 0 without printing resolved secrets. Check that the database password in
+`DATABASE_URL` matches `MYSQL_PASSWORD` before continuing.
 
 ## Start and verify HTTP
 

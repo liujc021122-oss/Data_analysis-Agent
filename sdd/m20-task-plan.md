@@ -18,12 +18,13 @@ Make the backend, worker, frontend, database, Redis, MinIO, and reverse proxy re
 - [complete] Define MySQL, Redis, MinIO, migration, and application Compose services
 - [complete] Add Nginx routing and local HTTPS
 - [complete] Add CI for tests, types, migrations, Compose, and images
+- [complete] Document startup, restart, HTTPS, and verification
 - [complete] Add container images and Compose environments
 - [complete] Add configuration, migrations, health checks, and logging
 - [complete] Add reverse proxy and HTTPS workflow
 - [complete] Add CI test/type-check/image-build workflow
 - [complete] Document startup, production secrets, and verification
-- [pending] Run focused and full verification
+- [complete] Run focused and full verification
 
 ## Constraints
 
@@ -43,3 +44,5 @@ Make the backend, worker, frontend, database, Redis, MinIO, and reverse proxy re
 | Initial Windows Python launcher created no usable virtual environment | 1 | Used `E:\anaconda\python.exe` to create the isolated worktree `.venv`. |
 | Baseline collection with the main environment lacked `argon2` | 1 | Installed the declared `.[dev,api,worker]` extras in the isolated environment. |
 | Fresh dependency resolution produced one SQLAlchemy 2.1.1 baseline failure | 1 | Record as dependency reproducibility scope; do not alter unrelated production code before design approval. |
+| Windows audit timestamps tied during consecutive authentication writes | 1 | Reproduced with a frozen clock; added a thread-safe monotonic timestamp allocator and regression test in `AuditWriter`. |
+| MySQL audit timestamps needed fractional-second ordering | 1 | Added a dedicated `UTCDateTimeMicrosecond` type, `DATETIME(6)` migration, ORM mapping, and cache-safety regression coverage; kept the generic UTC type portable. |

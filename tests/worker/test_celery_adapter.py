@@ -57,6 +57,7 @@ def test_production_settings_require_redis_for_worker(tmp_path):
             "DATABASE_URL": "mysql+pymysql://user:pass@db.invalid/app",
             "STORAGE_ENDPOINT": "https://storage.invalid",
             "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
         dotenv_dir=tmp_path,
     )
@@ -84,6 +85,7 @@ def test_mysql_engine_uses_bounded_connect_timeout(monkeypatch):
             "DATABASE_URL": "mysql+pymysql://user:pass@db.invalid/app",
             "STORAGE_ENDPOINT": "https://storage.invalid",
             "STORAGE_BUCKET": "bucket",
+            "STORAGE_SIGNING_SECRET": "signing-secret",
         },
     )
 

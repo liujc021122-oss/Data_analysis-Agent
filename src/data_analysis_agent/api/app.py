@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from ..config.logging import configure_logging
 from ..config.settings import ConfigurationError, load_settings
 from ..domain.enums import AuditAction
 from .application import APIApplication
@@ -43,6 +44,7 @@ def _error(request: Request, *, status: int, code: str, message: str, details=No
 
 def create_app(container: APIApplication | None = None) -> FastAPI:
     application = container or APIApplication.from_settings(load_settings())
+    configure_logging(application.settings)
     if application.principal_provider is None and application.auth_service is not None:
         application.principal_provider = SessionPrincipalProvider(application.auth_service)
     if application.settings.app_env == "production" and (

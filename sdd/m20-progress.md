@@ -48,7 +48,22 @@
 ## Task 10 verification (2026-10-02)
 
 - Focused M20 Python suite: 62 passed. Deployment contract rerun: 13 passed.
-- Full constrained Python 3.12.7 / SQLAlchemy 2.0.54 suite: 979 passed, 1 skipped, 2 failed. The prior SQLAlchemy 2.1.1 enum-autoflush failure did not recur. Both failures are CLI dataset-ID tests using an incomplete `SimpleNamespace` settings fixture; see findings. The full backend CI job is therefore not green and M20 is not closed.
+- Full constrained Python 3.12.7 / SQLAlchemy 2.0.54 suite before the compatibility fix: 979 passed, 1 skipped, 2 failed. The prior SQLAlchemy 2.1.1 enum-autoflush failure did not recur. The failures were fixed by `506384f`; the final full backend suite is recorded below.
 - Frontend: `npm ci`, typecheck, 30 Vitest tests, and production build passed. `frontend/dist` remains ignored. `npm ci` reported four moderate dependency advisories.
 - Structural checks: deployment contract passed; `git diff --check` passed; the requested secret scan found only variable references, a README placeholder, and synthetic test values. No real-looking key was found. Docker CLI is absent, so Compose configuration, image builds, service health, migrations, routing, and restart persistence remain unverified locally; CI defines Docker-enabled checks but no CI result was available in this run.
 - Reviewed the branch history, diff against `main`, Dockerfiles, Compose and HTTPS override, CI workflow, deployment guide, health interfaces, and secret/ignore boundaries. Task 10 records the evidence and the open backend regression without changing implementation files.
+- Compatibility fix: `build_storage()` now supplies safe legacy-object defaults at its boundary while keeping explicit `Settings.storage_backend` authoritative. The regression tests and targeted mypy check pass.
+- Investigated a non-deterministic authentication audit test failure. Windows `datetime.now()` can return the same timestamp for consecutive audit writes, while the test ordered ties by random UUID; the observed order was `REGISTERED, LOGIN_SUCCEEDED, LOGGED_OUT, LOGIN_FAILED`.
+- Added a thread-safe monotonic timestamp allocator to `AuditWriter` and a regression test that freezes the clock. The regression test was observed failing before the implementation and passing afterward; the authentication service file passed in five consecutive runs.
+- Final constrained backend suite after the audit fix: `988 passed, 1 skipped`.
+- Latest deployment/configuration/health focused suite: `68 passed`; targeted mypy reports no issues in four files; frontend `npm ci`, typecheck, 30 tests, and production build pass; `git diff --check` passes.
+- The required secret scan found only runtime variable references and synthetic test values. Docker CLI is unavailable locally, so Compose parsing, image builds, container health, migrations, proxy routing, HTTPS, and restart persistence remain CI-only verification boundaries.
+
+## Final follow-up verification (2026-10-02)
+
+- Added `UTCDateTimeMicrosecond` for MySQL audit-event timestamps and migration `20261002_0007`; general `UTCDateTime` remains the portable type used by other tables.
+- Added an explicit `cache_ok` regression assertion after SQLAlchemy warned that the subclass did not expose a cache key; the implementation now declares the subclass cache-safe.
+- Final constrained backend suite after the timestamp precision fix: `992 passed, 1 skipped`.
+- CI-targeted mypy: no issues in four source files. Frontend: `npm ci`, typecheck, 30 tests, and production build passed; `npm ci` reported four moderate audit advisories.
+- Deployment and dependency contract suite: `15 passed`; `git diff --check` passed. The credential-pattern scan found no API/private-key-shaped committed secret.
+- Docker CLI is absent on this machine. Compose startup, image builds, container health, migration execution against MySQL, proxy routing, HTTPS, and restart persistence remain CI/Docker-host verification boundaries.

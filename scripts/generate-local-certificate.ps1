@@ -34,7 +34,8 @@ $temporaryKeyFile = Join-Path $temporaryDirectory "local.key"
 
 try {
     $certificate = New-SelfSignedCertificate `
-        -DnsName "localhost" `
+        -Subject "CN=localhost" `
+        -TextExtension @("2.5.29.17={text}DNS=localhost&IPAddress=127.0.0.1") `
         -CertStoreLocation "Cert:\CurrentUser\My" `
         -KeyExportPolicy Exportable `
         -NotAfter (Get-Date).AddDays(30)

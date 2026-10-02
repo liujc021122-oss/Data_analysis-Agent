@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import CHAR, DateTime, create_engine, event
+from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
@@ -41,6 +42,15 @@ class UTCDateTime(TypeDecorator[datetime]):
 
     def process_result_value(self, value, dialect):
         return value.replace(tzinfo=timezone.utc) if value is not None else None
+
+
+class UTCDateTimeMicrosecond(UTCDateTime):
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "mysql":
+            return dialect.type_descriptor(DATETIME(fsp=6))
+        return dialect.type_descriptor(DateTime())
 
 
 @dataclass(frozen=True)

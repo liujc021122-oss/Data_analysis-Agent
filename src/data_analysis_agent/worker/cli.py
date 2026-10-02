@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--healthcheck",
         action="store_true",
-        help="check the worker database and Redis dependencies and exit",
+        help="check the worker database, Redis, and object storage dependencies and exit",
     )
     return parser
 
