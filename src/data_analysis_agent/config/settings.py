@@ -9,6 +9,7 @@ from dotenv import dotenv_values
 from sqlalchemy.engine import make_url
 
 from .llm import LLMConfig
+from .resource import ResourceLimits
 
 
 EnvironmentName = Literal["development", "test", "production"]
@@ -71,6 +72,12 @@ class Settings:
     session_cookie_name: str = DEFAULT_SESSION_COOKIE_NAME
     session_cookie_secure: bool = False
     auth_admin_emails: tuple[str, ...] = ()
+    max_active_tasks_per_user: int = 3
+    max_model_calls_per_task: int = 20
+    max_model_cost_usd_per_task: float | None = None
+    max_chart_count: int = 20
+    max_chart_file_bytes: int = 10 * 1024 * 1024
+    max_chart_total_bytes: int = 50 * 1024 * 1024
 
     def llm_config(self) -> LLMConfig:
         return LLMConfig(
@@ -78,6 +85,16 @@ class Settings:
             api_key=self.openai_api_key,
             base_url=self.openai_base_url,
             model=self.openai_model,
+        )
+
+    def resource_limits(self) -> ResourceLimits:
+        return ResourceLimits(
+            max_active_tasks_per_user=self.max_active_tasks_per_user,
+            max_model_calls_per_task=self.max_model_calls_per_task,
+            max_model_cost_usd_per_task=self.max_model_cost_usd_per_task,
+            max_chart_count=self.max_chart_count,
+            max_chart_file_bytes=self.max_chart_file_bytes,
+            max_chart_total_bytes=self.max_chart_total_bytes,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -155,6 +172,14 @@ def _nonnegative_float(
     if not math.isfinite(parsed) or parsed < 0:
         raise ConfigurationError(f"{key} must be a non-negative number")
     return parsed
+
+
+def _optional_nonnegative_float(
+    values: Mapping[str, str], key: str
+) -> float | None:
+    if _nonblank(values.get(key)) is None:
+        return None
+    return _nonnegative_float(values, key, 0.0)
 
 
 def _strict_bool(values: Mapping[str, str], key: str, default: bool) -> bool:
@@ -345,6 +370,22 @@ def load_settings(
         session_cookie_name=_cookie_name(values),
         session_cookie_secure=session_cookie_secure,
         auth_admin_emails=_admin_emails(values),
+        max_active_tasks_per_user=_positive_int(
+            values, "MAX_ACTIVE_TASKS_PER_USER", 3
+        ),
+        max_model_calls_per_task=_positive_int(
+            values, "MAX_MODEL_CALLS_PER_TASK", 20
+        ),
+        max_model_cost_usd_per_task=_optional_nonnegative_float(
+            values, "MAX_MODEL_COST_USD_PER_TASK"
+        ),
+        max_chart_count=_positive_int(values, "MAX_CHART_COUNT", 20),
+        max_chart_file_bytes=_positive_int(
+            values, "MAX_CHART_FILE_BYTES", 10 * 1024 * 1024
+        ),
+        max_chart_total_bytes=_positive_int(
+            values, "MAX_CHART_TOTAL_BYTES", 50 * 1024 * 1024
+        ),
     )
     if settings.log_level not in VALID_LOG_LEVELS:
         raise ConfigurationError(
