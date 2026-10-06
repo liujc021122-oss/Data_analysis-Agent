@@ -533,6 +533,7 @@ git commit -m "feat: add session logout to app layout"
 - Modify: frontend/src/app/router.test.tsx
 - Modify: frontend/src/components/layout/AppLayout.test.tsx
 - Modify: frontend/src/app/auth.test.tsx
+- Delete: frontend/src/services/session.test.ts
 
 #### Step 1: Search for stale development-auth references
 
