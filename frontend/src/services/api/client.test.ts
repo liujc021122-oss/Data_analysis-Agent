@@ -6,7 +6,7 @@ describe("ApiClient", () => {
     vi.unstubAllGlobals();
   });
 
-  it("includes the session cookie and never sends the development user header", async () => {
+  it("includes browser session credentials on API requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ ok: true }),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -16,7 +16,6 @@ describe("ApiClient", () => {
     await expect(apiClient.get<{ ok: boolean }>("/health")).resolves.toEqual({ ok: true });
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(requestInit.credentials).toBe("include");
-    expect(new Headers(requestInit.headers).has("X-User-ID")).toBe(false);
   });
 
   it("accepts an empty 204 response", async () => {

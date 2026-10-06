@@ -23,6 +23,7 @@ describe("API resources", () => {
     await createTask(request);
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.credentials).toBe("include");
     expect(JSON.parse(String(init.body))).toEqual(request);
   });
 
@@ -37,6 +38,7 @@ describe("API resources", () => {
     await uploadDataset(file);
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.credentials).toBe("include");
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get("file")).toBe(file);
   });

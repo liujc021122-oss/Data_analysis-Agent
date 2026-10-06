@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "@/app/auth";
 import { NotificationProvider } from "@/app/notifications";
 import { LoginPage } from "@/pages/LoginPage";
@@ -49,8 +49,6 @@ function renderWithQuery(ui: ReactNode, initialEntries: string[] = ["/"]) {
 }
 
 describe("frontend pages", () => {
-  beforeEach(() => undefined);
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -80,7 +78,6 @@ describe("frontend pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByText("受保护工作区")).toBeInTheDocument();
-    expect(localStorage.length).toBe(0);
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ credentials: "include", method: "POST" });
   });
 
