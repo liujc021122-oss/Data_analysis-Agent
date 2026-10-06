@@ -1,7 +1,9 @@
 import { Database, FileText, History, LogOut, Menu, Plus, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { clearSession, getSession } from "@/services/session";
+import { useAuth } from "@/app/auth";
+import { useNotifications } from "@/app/notifications";
+import { ApiError } from "@/services/api/client";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -25,12 +27,22 @@ export function AppLayout({ children }: AppLayoutProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const session = getSession();
+  const { user, logout, isLoggingOut } = useAuth();
+  const { notify } = useNotifications();
 
-  const logout = (): void => {
-    clearSession();
-    setMobileNavOpen(false);
-    navigate("/login", { replace: true });
+  const handleLogout = async (): Promise<void> => {
+    try {
+      await logout();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        notify({ kind: "error", message: error.message, requestId: error.requestId });
+      } else {
+        notify({ kind: "error", message: "退出登录未完成，请稍后重试。" });
+      }
+    } finally {
+      setMobileNavOpen(false);
+      navigate("/login", { replace: true });
+    }
   };
 
   return (
@@ -57,13 +69,13 @@ export function AppLayout({ children }: AppLayoutProps) {
         </nav>
         <div className="sidebar-footer">
           <div className="user-summary">
-            <span className="avatar" aria-hidden="true">{(session?.displayName || "开").slice(0, 1)}</span>
+            <span className="avatar" aria-hidden="true">{(user?.email || "用户").slice(0, 1)}</span>
             <span className="user-copy">
-              <strong>{session?.displayName || "开发用户"}</strong>
-              <small>本地开发环境</small>
+              <strong>{user?.email || "用户"}</strong>
+              <small>{user?.role === "ADMIN" ? "管理员" : "用户"}</small>
             </span>
           </div>
-          <button type="button" className="logout-button" onClick={logout}>
+          <button type="button" className="logout-button" disabled={isLoggingOut} onClick={() => void handleLogout()}>
             <LogOut size={16} aria-hidden="true" />
             <span>退出登录</span>
           </button>
