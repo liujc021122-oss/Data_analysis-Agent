@@ -39,7 +39,7 @@ function AuthProbe() {
       <p>{isLoggingIn ? "logging in" : "not logging in"}</p>
       <p>{isLoggingOut ? "logging out" : "not logging out"}</p>
       <button onClick={retryBootstrap}>retry</button>
-      <button onClick={() => void login({ email: user.email, password: "test-password-1234" })}>login</button>
+      <button onClick={() => void login({ email: user.email, password: "test-password-1234" }).catch(() => undefined)}>login</button>
       <button onClick={() => void logout()}>logout</button>
     </div>
   );
@@ -113,6 +113,31 @@ describe("AuthProvider", () => {
     expect(screen.getByText(user.email)).toBeInTheDocument();
     expect(queryClient.getQueryData(["datasets"])).toBeUndefined();
     expect((fetchMock.mock.calls[1]?.[1] as RequestInit).credentials).toBe("include");
+  });
+
+  it("returns to an unauthenticated state when login fails during bootstrap", async () => {
+    let resolveBootstrap: ((response: Response) => void) | undefined;
+    const bootstrapResponse = new Promise<Response>((resolve) => {
+      resolveBootstrap = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => bootstrapResponse)
+      .mockResolvedValueOnce(apiErrorResponse("INVALID_CREDENTIALS", 401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithAuth(<AuthProbe />);
+    fireEvent.click(screen.getByRole("button", { name: "login" }));
+
+    expect(await screen.findByText("logging in")).toBeInTheDocument();
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(screen.getByText("not logging in")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveBootstrap?.(jsonResponse(user));
+      await bootstrapResponse;
+    });
+    await waitFor(() => expect(screen.getByText("unauthenticated")).toBeInTheDocument());
+    expect(screen.queryByText(user.email)).not.toBeInTheDocument();
   });
 
   it("logs out, exposes its loading flag, clears cached queries, and becomes unauthenticated", async () => {

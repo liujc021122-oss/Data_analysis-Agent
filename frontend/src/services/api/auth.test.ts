@@ -3,7 +3,7 @@ import { getCurrentUser, login, logout } from "@/services/api/auth";
 
 const user = {
   user_id: "00000000-0000-0000-0000-000000000001",
-  email: "13634930829@163.com",
+  email: "auth-user@example.test",
   role: "ADMIN" as const,
   is_active: true,
   created_at: "2026-10-06T00:00:00Z",

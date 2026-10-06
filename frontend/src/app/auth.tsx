@@ -77,6 +77,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setBootstrapError(null);
       setStatus("authenticated");
       return loggedInUser;
+    } catch (error) {
+      setUser(null);
+      setBootstrapError(null);
+      setStatus("unauthenticated");
+      throw error;
     } finally {
       setIsLoggingIn(false);
     }

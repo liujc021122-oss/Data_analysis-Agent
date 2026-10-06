@@ -69,7 +69,7 @@ export function LoginPage() {
           {error ? <p className="field-error" role="alert">{error}</p> : null}
           <Button type="submit" disabled={isLoggingIn}>登录 <ArrowRight size={16} aria-hidden="true" /></Button>
         </form>
-        <p className="auth-note"><ShieldCheck size={15} aria-hidden="true" />仅用于本地开发和 API 联调</p>
+        <p className="auth-note"><ShieldCheck size={15} aria-hidden="true" />登录状态由后端 Session 维护，浏览器会使用登录 Cookie。</p>
       </section>
     </main>
   );
