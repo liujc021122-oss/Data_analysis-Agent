@@ -1,14 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { saveSession } from "@/services/session";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTask, getArtifact, uploadDataset } from "@/services/api/resources";
 
-const userId = "00000000-0000-0000-0000-000000000001";
-
 describe("API resources", () => {
-  beforeEach(() => {
-    saveSession({ userId, displayName: "分析员" });
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });

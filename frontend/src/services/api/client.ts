@@ -1,4 +1,3 @@
-import { getSession } from "@/services/session";
 import type { ApiErrorResponse } from "@/types/api";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -64,10 +63,6 @@ export class ApiClient {
     const requestHeaders = new Headers(init.headers);
 
     requestHeaders.set("Accept", requestHeaders.get("Accept") ?? "application/json");
-    const session = getSession();
-    if (session) {
-      requestHeaders.set("X-User-ID", session.userId);
-    }
 
     if (init.body && !(init.body instanceof FormData) && !requestHeaders.has("Content-Type")) {
       requestHeaders.set("Content-Type", "application/json");
@@ -76,6 +71,7 @@ export class ApiClient {
     try {
       const response = await fetch(apiUrl(path), {
         ...init,
+        credentials: "include",
         headers: Object.fromEntries(requestHeaders.entries()),
         signal: init.signal ?? controller.signal,
       });

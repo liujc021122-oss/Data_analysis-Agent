@@ -1,20 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { saveSession } from "@/services/session";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, apiClient } from "@/services/api/client";
 
-const userId = "00000000-0000-0000-0000-000000000001";
-
 describe("ApiClient", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("returns JSON and attaches the current development user", async () => {
-    saveSession({ userId, displayName: "分析员" });
+  it("includes the session cookie and never sends the development user header", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ ok: true }),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -23,7 +15,8 @@ describe("ApiClient", () => {
 
     await expect(apiClient.get<{ ok: boolean }>("/health")).resolves.toEqual({ ok: true });
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(new Headers(requestInit.headers).get("X-User-ID")).toBe(userId);
+    expect(requestInit.credentials).toBe("include");
+    expect(new Headers(requestInit.headers).has("X-User-ID")).toBe(false);
   });
 
   it("accepts an empty 204 response", async () => {
