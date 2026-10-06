@@ -68,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [bootstrap]);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
+    requestSequence.current += 1;
     setIsLoggingIn(true);
     try {
       const loggedInUser = await loginRequest(credentials);
@@ -82,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const logout = useCallback(async () => {
+    requestSequence.current += 1;
     setIsLoggingOut(true);
     try {
       await logoutRequest();

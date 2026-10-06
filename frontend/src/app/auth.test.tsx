@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider, useAuth } from "@/app/auth";
@@ -8,7 +8,7 @@ import type { AuthUser } from "@/types/auth";
 
 const user: AuthUser = {
   user_id: "00000000-0000-0000-0000-000000000001",
-  email: "13634930829@163.com",
+  email: "auth-user@example.test",
   role: "ADMIN",
   is_active: true,
   created_at: "2026-10-06T00:00:00Z",
@@ -135,6 +135,29 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(queryClient.getQueryData(["datasets"])).toBeUndefined();
     expect((fetchMock.mock.calls[1]?.[1] as RequestInit).credentials).toBe("include");
+  });
+
+  it("keeps logout state when a pending bootstrap response resolves later", async () => {
+    let resolveBootstrap: ((response: Response) => void) | undefined;
+    const bootstrapResponse = new Promise<Response>((resolve) => {
+      resolveBootstrap = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => bootstrapResponse)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithAuth(<AuthProbe />);
+    fireEvent.click(screen.getByRole("button", { name: "logout" }));
+    expect(await screen.findByText("logging out")).toBeInTheDocument();
+
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    await act(async () => {
+      resolveBootstrap?.(jsonResponse({ ...user, email: "stale@example.test" }));
+      await bootstrapResponse;
+    });
+    await waitFor(() => expect(screen.getByText("unauthenticated")).toBeInTheDocument());
+    expect(screen.queryByText("stale@example.test")).not.toBeInTheDocument();
   });
 
   it("preserves the latest session lookup when an older response resolves later", async () => {
