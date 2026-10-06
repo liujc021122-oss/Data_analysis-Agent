@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearSession, getSession, saveSession } from "@/services/session";
+import { AuthProvider } from "@/app/auth";
 import { NotificationProvider } from "@/app/notifications";
 import { LoginPage } from "@/pages/LoginPage";
 import { DatasetsPage } from "@/pages/DatasetsPage";
@@ -11,7 +11,27 @@ import { NewAnalysisPage } from "@/pages/NewAnalysisPage";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { TaskHistoryPage } from "@/pages/TaskHistoryPage";
 
-const userId = "00000000-0000-0000-0000-000000000001";
+const user = {
+  user_id: "00000000-0000-0000-0000-000000000001",
+  email: "auth-user@example.test",
+  role: "ADMIN" as const,
+  is_active: true,
+  created_at: "2026-10-06T00:00:00Z",
+};
+
+function jsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function apiErrorResponse(code: string, status: number): Response {
+  return new Response(JSON.stringify({ code, message: code }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 function renderWithQuery(ui: ReactNode, initialEntries: string[] = ["/"]) {
   const client = new QueryClient({
@@ -29,32 +49,61 @@ function renderWithQuery(ui: ReactNode, initialEntries: string[] = ["/"]) {
 }
 
 describe("frontend pages", () => {
-  beforeEach(() => {
-    clearSession();
-    saveSession({ userId, displayName: "分析员" });
-  });
+  beforeEach(() => undefined);
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("saves a local development session from the login page", () => {
-    clearSession();
+  it("logs in with email and password and returns to the protected page", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(apiErrorResponse("AUTHENTICATION_REQUIRED", 401))
+      .mockResolvedValueOnce(jsonResponse(user));
+    vi.stubGlobal("fetch", fetchMock);
+
     render(
-      <MemoryRouter initialEntries={["/login"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/datasets" element={<p>数据集工作区</p>} />
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[{ pathname: "/login", search: "?from=tasks", state: { from: "/datasets" } }]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/datasets" element={<p>受保护工作区</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
     );
 
-    fireEvent.change(screen.getByLabelText("开发用户 UUID"), { target: { value: userId } });
-    fireEvent.change(screen.getByLabelText("显示名称"), { target: { value: "演示分析员" } });
-    fireEvent.click(screen.getByRole("button", { name: "进入工作台" }));
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: user.email } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "test-password-1234" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(getSession()).toEqual({ userId, displayName: "演示分析员" });
-    expect(screen.getByText("数据集工作区")).toBeInTheDocument();
+    expect(await screen.findByText("受保护工作区")).toBeInTheDocument();
+    expect(localStorage.length).toBe(0);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ credentials: "include", method: "POST" });
+  });
+
+  it("shows a stable error for invalid credentials", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(apiErrorResponse("AUTHENTICATION_REQUIRED", 401))
+      .mockResolvedValueOnce(apiErrorResponse("INVALID_CREDENTIALS", 401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/login"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <LoginPage />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    fireEvent.change(await screen.findByLabelText("邮箱"), { target: { value: user.email } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "wrong-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("邮箱或密码错误");
   });
 
   it("shows an empty state when the dataset list is empty", async () => {

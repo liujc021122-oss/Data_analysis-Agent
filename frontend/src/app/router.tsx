@@ -1,6 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { PropsWithChildren } from "react";
+import { useAuth } from "@/app/auth";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { PageState } from "@/components/ui/PageState";
 import { DatasetsPage } from "@/pages/DatasetsPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NewAnalysisPage } from "@/pages/NewAnalysisPage";
@@ -8,12 +10,19 @@ import { NotFoundPage } from "@/pages/NotFoundPage";
 import { ReportDetailPage } from "@/pages/ReportDetailPage";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { TaskHistoryPage } from "@/pages/TaskHistoryPage";
-import { getSession } from "@/services/session";
 
 export function ProtectedRoute({ children }: PropsWithChildren) {
   const location = useLocation();
-  if (!getSession()) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  const { status, retryBootstrap } = useAuth();
+  if (status === "loading") {
+    return <PageState kind="loading" title="正在验证登录状态" description="请稍候。" />;
+  }
+  if (status === "error") {
+    return <PageState kind="error" title="认证服务暂时不可用" description="请检查 API 服务后重试。" action={{ label: "重试", onClick: retryBootstrap }} />;
+  }
+  if (status === "unauthenticated") {
+    const from = location.pathname + location.search + location.hash;
+    return <Navigate to="/login" replace state={{ from }} />;
   }
   return <>{children}</>;
 }

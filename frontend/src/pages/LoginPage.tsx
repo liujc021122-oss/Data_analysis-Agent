@@ -1,29 +1,48 @@
 import { ArrowRight, FileText, ShieldCheck } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "@/app/auth";
 import { Button } from "@/components/ui/Button";
-import { DEFAULT_DEV_USER_ID, isValidUserId, saveSession } from "@/services/session";
+import { ApiError } from "@/services/api/client";
+
+function redirectPath(state: unknown): string {
+  const from = state && typeof state === "object" && "from" in state ? (state as { from?: unknown }).from : undefined;
+  return typeof from === "string" && from.startsWith("/") && !from.startsWith("//") ? from : "/datasets";
+}
+
+function toLoginErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.code === "INVALID_CREDENTIALS") {
+    return "邮箱或密码错误";
+  }
+  if (error instanceof ApiError && (error.code === "NETWORK_ERROR" || error.code === "REQUEST_TIMEOUT")) {
+    return "无法连接认证服务，请确认后端已启动。";
+  }
+  return "登录未完成，请稍后重试。";
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [userId, setUserId] = useState(DEFAULT_DEV_USER_ID);
-  const [displayName, setDisplayName] = useState("演示分析员");
+  const { status, login, isLoggingIn } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+  useEffect(() => {
+    if (status === "authenticated") {
+      navigate(redirectPath(location.state), { replace: true });
+    }
+  }, [location.state, navigate, status]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (!isValidUserId(userId)) {
-      setError("请输入有效的 UUID 格式开发用户 ID。");
-      return;
+    setError(null);
+    try {
+      await login({ email: email.trim(), password });
+      navigate(redirectPath(location.state), { replace: true });
+    } catch (caught) {
+      setError(toLoginErrorMessage(caught));
     }
-    if (!displayName.trim()) {
-      setError("请输入显示名称。");
-      return;
-    }
-    saveSession({ userId, displayName });
-    const from = (location.state as { from?: string } | null)?.from;
-    navigate(from || "/datasets", { replace: true });
   };
 
   return (
@@ -34,22 +53,21 @@ export function LoginPage() {
           <span>数据分析工作台</span>
         </div>
         <div className="auth-heading">
-          <p className="eyebrow">本地开发模式</p>
+          <p className="eyebrow">安全登录</p>
           <h1 id="login-title">进入你的分析工作区</h1>
-          <p>使用开发身份访问数据集、任务和报告页面。此页面不会调用真实模型。</p>
+          <p>登录后访问数据集、任务和报告页面。</p>
         </div>
         <form className="form-stack" onSubmit={handleSubmit}>
           <div className="field-group">
-            <label htmlFor="dev-user-id">开发用户 UUID</label>
-            <input id="dev-user-id" value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="off" />
-            <small>开发 API 会把它作为 X-User-ID 请求头。</small>
+            <label htmlFor="email">邮箱</label>
+            <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
           </div>
           <div className="field-group">
-            <label htmlFor="display-name">显示名称</label>
-            <input id="display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" />
+            <label htmlFor="password">密码</label>
+            <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
           </div>
           {error ? <p className="field-error" role="alert">{error}</p> : null}
-          <Button type="submit">进入工作台 <ArrowRight size={16} aria-hidden="true" /></Button>
+          <Button type="submit" disabled={isLoggingIn}>登录 <ArrowRight size={16} aria-hidden="true" /></Button>
         </form>
         <p className="auth-note"><ShieldCheck size={15} aria-hidden="true" />仅用于本地开发和 API 联调</p>
       </section>
