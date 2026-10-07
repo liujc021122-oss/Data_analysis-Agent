@@ -27,15 +27,19 @@ def build_celery_app(settings: Settings | None = None):
         broker=settings.redis_url,
         backend=settings.redis_url,
     )
-    app.conf.update(
-        task_acks_late=True,
-        task_reject_on_worker_lost=True,
-        worker_prefetch_multiplier=1,
-        task_track_started=True,
-        task_serializer="json",
-        accept_content=["json"],
-        result_serializer="json",
-    )
+    celery_config = {
+        "worker_pool": settings.worker_pool,
+        "task_acks_late": True,
+        "task_reject_on_worker_lost": True,
+        "worker_prefetch_multiplier": 1,
+        "task_track_started": True,
+        "task_serializer": "json",
+        "accept_content": ["json"],
+        "result_serializer": "json",
+    }
+    if settings.worker_concurrency is not None:
+        celery_config["worker_concurrency"] = settings.worker_concurrency
+    app.conf.update(celery_config)
     return app
 
 

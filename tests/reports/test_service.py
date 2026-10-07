@@ -89,7 +89,8 @@ def test_service_uses_evidence_registry_before_canonical_rendering(tmp_path: Pat
     )
 
     assert "999" not in bundle.markdown_content
-    assert "【待确认数字】" in bundle.markdown_content
+    assert "待确认数字" not in bundle.markdown_content
+    assert bundle.markdown_content == ""
 
 
 def test_service_rejects_missing_output_root_before_rendering(tmp_path: Path):
@@ -126,7 +127,34 @@ def test_service_marks_numeric_narrative_pending_without_evidence(tmp_path: Path
     assert bundle.evidence_validation.valid is False
     assert bundle.evidence_validation.unsupported_numeric_claims == ("999",)
     assert "999" not in bundle.markdown_content
-    assert "待确认" in bundle.markdown_content
+    assert "待确认数字" not in bundle.markdown_content
+    assert "UNSUPPORTED_NUMERIC_CLAIM" not in bundle.markdown_content
+    assert bundle.markdown_content == ""
+
+
+def test_service_omits_unsupported_numeric_sentence_without_placeholder(
+    tmp_path: Path,
+):
+    task_id = uuid4()
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        narrative_markdown=(
+            "补贴规模约为商家实收的1.5倍，成本结构失衡。\n\n"
+            "第二段只保留定性结论。"
+        ),
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is False
+    assert bundle.evidence_validation.unsupported_numeric_claims == ("1.5",)
+    assert "1.5" not in bundle.markdown_content
+    assert "待确认数字" not in bundle.markdown_content
+    assert "UNSUPPORTED_NUMERIC_CLAIM" not in bundle.markdown_content
+    assert "第二段只保留定性结论。" in bundle.markdown_content
 
 
 def test_service_preserves_numeric_fact_when_verified_metric_matches(tmp_path: Path):
@@ -152,6 +180,44 @@ def test_service_preserves_numeric_fact_when_verified_metric_matches(tmp_path: P
     assert bundle.evidence_validation.valid is True
     assert bundle.evidence_validation.unsupported_numeric_claims == ()
     assert "Revenue is 999." in bundle.markdown_content
+
+
+def test_service_preserves_verified_execution_output_numbers(tmp_path: Path):
+    task_id = uuid4()
+    dataset_id = uuid4()
+    execution_id = uuid4()
+    metrics = tuple(
+        MetricArtifact(
+            task_id=task_id,
+            name=f"execution_output_{index}",
+            value=value,
+            unit=unit,
+            formula="numeric value emitted by successful dataset analysis execution",
+            source_dataset_ids=(dataset_id,),
+            execution_id=execution_id,
+            code_hash="a" * 64,
+            verification_status=EvidenceVerificationStatus.VERIFIED,
+            metadata={"evidence_source": "successful_execution_output"},
+        )
+        for index, (value, unit) in enumerate(
+            ((2019.0, None), (2_000_000.0, None), (66.6, "%"))
+        )
+    )
+    document = ReportDocument(
+        task_id=task_id,
+        output_root=str(tmp_path),
+        narrative_markdown="统计年份为2019，GMV为2,000,000元，转化率为66.6%。",
+        metric_artifacts=metrics,
+    )
+
+    bundle = ReportService(allowed_output_root=tmp_path).generate(
+        document, formats={ReportFormat.MARKDOWN}
+    )
+
+    assert bundle.evidence_validation.valid is True
+    assert bundle.evidence_validation.unsupported_numeric_claims == ()
+    assert "待确认数字" not in bundle.markdown_content
+    assert "2,000,000" in bundle.markdown_content
 
 
 def test_service_marks_unsupported_percentage_pending(tmp_path: Path):

@@ -7,16 +7,32 @@ from uuid import UUID
 
 from ..agent.core import DataAnalysisAgent
 from ..config import build_storage
-from ..config.settings import ConfigurationError, configure_logging, load_settings
+from ..config.settings import (
+    VALID_WORKER_POOLS,
+    ConfigurationError,
+    configure_logging,
+    load_settings,
+)
 from ..datasets import DatasetResolver, UnitOfWorkDatasetStore
 from ..persistence.database import Database
 from ..persistence.unit_of_work import UnitOfWork
 from ..services.persistence import TaskPersistenceService
+from ..storage import ArtifactStorageService
 from .broker import CeleryTaskBroker
 from .celery_app import build_celery_app, build_celery_broker, register_analysis_task
 from .errors import WorkerConfigurationError
 from .health import worker_healthcheck
 from .worker import AnalysisTaskWorker
+
+
+def _positive_int_argument(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--env", choices=("development", "test", "production"), default=None
     )
     parser.add_argument("--loglevel", default=None)
+    parser.add_argument("--pool", choices=sorted(VALID_WORKER_POOLS), default=None)
+    parser.add_argument("--concurrency", type=_positive_int_argument, default=None)
     parser.add_argument("--recover-stale", action="store_true")
     parser.add_argument(
         "--healthcheck",
@@ -37,10 +55,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+class _PersistentArtifactRepository:
+    def __init__(self, uow_factory):
+        self._uow_factory = uow_factory
+
+    def add(self, record):
+        with self._uow_factory() as uow:
+            return uow.artifacts.add(record)
+
+
+class _PersistentReportRepository:
+    def __init__(self, uow_factory):
+        self._uow_factory = uow_factory
+
+    def add(self, record):
+        with self._uow_factory() as uow:
+            return uow.reports.add(record)
+
+
 def build_worker(settings, database: Database, broker: CeleryTaskBroker):
     storage = build_storage(settings)
+    uow_factory = lambda: UnitOfWork(database.session_factory)
     dataset_store = UnitOfWorkDatasetStore(
-        lambda: UnitOfWork(database.session_factory)
+        uow_factory
+    )
+    artifact_storage = ArtifactStorageService(
+        storage=storage,
+        artifact_repository=_PersistentArtifactRepository(uow_factory),
+        report_repository=_PersistentReportRepository(uow_factory),
     )
     resolver = DatasetResolver(storage=storage, metadata_store=dataset_store)
     persistence = TaskPersistenceService(
@@ -59,6 +101,8 @@ def build_worker(settings, database: Database, broker: CeleryTaskBroker):
             max_rounds=task.max_rounds,
             dataset_resolver=resolver,
             dataset_owner_id=user_id,
+            storage=storage,
+            artifact_storage=artifact_storage,
             task_id=task.task_id,
             settings=settings,
             transition_callback=on_transition,
@@ -89,7 +133,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.recover_stale:
             worker.recover_stale()
         register_analysis_task(app, lambda: worker)
-        worker_args = ["worker"]
+        worker_args = ["worker", "--pool", args.pool or settings.worker_pool]
+        concurrency = (
+            args.concurrency
+            if args.concurrency is not None
+            else settings.worker_concurrency
+        )
+        if concurrency is not None:
+            worker_args.extend(["--concurrency", str(concurrency)])
         if args.loglevel:
             worker_args.extend(["--loglevel", args.loglevel])
         app.worker_main(worker_args)

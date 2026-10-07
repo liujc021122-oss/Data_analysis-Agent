@@ -129,3 +129,64 @@ def test_final_report_prompt_contains_only_verified_metric_context(tmp_path):
     assert "revenue" in prompt
     assert "10.0" in prompt
     assert "verified" in prompt.lower()
+
+
+def test_execution_output_numbers_are_registered_as_verified_metrics(tmp_path):
+    task_id = uuid4()
+    dataset_id = uuid4()
+    execution_id = uuid4()
+    agent = object.__new__(DataAnalysisAgent)
+    agent.task_id = task_id
+    agent._analysis_dataset_ids = (dataset_id,)
+    agent.evidence_registry = EvidenceRegistry(task_id=task_id, output_root=tmp_path)
+
+    agent._register_execution_output_metrics(
+        "print('aggregates')",
+        {
+            "success": True,
+            "output": "年份: 2019\n总GMV: 2,000,000\n转化率: 66.6%",
+            "audit": {
+                "execution_id": str(execution_id),
+                "code_sha256": "a" * 64,
+            },
+        },
+    )
+
+    metrics = agent.evidence_registry.snapshot(task_id)["metrics"]
+    values = {metric.value for metric in metrics}
+    assert {2019.0, 2_000_000.0, 66.6}.issubset(values)
+    assert all(metric.execution_id == execution_id for metric in metrics)
+    assert all(metric.source_dataset_ids == (dataset_id,) for metric in metrics)
+    assert all(
+        metric.verification_status is EvidenceVerificationStatus.VERIFIED
+        for metric in metrics
+    )
+
+
+def test_verified_chart_analysis_numbers_are_registered_with_chart_provenance(
+    tmp_path,
+):
+    task_id = uuid4()
+    dataset_id = uuid4()
+    execution_id = uuid4()
+    agent = object.__new__(DataAnalysisAgent)
+    agent.task_id = task_id
+    agent._analysis_dataset_ids = (dataset_id,)
+    agent.evidence_registry = EvidenceRegistry(task_id=task_id, output_root=tmp_path)
+
+    agent._register_numeric_evidence(
+        "利润率从 28.0% 变化到 39.63%，峰值 GMV 为 662066 元",
+        evidence_source="verified_chart_analysis",
+        execution_id=execution_id,
+        code_hash="b" * 64,
+        metadata={"chart_id": str(uuid4())},
+    )
+
+    metrics = agent.evidence_registry.snapshot(task_id)["metrics"]
+    assert {28.0, 39.63, 662066.0}.issubset(
+        {metric.value for metric in metrics}
+    )
+    assert all(
+        metric.metadata["evidence_source"] == "verified_chart_analysis"
+        for metric in metrics
+    )

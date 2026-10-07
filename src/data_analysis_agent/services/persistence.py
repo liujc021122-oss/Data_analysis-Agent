@@ -466,10 +466,22 @@ class TaskPersistenceService:
                 raise EntityNotFoundError(f"task {task_id} not found")
             if current.status in {
                 TaskStatus.COMPLETED,
-                TaskStatus.FAILED,
                 TaskStatus.CANCELLED,
             }:
                 return current
+            if current.status is TaskStatus.FAILED:
+                if current.error_code is not None:
+                    return current
+                updated = uow.tasks.update(
+                    current.model_copy(
+                        update={
+                            "error_code": code,
+                            "error_message": message,
+                        }
+                    )
+                )
+                uow.commit()
+                return updated
             failed_input = current.model_copy(
                 update={"error_code": code, "error_message": message}
             )

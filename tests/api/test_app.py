@@ -116,6 +116,7 @@ def test_development_without_redis_rejects_async_submission_with_configuration_e
             "DATABASE_URL": f"sqlite:///{tmp_path / 'development.sqlite3'}",
             "STORAGE_LOCAL_ROOT": str(tmp_path / "objects"),
         },
+        dotenv_dir=tmp_path,
     )
     application = APIApplication.from_settings(settings)
     init_database(application.database.engine)

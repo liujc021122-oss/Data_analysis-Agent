@@ -18,6 +18,7 @@ VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 VALID_EXECUTION_BACKENDS = {"local", "container"}
 VALID_EXECUTION_NETWORK_MODES = {"none", "bridge"}
 VALID_STORAGE_BACKENDS = {"local", "s3"}
+VALID_WORKER_POOLS = {"prefork", "solo", "threads"}
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_MAX_TASK_RUNTIME = 900
@@ -25,6 +26,8 @@ DEFAULT_MAX_UPLOAD_SIZE = 104857600
 DEFAULT_WORKER_MAX_RETRIES = 3
 DEFAULT_WORKER_RETRY_BACKOFF_SECONDS = 5.0
 DEFAULT_WORKER_STALE_AFTER_SECONDS = 1800
+DEFAULT_DEVELOPMENT_WORKER_POOL = "solo"
+DEFAULT_PRODUCTION_WORKER_POOL = "prefork"
 DEFAULT_SESSION_TTL_SECONDS = 86400
 DEFAULT_SESSION_COOKIE_NAME = "daa_session"
 LOGGER_NAME = "data_analysis_agent"
@@ -65,6 +68,8 @@ class Settings:
     execution_backend: Literal["local", "container"] = "local"
     execution_image: Optional[str] = None
     execution_network_mode: Literal["none", "bridge"] = "none"
+    worker_pool: Literal["prefork", "solo", "threads"] = "prefork"
+    worker_concurrency: int | None = None
     worker_max_retries: int = DEFAULT_WORKER_MAX_RETRIES
     worker_retry_backoff_seconds: float = DEFAULT_WORKER_RETRY_BACKOFF_SECONDS
     worker_stale_after_seconds: int = DEFAULT_WORKER_STALE_AFTER_SECONDS
@@ -171,6 +176,39 @@ def _nonnegative_float(
         raise ConfigurationError(f"{key} must be a non-negative number") from exc
     if not math.isfinite(parsed) or parsed < 0:
         raise ConfigurationError(f"{key} must be a non-negative number")
+    return parsed
+
+
+def _worker_pool(
+    values: Mapping[str, str], environment: EnvironmentName
+) -> Literal["prefork", "solo", "threads"]:
+    default = (
+        DEFAULT_PRODUCTION_WORKER_POOL
+        if environment == "production"
+        else DEFAULT_DEVELOPMENT_WORKER_POOL
+    )
+    selected = (_nonblank(values.get("WORKER_POOL")) or default).lower()
+    if selected not in VALID_WORKER_POOLS:
+        raise ConfigurationError(
+            "WORKER_POOL must be one of prefork, solo, or threads"
+        )
+    return cast(Literal["prefork", "solo", "threads"], selected)
+
+
+def _worker_concurrency(
+    values: Mapping[str, str], pool: Literal["prefork", "solo", "threads"]
+) -> int | None:
+    raw_value = _nonblank(values.get("WORKER_CONCURRENCY"))
+    if raw_value is None:
+        return 1 if pool in {"solo", "threads"} else None
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            "WORKER_CONCURRENCY must be a positive integer"
+        ) from exc
+    if parsed <= 0:
+        raise ConfigurationError("WORKER_CONCURRENCY must be a positive integer")
     return parsed
 
 
@@ -303,6 +341,8 @@ def load_settings(
         raise ConfigurationError(
             "EXECUTION_NETWORK_MODE must be one of none or bridge"
         )
+    worker_pool = _worker_pool(values, environment)
+    worker_concurrency = _worker_concurrency(values, worker_pool)
     session_cookie_secure = _strict_bool(
         values,
         "AUTH_SESSION_COOKIE_SECURE",
@@ -351,6 +391,8 @@ def load_settings(
         execution_network_mode=cast(
             Literal["none", "bridge"], execution_network_mode
         ),
+        worker_pool=worker_pool,
+        worker_concurrency=worker_concurrency,
         worker_max_retries=_nonnegative_int(
             values, "WORKER_MAX_RETRIES", DEFAULT_WORKER_MAX_RETRIES
         ),

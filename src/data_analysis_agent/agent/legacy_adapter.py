@@ -31,14 +31,20 @@ class LegacyAnalysisAdapter:
         self.user_input = user_input
         self.dataset_context = tuple(dataset_context)
         self.max_rounds = max_rounds
-        self.task = AnalysisTask(
-            query=user_input,
-            dataset_ids=tuple(
+        task_kwargs = {
+            "query": user_input,
+            "dataset_ids": tuple(
                 UUID(item["dataset_id"])
                 for item in self.dataset_context
                 if item.get("dataset_id")
             ),
-            max_rounds=max(1, max_rounds),
+            "max_rounds": max(1, max_rounds),
+        }
+        agent_task_id = getattr(agent, "task_id", None)
+        if agent_task_id is not None:
+            task_kwargs["task_id"] = agent_task_id
+        self.task = AnalysisTask(
+            **task_kwargs,
         )
         self.limits = OrchestratorLimits(
             max_steps=max(6, max_rounds + 6),
@@ -86,7 +92,6 @@ class LegacyAnalysisAdapter:
         if self.agent.current_round >= self.max_rounds:
             return StageResult()
 
-        self.agent.current_round += 1
         try:
             model_action = self._request_action()
             response = model_action.model_dump_json()
@@ -94,6 +99,7 @@ class LegacyAnalysisAdapter:
             return _model_action_failure(error)
         except Exception:
             return _model_action_failure(_ModelActionError("MODEL_ERROR"))
+        self.agent.current_round += 1
         process_result = self.agent._process_action(model_action, response)
 
         if not process_result.get("continue", True):
@@ -320,6 +326,7 @@ def _model_action_failure(error: _ModelActionError) -> StageResult:
         failure=StageFailure(
             code=error.code,
             message="structured model action failed",
+            retryable=error.code == "MODEL_SCHEMA_ERROR",
         ),
     )
 

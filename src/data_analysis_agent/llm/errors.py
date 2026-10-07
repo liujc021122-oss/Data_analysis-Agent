@@ -63,6 +63,7 @@ class LLMProviderError(LLMError):
 
 class LLMEmptyResponseError(LLMError):
     code = "empty_response_error"
+    default_retryable = True
 
 
 class LLMStructuredOutputError(LLMError):

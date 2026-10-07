@@ -17,6 +17,7 @@ import pandas
 import asyncio
 import inspect
 from contextlib import ExitStack, contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
 from uuid import UUID, uuid4
@@ -36,6 +37,7 @@ from ..execution import (
     ExecutionLimits,
     NetworkPolicy,
     build_execution_backend,
+    code_sha256,
 )
 from ..execution.runtime import ContainerRuntime
 from ..llm import LLMStructuredOutputError
@@ -72,6 +74,10 @@ from .orchestration_errors import AgentOrchestrationError
 from .orchestrator import AgentOrchestrator
 from .prompts import final_report_system_prompt
 from .schemas import AgentAction
+from ..reports.numbers import numeric_claims, numeric_value
+
+
+MAX_EXECUTION_EVIDENCE_METRICS = 512
 
 
 class _EphemeralArtifactRepository:
@@ -247,6 +253,7 @@ class DataAnalysisAgent:
         self.execution_audits: list[dict[str, Any]] = []
         self._last_execution_id: UUID | None = None
         self._last_code_hash: str | None = None
+        self._analysis_dataset_ids: tuple[UUID, ...] = ()
         self.storage_error = None
         self.session_output_dir = None
         self.executor = None
@@ -407,6 +414,81 @@ class DataAnalysisAgent:
             metric = metric.model_copy(update={"task_id": self.task_id})
         return self._get_evidence_registry().register_metric(metric)
 
+    def _register_numeric_evidence(
+        self,
+        text: str,
+        *,
+        evidence_source: str,
+        execution_id: UUID,
+        code_hash: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Register numeric values from a verified analysis boundary."""
+        dataset_ids = getattr(self, "_analysis_dataset_ids", ())
+        if not dataset_ids or not text:
+            return
+        if not re.fullmatch(r"[0-9a-f]{64}", code_hash):
+            return
+
+        registry = self._get_evidence_registry()
+        metadata_base = dict(metadata or {})
+        for index, token in enumerate(numeric_claims(text)):
+            if index >= MAX_EXECUTION_EVIDENCE_METRICS:
+                break
+            try:
+                value = numeric_value(token)
+                metric = MetricArtifact(
+                    task_id=self.task_id,
+                    name=f"{evidence_source}_{execution_id.hex}_{index}",
+                    value=value,
+                    unit="%" if token.endswith("%") else None,
+                    formula=f"numeric value from {evidence_source}",
+                    source_dataset_ids=dataset_ids,
+                    execution_id=execution_id,
+                    code_hash=code_hash,
+                    metadata={
+                        **metadata_base,
+                        "evidence_source": evidence_source,
+                        "numeric_token": token,
+                    },
+                )
+                registered = registry.register_metric(metric)
+                registry.verify_metric(registered.artifact_id, value)
+            except (TypeError, ValueError, EvidenceError):
+                continue
+
+    def _register_execution_output_metrics(
+        self, code: str, result: Mapping[str, Any]
+    ) -> None:
+        """Register numeric results emitted by successful dataset executions."""
+        if not result.get("success") or not getattr(
+            self, "_analysis_dataset_ids", ()
+        ):
+            return
+        output = result.get("output")
+        if not isinstance(output, str):
+            return
+
+        audit = result.get("audit")
+        audit = audit if isinstance(audit, Mapping) else {}
+        try:
+            execution_id = UUID(str(audit["execution_id"]))
+        except (KeyError, TypeError, ValueError):
+            execution_id = getattr(self, "_last_execution_id", None) or uuid4()
+        candidate_hash = audit.get("code_sha256")
+        code_hash = (
+            str(candidate_hash)
+            if isinstance(candidate_hash, str)
+            and re.fullmatch(r"[0-9a-f]{64}", candidate_hash)
+            else getattr(self, "_last_code_hash", None) or code_sha256(code)
+        )
+        self._register_numeric_evidence(
+            output,
+            evidence_source="successful_execution_output",
+            execution_id=execution_id,
+            code_hash=code_hash,
+        )
+
     def validate_claim(self, claim: EvidenceClaim) -> EvidenceClaim:
         return self._get_evidence_registry().validate_claim(claim)
 
@@ -530,7 +612,28 @@ class DataAnalysisAgent:
                         code_hash=getattr(self, "_last_code_hash", None),
                     )
                     registered_chart = self._get_evidence_registry().register_chart(chart)
-                    self._get_evidence_registry().check_chart(registered_chart.artifact_id)
+                    checked_chart = self._get_evidence_registry().check_chart(
+                        registered_chart.artifact_id
+                    )
+                    if analysis:
+                        self._register_numeric_evidence(
+                            analysis,
+                            evidence_source="verified_chart_analysis",
+                            execution_id=(
+                                checked_chart.execution_id
+                                or getattr(self, "_last_execution_id", None)
+                                or uuid4()
+                            ),
+                            code_hash=(
+                                checked_chart.code_hash
+                                or getattr(self, "_last_code_hash", None)
+                                or code_sha256(analysis)
+                            ),
+                            metadata={
+                                "chart_id": str(checked_chart.artifact_id),
+                                "chart_filename": str(filename),
+                            },
+                        )
                     evidence_verified = True
                 except EvidenceError:
                     # Preserve the legacy collection payload for storage/error
@@ -580,8 +683,20 @@ class DataAnalysisAgent:
                         try:
                             self._last_execution_id = UUID(str(execution_id))
                         except (TypeError, ValueError):
-                            self._last_execution_id = None
-                    self._last_code_hash = audit.get("code_sha256")
+                            self._last_execution_id = uuid4()
+                    else:
+                        self._last_execution_id = uuid4()
+                    candidate_hash = audit.get("code_sha256")
+                    self._last_code_hash = (
+                        str(candidate_hash)
+                        if isinstance(candidate_hash, str)
+                        and re.fullmatch(r"[0-9a-f]{64}", candidate_hash)
+                        else code_sha256(code)
+                    )
+                else:
+                    self._last_execution_id = uuid4()
+                    self._last_code_hash = code_sha256(code)
+                self._register_execution_output_metrics(code, result)
 
             # 格式化执行结果
             feedback = format_execution_result(result)
@@ -667,6 +782,7 @@ class DataAnalysisAgent:
         self.execution_audits = []
         self._last_execution_id = None
         self._last_code_hash = None
+        self._analysis_dataset_ids = ()
         self.storage_error = None
 
         if files is not None and dataset_ids is not None:
@@ -690,6 +806,7 @@ class DataAnalysisAgent:
         normalized_dataset_ids = tuple(
             UUID(str(dataset_id)) for dataset_id in (dataset_ids or ())
         )
+        self._analysis_dataset_ids = normalized_dataset_ids
         dataset_context = []
         profiles_by_id = {}
         if normalized_dataset_ids:
@@ -750,7 +867,7 @@ class DataAnalysisAgent:
                     normalized_id, owner_id=self.dataset_owner_id
                 ) as stream:
                     dataframe = pandas.read_csv(
-                        stream,
+                        BytesIO(stream.read()),
                         encoding=encoding,
                         sep=delimiter,
                     )
@@ -1339,6 +1456,8 @@ class DataAnalysisAgent:
             'metric_artifacts': [
                 item.model_dump(mode="json")
                 for item in evidence_snapshot["metrics"]
+                if item.metadata.get("evidence_source")
+                not in {"successful_execution_output", "verified_chart_analysis"}
             ],
             'chart_artifacts': [
                 item.model_dump(mode="json")

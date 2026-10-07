@@ -117,7 +117,7 @@ def test_template_uses_only_verified_metrics_and_safe_charts(tmp_path: Path):
     assert "missing.png" not in markdown
 
 
-def test_template_adds_evidence_status_for_invalid_validation(tmp_path: Path):
+def test_template_omits_unverified_numeric_claims_from_user_report(tmp_path: Path):
     task_id = uuid4()
     document = ReportDocument(
         task_id=task_id,
@@ -133,9 +133,10 @@ def test_template_adds_evidence_status_for_invalid_validation(tmp_path: Path):
 
     markdown = AnalysisReportTemplate().render_markdown(document)
 
-    assert "\u3010\u5f85\u786e\u8ba4\u6570\u5b57\u3011" in markdown
-    assert "## \u8bc1\u636e\u72b6\u6001" in markdown
-    assert "UNSUPPORTED\\_NUMERIC\\_CLAIM" in markdown
+    assert "999" not in markdown
+    assert "\u5f85\u786e\u8ba4\u6570\u5b57" not in markdown
+    assert "UNSUPPORTED_NUMERIC_CLAIM" not in markdown
+    assert "\u8bc1\u636e\u72b6\u6001" not in markdown
 
 
 def test_html_renderer_escapes_text_and_preserves_report_structure(tmp_path: Path):

@@ -8,15 +8,63 @@ from pydantic import BaseModel
 from data_analysis_agent.agent.core import DataAnalysisAgent
 from data_analysis_agent.agent.legacy_adapter import LegacyAnalysisAdapter
 from data_analysis_agent.agent.orchestrator import AgentOrchestrator
+from data_analysis_agent.agent.schemas import AgentAction
 from data_analysis_agent.config.llm import LLMConfig
 from data_analysis_agent.domain.enums import TaskStatus
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
 from tests.fixtures.recording_executor import RecordingExecutor
+from data_analysis_agent.llm import LLMStructuredOutputError
 
 
 class _ReportPayload(BaseModel):
     report_id: UUID
     score: float
+
+
+def test_adapter_reuses_agent_task_id_for_persisted_task():
+    task_id = UUID("22222222-2222-2222-2222-222222222222")
+    agent = SimpleNamespace(task_id=task_id)
+
+    adapter = LegacyAnalysisAdapter(
+        agent=agent,
+        user_input="offline",
+        dataset_context=[],
+        max_rounds=1,
+    )
+
+    assert adapter.task.task_id == task_id
+
+
+def test_adapter_retries_transient_structured_model_failure():
+    calls = []
+    agent = object.__new__(DataAnalysisAgent)
+    agent.analysis_results = []
+    agent.conversation_history = [{"role": "user", "content": "offline"}]
+    agent.current_round = 0
+    agent.max_rounds = 1
+    agent.executor = RecordingExecutor()
+    agent._build_conversation_prompt = lambda: "offline"
+    agent._process_action = lambda action, response: {"continue": False}
+    agent._generate_final_report = lambda: {"final_report": "# done"}
+
+    def request_action(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise LLMStructuredOutputError("transient schema mismatch")
+        return AgentAction(action="analysis_complete", final_report="# done")
+
+    agent._request_structured_action = request_action
+    adapter = LegacyAnalysisAdapter(
+        agent=agent,
+        user_input="offline",
+        dataset_context=[],
+        max_rounds=1,
+    )
+
+    result = AgentOrchestrator(task=adapter.task, handlers=adapter.handlers()).run()
+
+    assert result.status is TaskStatus.COMPLETED
+    assert len(calls) == 2
 
 
 def test_adapter_keeps_execution_failure_as_feedback_for_the_next_model_step(tmp_path, monkeypatch):

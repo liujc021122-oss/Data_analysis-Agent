@@ -22,6 +22,7 @@ from ..domain.models import (
     MetricArtifact,
     utc_now,
 )
+from ..reports.numbers import matches_verified_value, numeric_claims
 
 
 class EvidenceRegistry:
@@ -274,29 +275,18 @@ class EvidenceRegistry:
     def validate_report(self, markdown: str, task_id: UUID) -> EvidenceValidation:
         self._require_task(task_id)
         text = self._report_text_without_nonclaims(markdown)
-        numeric_pattern = re.compile(
-            r"(?<![\w.])-?(?:\d+(?:\.\d+)?|\.\d+)%?"
-        )
         verified_values = tuple(
             metric.value
             for metric in self._metrics.values()
             if metric.verification_status is EvidenceVerificationStatus.VERIFIED
         )
         unsupported: list[str] = []
-        for match in numeric_pattern.finditer(text):
-            token = match.group(0)
-            try:
-                value = float(token.rstrip("%"))
-            except ValueError:
-                continue
-            if not any(
-                math.isclose(
-                    value,
-                    verified_value,
-                    rel_tol=self.relative_tolerance,
-                    abs_tol=self.absolute_tolerance,
-                )
-                for verified_value in verified_values
+        for token in numeric_claims(text):
+            if not matches_verified_value(
+                token,
+                verified_values,
+                relative_tolerance=self.relative_tolerance,
+                absolute_tolerance=self.absolute_tolerance,
             ) and token not in unsupported:
                 unsupported.append(token)
 

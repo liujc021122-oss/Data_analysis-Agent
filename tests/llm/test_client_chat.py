@@ -88,6 +88,29 @@ def test_retries_timeouts_with_capped_backoff_and_records_attempts():
     assert response.metrics.duration_ms >= 0
 
 
+def test_retries_empty_response_before_returning_success():
+    provider = FakeProvider(
+        [
+            ProviderResponse(text="", provider="fake", model="chat"),
+            ProviderResponse(text="ok", provider="fake", model="chat"),
+        ]
+    )
+    delays = []
+    client = LLMClient(
+        LLMConfig(api_key="key", max_attempts=2, backoff_base_seconds=0.1),
+        provider=provider,
+        sleep=lambda delay: delays.append(delay),
+        jitter=lambda: 0,
+    )
+
+    response = run(client.achat(request()))
+
+    assert response.text == "ok"
+    assert len(provider.calls) == 2
+    assert delays == [0.1]
+    assert response.metrics.attempt_count == 2
+
+
 def test_authentication_and_request_errors_are_not_retried():
     for error_type, expected in [
         (LLMAuthenticationError, LLMAuthenticationError),
@@ -277,7 +300,11 @@ def test_real_wait_for_timeout_records_final_failure_metrics():
 def test_empty_response_records_metrics_before_raising():
     recorder = Recorder()
     provider = FakeProvider([ProviderResponse(text="", provider="fake", model="chat")])
-    client = LLMClient(LLMConfig(api_key="key"), provider=provider, recorder=recorder)
+    client = LLMClient(
+        LLMConfig(api_key="key", max_attempts=1),
+        provider=provider,
+        recorder=recorder,
+    )
 
     with pytest.raises(LLMEmptyResponseError):
         run(client.achat(request()))

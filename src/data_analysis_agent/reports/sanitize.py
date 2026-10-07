@@ -9,12 +9,15 @@ from urllib.parse import urlparse
 from data_analysis_agent.domain.enums import EvidenceVerificationStatus
 
 from .models import ReportDocument
+from .numbers import remove_unsupported_numeric_sentences
 
 
 _HTML_TAG_PATTERN = re.compile(r"<[^>]*>")
 _IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
 _LINK_PATTERN = re.compile(r"(?<!!)\[([^\]]*)\]\(([^\s)]+)(?:\s+[^)]*)?\)")
+_PROTECTED_TOKEN_PATTERN = re.compile(r"\x00\d+\x00")
 _MARKDOWN_ESCAPED_CHARACTERS = frozenset(r"\`*_[]()#+-.!<>|~")
+_XML_INCOMPATIBLE_CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]")
 
 
 def unescape_markdown(value: str) -> str:
@@ -90,6 +93,7 @@ def sanitize_markdown(
     unsupported_numbers: Sequence[str] = (),
 ) -> str:
     """Sanitize Markdown while preserving fenced code blocks unchanged."""
+    markdown = _XML_INCOMPATIBLE_CONTROL_PATTERN.sub("", markdown)
     sanitized_lines: list[str] = []
     non_code_lines: list[str] = []
     in_code_block = False
@@ -148,9 +152,12 @@ def _sanitize_non_code_line(
 
     line = _IMAGE_PATTERN.sub(sanitize_image, line)
     line = _LINK_PATTERN.sub(sanitize_link, line)
-    for token in sorted(set(unsupported_numbers), key=len, reverse=True):
-        if token:
-            line = line.replace(token, "【待确认数字】")
+    line = "".join(
+        piece
+        if _PROTECTED_TOKEN_PATTERN.fullmatch(piece)
+        else remove_unsupported_numeric_sentences(piece, unsupported_numbers)
+        for piece in re.split(r"(\x00\d+\x00)", line)
+    )
     for index, value in enumerate(protected_spans):
         line = line.replace(f"\x00{index}\x00", value)
     return line

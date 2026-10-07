@@ -31,6 +31,16 @@ def test_sanitizer_removes_multiline_raw_html_outside_code_blocks(tmp_path: Path
     assert "<script" not in cleaned.lower()
 
 
+def test_sanitizer_removes_xml_incompatible_control_characters(tmp_path: Path):
+    document = ReportDocument(task_id=uuid4(), output_root=str(tmp_path))
+
+    cleaned = sanitize_markdown("标题\x00正文\x0b\n下一行", document=document)
+
+    assert "\x00" not in cleaned
+    assert "\x0b" not in cleaned
+    assert "标题正文\n下一行" == cleaned
+
+
 def test_sanitizer_only_keeps_verified_current_task_chart(tmp_path: Path):
     task_id = uuid4()
     chart = tmp_path / "chart.png"
@@ -68,8 +78,23 @@ def test_unsupported_numeric_tokens_are_marked_for_confirmation(tmp_path: Path):
         document=document,
         unsupported_numbers=("999", "12.5%"),
     )
-    assert "待确认" in cleaned
+    assert "待确认数字" not in cleaned
+    assert cleaned == ""
     assert "999" not in cleaned
+
+
+def test_sanitizer_does_not_replace_numeric_substrings(tmp_path: Path):
+    document = ReportDocument(task_id=uuid4(), output_root=str(tmp_path))
+
+    cleaned = sanitize_markdown(
+        "统计年份为2019，门店数为9，转化率为66.6%。",
+        document=document,
+        unsupported_numbers=("9",),
+    )
+
+    assert "2019" in cleaned
+    assert "66.6%" in cleaned
+    assert "门店数为" not in cleaned
 
 
 def test_sanitizer_keeps_code_and_link_spans_unchanged(tmp_path: Path):
@@ -82,7 +107,8 @@ def test_sanitizer_keeps_code_and_link_spans_unchanged(tmp_path: Path):
         unsupported_numbers=("999", "7"),
     )
 
-    assert "报告数字【待确认数字】" in cleaned
+    assert "报告数字" not in cleaned
+    assert "待确认数字" not in cleaned
     assert "[版本7](https://example.com/7)" in cleaned
     assert "<script>999</script>" in cleaned
 

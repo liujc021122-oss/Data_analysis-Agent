@@ -31,7 +31,11 @@ class AnalysisReportTemplate:
         metrics = tuple(
             metric
             for metric in document.metric_artifacts
-            if metric.verification_status is EvidenceVerificationStatus.VERIFIED
+            if (
+                metric.verification_status is EvidenceVerificationStatus.VERIFIED
+                and metric.metadata.get("evidence_source")
+                not in {"successful_execution_output", "verified_chart_analysis"}
+            )
         )
         charts = tuple(
             (chart, safe_chart_reference(chart.filename, document=document))
@@ -39,7 +43,7 @@ class AnalysisReportTemplate:
         )
         charts = tuple((chart, reference) for chart, reference in charts if reference)
         has_warning = validation is not None and (
-            not validation.valid
+            bool(validation.missing_chart_ids)
             or any(
                 claim.status is EvidenceClaimStatus.PENDING_CONFIRMATION
                 for claim in validation.claims
@@ -103,9 +107,9 @@ class AnalysisReportTemplate:
         for claim in pending_claims:
             rows.append(f"- \u5f85\u786e\u8ba4\u58f0\u660e: {_markdown_text(claim.text)}")
         for code in validation.error_codes:
+            if code == "UNSUPPORTED_NUMERIC_CLAIM":
+                continue
             rows.append(f"- {_markdown_text(code)}")
-        if validation.unsupported_numeric_claims:
-            rows.append("- \u5b58\u5728\u5f85\u786e\u8ba4\u6570\u5b57\u3002")
         if validation.missing_chart_ids:
             rows.append("- \u5b58\u5728\u65e0\u6cd5\u4f7f\u7528\u7684\u56fe\u8868\u3002")
         return "\n".join(rows)

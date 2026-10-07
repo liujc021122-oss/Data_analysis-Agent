@@ -4,8 +4,9 @@ from time import sleep
 from uuid import uuid4
 
 from data_analysis_agent.api.schemas import AnalysisTaskCreateRequest
-from data_analysis_agent.domain.enums import TaskStatus
-from data_analysis_agent.domain.models import utc_now
+from data_analysis_agent.agent.orchestration_errors import AgentOrchestrationError
+from data_analysis_agent.domain.enums import TaskEventType, TaskStatus
+from data_analysis_agent.domain.models import TaskEvent, utc_now
 from data_analysis_agent.services.persistence import TaskPersistenceService
 from data_analysis_agent.worker import (
     AnalysisTaskWorker,
@@ -69,6 +70,45 @@ def test_worker_claims_task_once_and_records_stage_times(uow_factory):
     for event in stage_events[1:]:
         assert "phase_started_at" in event.metadata
         assert "phase_finished_at" in event.metadata
+
+
+def test_failure_after_agent_failure_callback_persists_exception_code(uow_factory):
+    broker = InMemoryTaskBroker()
+    persistence, task = _submitted(uow_factory, broker, "callback-failure")
+
+    class CallbackThenFailureAgent:
+        def __init__(self, task, on_transition):
+            self.task = task
+            self.on_transition = on_transition
+
+        def run(self):
+            self.on_transition(
+                self.task,
+                TaskEvent(
+                    task_id=self.task.task_id,
+                    event_type=TaskEventType.STATUS_CHANGED,
+                    from_status=TaskStatus.RUNNING,
+                    to_status=TaskStatus.FAILED,
+                    message="stage execution failed",
+                ),
+            )
+            raise AgentOrchestrationError(
+                "stage execution failed", cause_code="MODEL_SCHEMA_ERROR"
+            )
+
+    worker = AnalysisTaskWorker(
+        persistence=persistence,
+        broker=broker,
+        agent_factory=CallbackThenFailureAgent,
+    )
+
+    result = worker.process(task.task_id)
+
+    assert result.status is TaskStatus.FAILED
+    with uow_factory() as uow:
+        stored = uow.tasks.get(task.task_id)
+    assert stored.error_code == "MODEL_SCHEMA_ERROR"
+    assert "stage execution failed" in stored.error_message
 
 
 class FlakyAgent:

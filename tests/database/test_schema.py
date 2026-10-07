@@ -164,6 +164,37 @@ def test_migration_is_repeatable_and_downgrade_removes_schema(tmp_path: Path):
         migration_engine.dispose()
 
 
+def test_report_schema_accepts_html_format_after_migration(tmp_path: Path):
+    db_url = f"sqlite:///{tmp_path / 'html-report.sqlite3'}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", db_url)
+    command.upgrade(config, "head")
+    migration_engine = create_engine(db_url)
+    now = datetime.now(timezone.utc)
+    user_id, task_id, artifact_id = [uuid4() for _ in range(3)]
+    try:
+        with migration_engine.begin() as connection:
+            connection.execute(insert(UserORM).values(user_id=user_id, created_at=now))
+            connection.execute(insert(AnalysisTaskORM).values(
+                task_id=task_id, user_id=user_id, idempotency_key="html-report",
+                request_hash="html-report", query="html report", status=TaskStatus.PENDING,
+                max_rounds=1, created_at=now, updated_at=now, metadata_json={},
+                model_call_count=0, model_duration_ms=0,
+            ))
+            connection.execute(insert(Base.metadata.tables["artifacts"]).values(
+                artifact_id=artifact_id, task_id=task_id, artifact_type="REPORT",
+                name="report.html", format="HTML", size_bytes=1,
+                metadata_json={}, created_at=now,
+            ))
+            connection.execute(insert(Base.metadata.tables["reports"]).values(
+                report_id=uuid4(), artifact_id=artifact_id, task_id=task_id,
+                format="HTML", storage_uri="s3://report.html", size_bytes=1,
+                created_at=now,
+            ))
+    finally:
+        migration_engine.dispose()
+
+
 def test_manual_retry_migration_allows_failed_to_queued_event(tmp_path: Path):
     db_url = f"sqlite:///{tmp_path / 'manual-retry.sqlite3'}"
     config = Config("alembic.ini")

@@ -13,6 +13,7 @@ from openai import AuthenticationError, BadRequestError, RateLimitError
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError
+import yaml
 
 from ..config.llm import LLMConfig
 from .errors import (
@@ -91,12 +92,6 @@ class LLMClient:
                 )
                 last_response = response
                 if not response.text or not response.text.strip():
-                    metrics = self._metrics(
-                        call_id, started, started_at, attempts, response.provider,
-                        response.model or model, response.usage, response.request_id,
-                        effective_request, response.text,
-                    )
-                    self._record(metrics)
                     raise LLMEmptyResponseError(
                         "provider returned an empty response",
                         provider=response.provider,
@@ -119,8 +114,6 @@ class LLMClient:
                 self._record(metrics)
                 return result
             except Exception as error:
-                if isinstance(error, LLMEmptyResponseError):
-                    raise
                 last_error = error
                 mapped = self._map_error(error, model, attempts, self.config.provider)
                 if not self._is_retryable(error, mapped) or attempt >= self.config.max_attempts:
@@ -316,27 +309,38 @@ class LLMClient:
         request: StructuredOutputRequest,
         schema: Mapping[str, Any],
     ) -> Any:
-        value = json.loads(cls._extract_json_text(text))
+        value = cls._parse_structured_value(text)
         if request.response_model is not None:
             return request.response_model.model_validate(value)
         Draft202012Validator(schema).validate(value)
         return value
 
     @staticmethod
-    def _extract_json_text(text: str) -> str:
+    def _extract_structured_text(text: str) -> str:
         candidate = text.strip()
         if "```" not in candidate:
             return candidate
         if candidate.count("```") != 2:
             raise ValueError("multiple fenced code blocks are not allowed")
-        match = re.fullmatch(
-            r"```(?:json)?[ \t]*(?:\r?\n)?(.*?)(?:\r?\n)?```",
+        match = re.search(
+            r"```(?:json|yaml|yml)?[ \t]*(?:\r?\n)?(.*?)(?:\r?\n)?```",
             candidate,
             flags=re.IGNORECASE | re.DOTALL,
         )
         if match is None:
-            raise ValueError("invalid fenced JSON response")
+            raise ValueError("invalid fenced structured response")
         return match.group(1).strip()
+
+    @classmethod
+    def _parse_structured_value(cls, text: str) -> Any:
+        candidate = cls._extract_structured_text(text)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as json_error:
+            try:
+                return yaml.safe_load(candidate)
+            except yaml.YAMLError:
+                raise json_error from None
 
     @staticmethod
     def _structured_failure_summary(error: Exception) -> str:

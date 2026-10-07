@@ -97,6 +97,49 @@ def test_invalid_first_response_gets_one_schema_correction_request():
     assert "Return the answer" not in correction.content
 
 
+def test_fenced_yaml_response_with_preamble_returns_typed_value():
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                text="I will inspect the data first.\n\n```yaml\nresult: ok\n```",
+                provider="fake",
+                model="chat",
+            ),
+            ProviderResponse(
+                text="```yaml\nresult: ok\n```",
+                provider="fake",
+                model="chat",
+            ),
+        ]
+    )
+
+    response = run(make_client(provider).astructured_output(make_request()))
+
+    assert response.value == Answer(result="ok")
+    assert len(provider.calls) == 1
+
+
+def test_fenced_yaml_response_with_trailing_fields_returns_typed_value():
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                text=(
+                    "I will inspect the data first.\n\n"
+                    "```yaml\nresult: ok\n```\n"
+                    "next_steps: []"
+                ),
+                provider="fake",
+                model="chat",
+            )
+        ]
+    )
+
+    response = run(make_client(provider).astructured_output(make_request()))
+
+    assert response.value == Answer(result="ok")
+    assert len(provider.calls) == 1
+
+
 def test_second_invalid_response_raises_without_returning_typed_value():
     provider = FakeProvider(
         [

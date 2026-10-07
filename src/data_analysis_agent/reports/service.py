@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
-import math
 import os
 from pathlib import Path
 import re
@@ -21,12 +20,10 @@ from data_analysis_agent.storage import artifact_content_url
 
 from .html import HtmlReportRenderer
 from .models import ReportBundle, ReportDocument, ReportFormatResult
+from .numbers import matches_verified_value, numeric_claims
 from .sanitize import sanitize_markdown
 from .templates import AnalysisReportTemplate
 from .word import WordReportRenderer
-
-
-_NUMERIC_CLAIM_PATTERN = re.compile(r"(?<![\w.])-?(?:\d+(?:\.\d+)?|\.\d+)%?")
 
 
 class ReportRenderer(Protocol):
@@ -275,23 +272,11 @@ class ReportService:
 
     @staticmethod
     def _numeric_claims(text: str) -> tuple[str, ...]:
-        seen: list[str] = []
-        for match in _NUMERIC_CLAIM_PATTERN.finditer(text):
-            token = match.group(0)
-            if token not in seen:
-                seen.append(token)
-        return tuple(seen)
+        return numeric_claims(text)
 
     @staticmethod
     def _matches_verified_value(token: str, verified_values: tuple[float, ...]) -> bool:
-        try:
-            value = float(token.rstrip("%"))
-        except ValueError:
-            return False
-        for verified_value in verified_values:
-            if math.isclose(value, verified_value, rel_tol=1e-6, abs_tol=1e-9):
-                return True
-        return False
+        return matches_verified_value(token, verified_values)
 
     def _validate_output_root(self, output_root: str) -> Path:
         if self.allowed_output_root is None:

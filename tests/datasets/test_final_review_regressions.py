@@ -10,6 +10,7 @@ from data_analysis_agent.datasets.inspection import CsvInspector
 from data_analysis_agent.datasets.models import ColumnProfile, DatasetProfile
 from data_analysis_agent.services.errors import sanitize_exception
 from tests.fixtures.fake_llm import FakeLLM, yaml_response
+from urllib3.response import HTTPResponse
 
 
 def _inspect(payload: bytes, filename: str = "sample.csv"):
@@ -90,11 +91,12 @@ def test_value_sensitivity_only_scans_first_twenty_non_blank_values():
 
 
 class _ProfileResolver:
-    def __init__(self, dataset_id, owner_id, payload, profile):
+    def __init__(self, dataset_id, owner_id, payload, profile, stream_factory=BytesIO):
         self.dataset_id = dataset_id
         self.owner_id = owner_id
         self.payload = payload
         self.profile = profile
+        self.stream_factory = stream_factory
 
     def profile_for_user(self, dataset_id, *, owner_id):
         assert dataset_id == self.dataset_id
@@ -104,7 +106,11 @@ class _ProfileResolver:
     def open_for_user(self, dataset_id, *, owner_id):
         assert dataset_id == self.dataset_id
         assert owner_id == self.owner_id
-        return BytesIO(self.payload)
+        return self.stream_factory(self.payload)
+
+
+def _http_response_stream(payload):
+    return HTTPResponse(body=BytesIO(payload), preload_content=False)
 
 
 class _LoaderExecutor:
@@ -159,6 +165,69 @@ def test_agent_loader_uses_profile_encoding_and_delimiter(
         ),
     )
     resolver = _ProfileResolver(dataset_id, owner_id, payload, profile)
+    fake_llm = FakeLLM(
+        [
+            yaml_response(
+                "generate_code",
+                code=(
+                    f"df = load_dataset('{dataset_id}')\n"
+                    "assert list(df.columns) == ['name', '城市']\n"
+                    "assert df.iloc[0]['城市'] == '北京'"
+                ),
+            ),
+            yaml_response("analysis_complete", final_report="# done"),
+        ]
+    )
+    monkeypatch.setattr("data_analysis_agent.agent.core.LLMHelper", lambda config: fake_llm)
+    monkeypatch.setattr("data_analysis_agent.agent.core.CodeExecutor", _LoaderExecutor)
+
+    result = DataAnalysisAgent(
+        llm_config=LLMConfig(api_key="offline", base_url="https://offline.invalid", model="fake"),
+        output_dir=str(tmp_path / "outputs"),
+        max_rounds=1,
+        generate_word_report=False,
+        dataset_resolver=resolver,
+        dataset_owner_id=owner_id,
+    ).analyze("offline", dataset_ids=[dataset_id])
+
+    assert result["analysis_results"][0]["result"]["success"] is True
+
+
+def test_agent_loader_reads_non_seekable_http_stream_using_profile_encoding(
+    monkeypatch, tmp_path
+):
+    dataset_id = uuid4()
+    owner_id = uuid4()
+    payload = "name,城市\nAlice,北京\n".encode("gb18030")
+    profile = DatasetProfile(
+        encoding="gb18030",
+        delimiter=",",
+        row_count=1,
+        column_count=2,
+        columns=(
+            ColumnProfile(
+                name="name",
+                inferred_type="string",
+                non_null_count=1,
+                missing_count=0,
+                missing_rate=0.0,
+            ),
+            ColumnProfile(
+                name="城市",
+                inferred_type="string",
+                non_null_count=1,
+                missing_count=0,
+                missing_rate=0.0,
+            ),
+        ),
+    )
+    resolver = _ProfileResolver(
+        dataset_id,
+        owner_id,
+        payload,
+        profile,
+        stream_factory=_http_response_stream,
+    )
     fake_llm = FakeLLM(
         [
             yaml_response(
