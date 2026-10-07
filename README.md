@@ -124,10 +124,17 @@ sequenceDiagram
 
 ### 1. 创建 Python 环境
 
-项目要求 Python `>=3.10`。在仓库根目录运行：
+项目要求 Python 3.10+（`requires-python: >=3.10`）。在仓库根目录运行：
 
 ```bash
 python -m venv .venv
+```
+
+基础安装会提供统一 CLI；命令行调用时显式传入输入文件：
+
+```powershell
+python -m pip install -e .
+data-analysis-agent your_data.csv --query "分析输入数据并生成关键发现和图表"
 ```
 
 Windows PowerShell：
@@ -206,14 +213,19 @@ print(result["html_report_file_path"])
 print(result["word_report_file_path"])
 ```
 
-也可以直接使用兼容 Agent：
+也可以直接使用兼容 Agent。下面的写法通过 `load_settings()` 读取 `.env`，同时保留 `LLMConfig` 这个公开配置类型：
 
 ```python
-from data_analysis_agent import DataAnalysisAgent, load_settings
+from data_analysis_agent import DataAnalysisAgent, LLMConfig, load_settings
 
 settings = load_settings()
+llm_config = LLMConfig(
+    api_key=settings.openai_api_key,
+    base_url=settings.openai_base_url,
+    model=settings.openai_model,
+)
 agent = DataAnalysisAgent(
-    llm_config=settings.llm_config(),
+    llm_config=llm_config,
     output_dir="outputs",
     max_rounds=10,
     settings=settings,
