@@ -184,6 +184,7 @@ api_keys.txt
 task_plan.md
 findings.md
 progress.md
+sdd/
 
 # Local convenience scripts
 以powershell的方式运行.txt
@@ -193,12 +194,15 @@ tmp/
 verification_outputs/
 verification_full_outputs/
 verification_full_outputs2/
+.playwright-cli/
+.runtime/
 
 # Agent planning artifacts (superpowers)
 docs/superpowers/
 
 # Local linked worktrees
 .worktrees/
+worktrees/
 
 # Local deployment secrets and frontend build output
 deploy/certs/*.pem
